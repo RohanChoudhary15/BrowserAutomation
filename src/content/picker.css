@@ -1,0 +1,130 @@
+/* AutoFlow Element Picker Overlay Styles */
+.autoflow-picker-overlay {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483640;
+  border: 2px solid #6366f1;
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 4px 20px rgba(99, 102, 241, 0.4);
+  transition: all 0.08s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.autoflow-picker-badge {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  background: #1e1b4b;
+  color: #c7d2fe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #4338ca;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.autoflow-picker-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483646;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 10px 20px;
+  border-radius: 30px;
+  border: 1px solid #334155;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+}
+
+.autoflow-picker-banner-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: autoflow-pulse 1.5s infinite;
+}
+
+@keyframes autoflow-pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+
+.autoflow-picker-kbd {
+  background: #334155;
+  color: #cbd5e1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+/* ---------------------------------------------------------------
+   Human Mode synthetic cursor
+   Cosmetic overlay only: pointer-events is disabled so it can never
+   intercept clicks or hover the page's own hit-testing.
+   --------------------------------------------------------------- */
+.autoflow-cursor {
+  position: fixed;
+  left: -60px;
+  top: -60px;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  z-index: 2147483645;
+  pointer-events: none !important;
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+  will-change: left, top;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M2 1.5 L2 15.5 L5.8 11.9 L8.2 17.4 L11 16.2 L8.6 10.8 L13.6 10.4 Z' fill='%23ffffff' stroke='%23111827' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: top left;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+}
+
+.autoflow-cursor--visible {
+  opacity: 1;
+}
+
+.autoflow-cursor--click::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.9);
+  background: rgba(99, 102, 241, 0.22);
+  animation: autoflow-cursor-ripple 0.32s ease-out;
+}
+
+@keyframes autoflow-cursor-ripple {
+  0% { transform: scale(0.35); opacity: 0.95; }
+  100% { transform: scale(1.15); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .autoflow-cursor {
+    transition: none;
+  }
+  .autoflow-cursor--click::after {
+    animation: none;
+  }
+}

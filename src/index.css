@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0c0e14;
+  color: #f1f5f9;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Custom modern dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #11141c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #232a3b;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3b82f6;
+}
+
+/* React Flow Dark Styling overrides */
+.react-flow__background {
+  background-color: #0c0e14 !important;
+}
+
+.react-flow__edge-path {
+  stroke: #334155 !important;
+  stroke-width: 2 !important;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #6366f1 !important;
+  stroke-width: 2.5 !important;
+}
+
+.react-flow__edge-text {
+  font-size: 10px !important;
+  fill: #94a3b8 !important;
+  font-weight: 600 !important;
+}
+
+.react-flow__edge-textbg {
+  fill: #161a24 !important;
+  rx: 4px !important;
+  ry: 4px !important;
+}
+
+.react-flow__controls {
+  background: #161a24 !important;
+  border: 1px solid #232a3b !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: #161a24 !important;
+  border-bottom: 1px solid #232a3b !important;
+  fill: #94a3b8 !important;
+  color: #94a3b8 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #232a3b !important;
+  fill: #f8fafc !important;
+}
+
+.react-flow__minimap {
+  background: #11141c !important;
+  border: 1px solid #232a3b !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}

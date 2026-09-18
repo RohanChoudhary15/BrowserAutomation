@@ -1,0 +1,418 @@
+import { Workflow, WorkflowNode, WorkflowEdge } from '../types/workflow';
+import { ExecutionContext, NodeRuntimeState, ExecutionLog, WorkflowExecutionStatus } from '../types/execution';
+import { executors } from './executors';
+import { generateId } from '../utils/id';
+import { createFriendlyError } from '../utils/formatters';
+import { interpolateVariables } from './interpolator';
+import { HumanConfig, nodeThinkTime, randomBetween, resolveHumanConfig, wait } from '../utils/human';
+
+export interface EngineEvents {
+  onStatusChange?: (status: WorkflowExecutionStatus) => void;
+  onNodeStateChange?: (nodeId: string, state: Partial<NodeRuntimeState>) => void;
+  onLog?: (log: ExecutionLog) => void;
+  onVariablesChange?: (variables: Record<string, any>) => void;
+}
+
+export class WorkflowEngine {
+  private workflow: Workflow;
+  private abortController: AbortController | null = null;
+  private status: WorkflowExecutionStatus = 'idle';
+  private variables: Record<string, any> = {};
+  private events: EngineEvents;
+  private isPaused = false;
+  private resumeResolve: (() => void) | null = null;
+  /** Resolved Human Mode config — undefined unless the workflow enables it. */
+  private human: HumanConfig | undefined;
+
+  constructor(workflow: Workflow, events: EngineEvents = {}) {
+    this.workflow = workflow;
+    this.events = events;
+    this.variables = { ...workflow.variables };
+    this.human = resolveHumanConfig(workflow.settings);
+  }
+
+  getStatus(): WorkflowExecutionStatus {
+    return this.status;
+  }
+
+  getVariables(): Record<string, any> {
+    return { ...this.variables };
+  }
+
+  private setStatus(status: WorkflowExecutionStatus) {
+    this.status = status;
+    this.events.onStatusChange?.(status);
+  }
+
+  private updateNodeState(nodeId: string, state: Partial<NodeRuntimeState>) {
+    this.events.onNodeStateChange?.(nodeId, state);
+  }
+
+  private log(logData: Omit<ExecutionLog, 'id' | 'timestamp'>) {
+    const log: ExecutionLog = {
+      id: generateId('log'),
+      timestamp: Date.now(),
+      ...logData,
+    };
+    this.events.onLog?.(log);
+  }
+
+  /**
+   * Pauses workflow execution
+   */
+  pause() {
+    if (this.status === 'running') {
+      this.isPaused = true;
+      this.setStatus('paused');
+      this.log({ level: 'info', message: 'Workflow paused by user.' });
+    }
+  }
+
+  /**
+   * Resumes workflow execution
+   */
+  resume() {
+    if (this.status === 'paused') {
+      this.isPaused = false;
+      this.setStatus('running');
+      this.log({ level: 'info', message: 'Workflow resumed.' });
+      if (this.resumeResolve) {
+        this.resumeResolve();
+        this.resumeResolve = null;
+      }
+    }
+  }
+
+  /**
+   * Immediately stops and cancels workflow execution
+   */
+  stop() {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.isPaused = false;
+    if (this.resumeResolve) {
+      this.resumeResolve();
+      this.resumeResolve = null;
+    }
+    this.setStatus('stopped');
+    this.log({ level: 'warn', message: 'Workflow stopped by user.' });
+  }
+
+  /**
+   * Runs an individual node for debugging
+   */
+  async runSingleNode(node: WorkflowNode, initialVariables?: Record<string, any>): Promise<any> {
+    const controller = new AbortController();
+    const vars = initialVariables ? { ...initialVariables } : { ...this.variables };
+
+    const ctx: ExecutionContext = {
+      workflowId: this.workflow.id,
+      executionId: generateId('exec_single'),
+      variables: vars,
+      signal: controller.signal,
+      human: this.human,
+      log: (l) => this.log(l),
+      updateNodeState: (id, s) => this.updateNodeState(id, s),
+    };
+
+    try {
+      this.updateNodeState(node.id, { status: 'running', startTime: Date.now() });
+      const result = await this.executeNodeWithRetry(node, ctx);
+      this.updateNodeState(node.id, { status: 'success', endTime: Date.now(), output: result.output });
+      if (result.variables) {
+        Object.assign(this.variables, result.variables);
+        this.events.onVariablesChange?.(this.variables);
+      }
+      return result;
+    } catch (err: any) {
+      this.updateNodeState(node.id, { status: 'error', endTime: Date.now(), error: err.message });
+      throw err;
+    }
+  }
+
+  /**
+   * Starts executing the workflow
+   */
+  async run(options: { startNodeId?: string; isStepMode?: boolean } = {}) {
+    if (this.status === 'running') return;
+
+    this.abortController = new AbortController();
+    this.setStatus('running');
+    this.variables = { ...this.workflow.variables };
+    this.events.onVariablesChange?.(this.variables);
+
+    this.log({
+      level: 'info',
+      message: `Starting workflow "${this.workflow.name}"`,
+    });
+
+    if (this.human) {
+      this.log({
+        level: 'info',
+        message: `Human mode enabled (${this.human.intensity} pacing · cursor ${
+          this.human.cursor ? 'on' : 'off'
+        })`,
+      });
+    }
+
+    const ctx: ExecutionContext = {
+      workflowId: this.workflow.id,
+      executionId: generateId('exec'),
+      variables: this.variables,
+      signal: this.abortController.signal,
+      isStepMode: options.isStepMode,
+      human: this.human,
+      log: (l) => this.log(l),
+      updateNodeState: (id, s) => this.updateNodeState(id, s),
+    };
+
+    // Reset all node states to queued / idle
+    this.workflow.nodes.forEach(n => {
+      this.updateNodeState(n.id, { status: n.data.disabled ? 'disabled' : 'idle' });
+    });
+
+    try {
+      let startNodes: WorkflowNode[] = [];
+      if (options.startNodeId) {
+        const found = this.workflow.nodes.find(n => n.id === options.startNodeId);
+        if (found) startNodes = [found];
+      }
+
+      if (startNodes.length === 0) {
+        // Find nodes with no incoming edges
+        const targetIds = new Set(this.workflow.edges.map(e => e.target));
+        startNodes = this.workflow.nodes.filter(n => !targetIds.has(n.id));
+      }
+
+      if (startNodes.length === 0 && this.workflow.nodes.length > 0) {
+        startNodes = [this.workflow.nodes[0]];
+      }
+
+      for (const startNode of startNodes) {
+        if (ctx.signal.aborted) break;
+        await this.traverseAndExecute(startNode, ctx);
+      }
+
+      if (this.status === 'running') {
+        this.setStatus('completed');
+        this.log({ level: 'success', message: 'Workflow completed successfully.' });
+      }
+    } catch (err: any) {
+      if (ctx.signal.aborted) {
+        this.setStatus('stopped');
+      } else {
+        this.setStatus('failed');
+        this.log({ level: 'error', message: `Workflow execution error: ${err.message}` });
+      }
+    }
+  }
+
+  /**
+   * Traverses node execution along edges
+   */
+  private async traverseAndExecute(node: WorkflowNode, ctx: ExecutionContext): Promise<void> {
+    if (ctx.signal.aborted) return;
+
+    // Check pause state
+    if (this.isPaused) {
+      await new Promise<void>((resolve) => {
+        this.resumeResolve = resolve;
+      });
+    }
+
+    if (node.data.disabled) {
+      this.updateNodeState(node.id, { status: 'skipped' });
+      const nextNodes = this.getNextNodes(node.id);
+      for (const next of nextNodes) {
+        await this.traverseAndExecute(next, ctx);
+      }
+      return;
+    }
+
+    // Handle Loop / For Each Node
+    if (node.data.type === 'loop' || node.data.type === 'for_each') {
+      await this.executeLoop(node, ctx);
+      return;
+    }
+
+    // Execute standard node
+    const startTime = Date.now();
+
+    // Human Mode: think for a beat before acting on each node, so the run
+    // reads like a person working through the page rather than a script.
+    if (this.human) {
+      const think = nodeThinkTime(this.human);
+      if (think > 0) await wait(think, ctx.signal);
+      if (ctx.signal.aborted) return;
+    }
+
+    this.updateNodeState(node.id, { status: 'running', startTime });
+
+    try {
+      const result = await this.executeNodeWithRetry(node, ctx);
+      const durationMs = Date.now() - startTime;
+
+      this.updateNodeState(node.id, {
+        status: 'success',
+        endTime: Date.now(),
+        durationMs,
+        output: result.output,
+      });
+
+      if (result.variables) {
+        Object.assign(this.variables, result.variables);
+        this.events.onVariablesChange?.(this.variables);
+      }
+
+      // Step mode pause
+      if (ctx.isStepMode) {
+        this.pause();
+      }
+
+      // Follow next branch
+      const nextNodes = this.getNextNodes(node.id, result.nextBranch);
+      for (const next of nextNodes) {
+        if (ctx.signal.aborted) break;
+        await this.traverseAndExecute(next, ctx);
+      }
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      const friendly = createFriendlyError(node.data.label, err, {
+        selector: node.data.properties.selector,
+        timeoutMs: node.data.properties.timeout,
+        url: node.data.properties.url,
+      });
+
+      this.updateNodeState(node.id, {
+        status: 'error',
+        endTime: Date.now(),
+        durationMs,
+        error: friendly.message,
+        errorDetails: {
+          message: friendly.message,
+          suggestions: friendly.suggestions,
+          selector: friendly.selector,
+          timeout: friendly.timeoutMs,
+        },
+      });
+
+      this.log({
+        level: 'error',
+        nodeId: node.id,
+        nodeName: node.data.label,
+        message: friendly.message,
+        durationMs,
+      });
+
+      if (this.workflow.settings.stopOnError !== false) {
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Executes a loop construct
+   */
+  private async executeLoop(loopNode: WorkflowNode, ctx: ExecutionContext): Promise<void> {
+    const isForEach = loopNode.data.type === 'for_each';
+    let iterations: any[] = [];
+
+    if (isForEach) {
+      const arrayVal = interpolateVariables(loopNode.data.properties.array, ctx.variables);
+      iterations = Array.isArray(arrayVal) ? arrayVal : [];
+    } else {
+      const count = Number(interpolateVariables(loopNode.data.properties.count, ctx.variables)) || 1;
+      iterations = Array.from({ length: Math.min(count, 500) }, (_, i) => i);
+    }
+
+    const bodyNodes = this.getNextNodes(loopNode.id, 'loop_body');
+    const doneNodes = this.getNextNodes(loopNode.id, 'loop_done');
+
+    this.log({
+      level: 'info',
+      message: `Starting loop with ${iterations.length} iterations`,
+      nodeId: loopNode.id,
+      nodeName: loopNode.data.label,
+    });
+
+    for (let index = 0; index < iterations.length; index++) {
+      if (ctx.signal.aborted) break;
+
+      const item = iterations[index];
+      ctx.variables.index = index;
+      ctx.variables.item = item;
+      this.events.onVariablesChange?.(this.variables);
+
+      let shouldBreak = false;
+      for (const bNode of bodyNodes) {
+        if (ctx.signal.aborted) break;
+        await this.traverseAndExecute(bNode, ctx);
+      }
+
+      if (shouldBreak) break;
+    }
+
+    // Once loop completes, continue on 'loop_done' branch
+    for (const dNode of doneNodes) {
+      if (ctx.signal.aborted) break;
+      await this.traverseAndExecute(dNode, ctx);
+    }
+  }
+
+  /**
+   * Executes a node with retry support
+   */
+  private async executeNodeWithRetry(node: WorkflowNode, ctx: ExecutionContext): Promise<any> {
+    const executor = executors[node.data.type];
+    if (!executor) {
+      throw new Error(`No executor found for node type: ${node.data.type}`);
+    }
+
+    const maxRetries = this.workflow.settings.retryCount || 0;
+    const retryDelay = this.workflow.settings.retryDelay || 1000;
+
+    let lastError: any = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (ctx.signal.aborted) throw new Error('Execution aborted by user.');
+
+      try {
+        if (attempt > 0) {
+          this.log({
+            level: 'warn',
+            message: `Retrying ${node.data.label} (attempt ${attempt}/${maxRetries})...`,
+            nodeId: node.id,
+            nodeName: node.data.label,
+          });
+          await new Promise(r => setTimeout(r, this.human ? Math.round(retryDelay * randomBetween(0.85, 1.3)) : retryDelay));
+        }
+
+        return await executor(node, ctx);
+      } catch (err) {
+        lastError = err;
+        if (attempt === maxRetries) {
+          throw lastError;
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  /**
+   * Finds subsequent nodes connected by outgoing edges
+   */
+  private getNextNodes(sourceId: string, branchHandle?: string): WorkflowNode[] {
+    const edges = this.workflow.edges.filter(e => {
+      if (e.source !== sourceId) return false;
+      if (branchHandle) {
+        return e.sourceHandle === branchHandle;
+      }
+      return true;
+    });
+
+    return edges
+      .map(e => this.workflow.nodes.find(n => n.id === e.target))
+      .filter((n): n is WorkflowNode => n !== undefined);
+  }
+}

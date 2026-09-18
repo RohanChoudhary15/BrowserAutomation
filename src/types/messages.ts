@@ -1,0 +1,53 @@
+import { ElementSelectionResult } from './selector';
+import { HumanConfig } from '../utils/human';
+
+export interface RecordedActionPayload {
+  type: 'navigate' | 'click' | 'type_text' | 'press_key' | 'scroll' | 'select_dropdown';
+  timestamp: number;
+  properties: Record<string, any>;
+  url?: string;
+}
+
+export type ExtensionMessage =
+  // Tab Management
+  | { type: 'GET_ACTIVE_TAB' }
+  | { type: 'OPEN_SIDE_PANEL'; payload?: { tabId?: number } }
+  | { type: 'NAVIGATE_TAB'; payload: { tabId?: number; url: string; waitUntil?: string } }
+  | { type: 'CAPTURE_SCREENSHOT'; payload?: { tabId?: number; format?: 'png' | 'jpeg'; quality?: number } }
+
+  // Element Picker
+  | { type: 'START_ELEMENT_PICKER'; payload?: { tabId?: number } }
+  | { type: 'STOP_ELEMENT_PICKER'; payload?: { tabId?: number } }
+  | { type: 'ELEMENT_PICKED'; payload: ElementSelectionResult }
+  | { type: 'PICKER_CANCELLED' }
+
+  // Action Recorder
+  | { type: 'START_RECORDING'; payload?: { tabId?: number } }
+  | { type: 'STOP_RECORDING'; payload?: { tabId?: number } }
+  | { type: 'RECORDED_ACTION'; payload: RecordedActionPayload }
+
+  // DOM Action Execution in Content Script
+  | {
+      type: 'EXECUTE_DOM_ACTION';
+      payload: {
+        action: string;
+        params: Record<string, any>;
+        timeout?: number;
+        /** Human-like behavior config, forwarded to the content script when Human Mode is on. */
+        human?: HumanConfig;
+      };
+    }
+  | {
+      type: 'HIGHLIGHT_ELEMENT';
+      payload: {
+        selector: string;
+        durationMs?: number;
+      };
+    }
+  | { type: 'PING' };
+
+export interface MessageResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}

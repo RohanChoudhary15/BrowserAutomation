@@ -1,0 +1,69 @@
+import { HumanConfig } from '../utils/human';
+
+export type NodeExecutionStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'skipped'
+  | 'disabled';
+
+export type WorkflowExecutionStatus =
+  | 'idle'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'stopped';
+
+export interface NodeRuntimeState {
+  status: NodeExecutionStatus;
+  startTime?: number;
+  endTime?: number;
+  durationMs?: number;
+  output?: any;
+  error?: string;
+  errorDetails?: {
+    message: string;
+    suggestions: string[];
+    selector?: string;
+    timeout?: number;
+  };
+}
+
+export interface ExecutionLog {
+  id: string;
+  timestamp: number;
+  nodeId?: string;
+  nodeName?: string;
+  level: 'info' | 'warn' | 'error' | 'success' | 'debug';
+  message: string;
+  data?: any;
+  durationMs?: number;
+  screenshotUrl?: string;
+}
+
+export interface NodeResult {
+  success: boolean;
+  output?: any;
+  variables?: Record<string, any>;
+  error?: string;
+  nextBranch?: string; // 'true' | 'false' | 'loop_body' | 'loop_done' | 'try' | 'catch' | 'default'
+  breakLoop?: boolean;
+  continueLoop?: boolean;
+}
+
+export interface ExecutionContext {
+  workflowId: string;
+  executionId: string;
+  currentTabId?: number;
+  currentUrl?: string;
+  variables: Record<string, any>;
+  signal: AbortSignal;
+  isStepMode?: boolean;
+  /** Present only when the workflow has Human Mode enabled. */
+  human?: HumanConfig;
+  log: (log: Omit<ExecutionLog, 'id' | 'timestamp'>) => void;
+  updateNodeState: (nodeId: string, state: Partial<NodeRuntimeState>) => void;
+}
