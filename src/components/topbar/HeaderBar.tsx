@@ -19,6 +19,7 @@ import {
   Bot,
   Rabbit,
   ChevronDown,
+  Key,
 } from 'lucide-react';
 import { WorkflowExecutionStatus } from '../../types/execution';
 import { HumanIntensity } from '../../types/workflow';
@@ -44,6 +45,7 @@ interface HeaderBarProps {
   onUndo: () => void;
   onRedo: () => void;
   onOpenWorkflows: () => void;
+  onOpenBotCredentials?: () => void;
   onExport: () => void;
   onImport: () => void;
   onFitView: () => void;
@@ -75,6 +77,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onUndo,
   onRedo,
   onOpenWorkflows,
+  onOpenBotCredentials,
   onExport,
   onImport,
   onFitView,
@@ -412,6 +415,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           <span className="hidden md:inline">Workflows</span>
         </button>
 
+        {/* Bot Credentials Button */}
+        {onOpenBotCredentials && (
+          <button
+            onClick={onOpenBotCredentials}
+            className="p-1.5 sm:px-2 sm:py-1.5 rounded-lg text-xs font-medium text-gray-300 hover:text-white hover:bg-[#161a24] transition-colors border border-[#1c2230] flex items-center gap-1 shrink-0"
+            title="Manage Bot Accounts (Telegram, Discord, Slack)"
+          >
+            <Key className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="hidden xl:inline">Bot Accounts</span>
+          </button>
+        )}
+
         {/* Export / Import - shown on lg screens */}
         <div className="hidden lg:flex items-center gap-0.5">
           <button
@@ -478,6 +493,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 <Maximize2 className="w-3.5 h-3.5" />
                 <span>Fit Canvas (F)</span>
               </button>
+              {onOpenBotCredentials && (
+                <button
+                  onClick={() => {
+                    onOpenBotCredentials();
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#1c2230] hover:text-white"
+                >
+                  <Key className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Bot Accounts</span>
+                </button>
+              )}
               <div className="h-[1px] bg-[#1c2230] my-1" />
               <button
                 onClick={() => {

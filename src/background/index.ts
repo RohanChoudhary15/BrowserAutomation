@@ -7,15 +7,19 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 }
 
+export const REQUIRED_CONTENT_VERSION = '1.3.0-qol-features';
+
 /**
- * Ensures content script is injected into the target tab
+ * Ensures content script is injected into the target tab with the latest version
  */
-async function ensureContentScriptInjected(tabId: number): Promise<boolean> {
+async function ensureContentScriptInjected(tabId: number, force = false): Promise<boolean> {
   try {
-    // Ping to check if already listening
-    const response = await chrome.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
-    if (response && response.success) {
-      return true;
+    if (!force) {
+      // Ping to check if already listening with up-to-date version
+      const response = await chrome.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
+      if (response && response.success && response.version === REQUIRED_CONTENT_VERSION) {
+        return true;
+      }
     }
 
     // Inject CSS
@@ -139,7 +143,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           }
 
           await ensureContentScriptInjected(tabId);
-          return await chrome.tabs.sendMessage(tabId, message);
+          try {
+            const res = await chrome.tabs.sendMessage(tabId, message);
+            // If outdated content script threw Unsupported DOM action, force re-inject latest content script and retry once
+            if (res && !res.success && typeof res.error === 'string' && res.error.includes('Unsupported DOM action')) {
+              console.warn('[AutoFlow] Tab has outdated content script, re-injecting latest version and retrying...', res.error);
+              await ensureContentScriptInjected(tabId, true);
+              return await chrome.tabs.sendMessage(tabId, message);
+            }
+            return res;
+          } catch (err: any) {
+            // Connection to tab content script failed or port closed; re-inject and retry
+            console.warn('[AutoFlow] Content script connection error, re-injecting...', err);
+            await ensureContentScriptInjected(tabId, true);
+            return await chrome.tabs.sendMessage(tabId, message);
+          }
         }
 
         default:

@@ -29,15 +29,19 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   }, [isOpen]);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent | PointerEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
     if (isOpen) {
-      window.addEventListener('mousedown', handleClickOutside);
+      window.addEventListener('pointerdown', handleClickOutside as any, { capture: true });
+      window.addEventListener('mousedown', handleClickOutside, { capture: true });
     }
-    return () => window.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      window.removeEventListener('pointerdown', handleClickOutside as any, { capture: true });
+      window.removeEventListener('mousedown', handleClickOutside, { capture: true });
+    };
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
@@ -54,14 +58,27 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   });
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        left: `${Math.min(position.x, window.innerWidth - 300)}px`,
-        top: `${Math.min(position.y, window.innerHeight - 360)}px`,
-      }}
-      className="fixed z-50 w-72 bg-[#11141c] border border-[#232a3b] rounded-2xl shadow-2xl p-2 text-xs select-none backdrop-blur-xl animate-in zoom-in-95 duration-100"
-    >
+    <>
+      {/* Invisible backdrop to capture canvas clicks */}
+      <div
+        className="fixed inset-0 z-40 bg-transparent"
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+      />
+      <div
+        ref={containerRef}
+        style={{
+          left: `${Math.min(position.x, window.innerWidth - 300)}px`,
+          top: `${Math.min(position.y, window.innerHeight - 360)}px`,
+        }}
+        className="fixed z-50 w-72 bg-[#11141c] border border-[#232a3b] rounded-2xl shadow-2xl p-2 text-xs select-none backdrop-blur-xl animate-in zoom-in-95 duration-100"
+      >
       <div className="relative mb-2">
         <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-gray-400" />
         <input
@@ -108,5 +125,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         })}
       </div>
     </div>
-  );
+  </>
+);
 };

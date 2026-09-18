@@ -5,7 +5,8 @@ export type NodeCategory =
   | 'extraction'
   | 'logic'
   | 'data'
-  | 'utility';
+  | 'utility'
+  | 'messaging';
 
 export type NodeType =
   // Browser
@@ -37,6 +38,8 @@ export type NodeType =
   | 'extract_table'
   | 'extract_multiple'
   | 'extract_links'
+  | 'extract_image'
+  | 'extract_all_images'
   // Logic
   | 'condition'
   | 'contains'
@@ -59,7 +62,11 @@ export type NodeType =
   | 'storage_manage'
   | 'clipboard'
   | 'ai_agent'
-  | 'autonomous_agent';
+  | 'autonomous_agent'
+  // Messaging & Notifications
+  | 'telegram_message'
+  | 'discord_message'
+  | 'slack_message';
 
 export interface WorkflowNodeData {
   label: string;

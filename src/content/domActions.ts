@@ -916,6 +916,325 @@ export async function extractLinks(
   return { links };
 }
 
+export async function extractImageElement(
+  selector = 'img',
+  params: {
+    mode?: 'single' | 'multiple';
+    asBase64?: boolean;
+    includeBackground?: boolean;
+    timeout?: number;
+  } = {},
+  signal?: AbortSignal
+): Promise<{
+  success: boolean;
+  url?: string;
+  alt?: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  dataUrl?: string;
+  items?: Array<{ url: string; alt?: string; title?: string; width?: number; height?: number; dataUrl?: string }>;
+}> {
+  const timeout = params.timeout || 10000;
+  const startTime = Date.now();
+  const pollInterval = 100;
+  const isMultiple = params.mode === 'multiple';
+
+  const resolveUrl = (src: string): string => {
+    if (!src) return '';
+    if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('http://') || src.startsWith('https://')) {
+      return src;
+    }
+    try {
+      return new URL(src, document.baseURI).href;
+    } catch {
+      return src;
+    }
+  };
+
+  const getElementImageSrc = (el: Element): { src: string; isBackground?: boolean } => {
+    if (el instanceof HTMLImageElement) {
+      const src = el.currentSrc || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.srcset || '';
+      if (src) return { src: resolveUrl(src) };
+    }
+    if (el instanceof HTMLSourceElement) {
+      const src = el.srcset || el.getAttribute('src') || '';
+      if (src) return { src: resolveUrl(src) };
+    }
+    // Check for child img
+    const childImg = el.querySelector('img');
+    if (childImg) {
+      const src = childImg.currentSrc || childImg.getAttribute('src') || childImg.getAttribute('data-src') || childImg.getAttribute('data-lazy-src') || '';
+      if (src) return { src: resolveUrl(src) };
+    }
+    // Check background image
+    if (params.includeBackground !== false) {
+      const bg = window.getComputedStyle(el).backgroundImage;
+      if (bg && bg !== 'none') {
+        const match = bg.match(/url\(['"]?(.*?)['"]?\)/i);
+        if (match && match[1]) {
+          return { src: resolveUrl(match[1]), isBackground: true };
+        }
+      }
+    }
+    // Check src or href attribute
+    const rawAttr = el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('data-src') || '';
+    if (rawAttr) return { src: resolveUrl(rawAttr) };
+
+    return { src: '' };
+  };
+
+  const toDataUrl = async (el: Element, src: string): Promise<string | undefined> => {
+    if (src.startsWith('data:image/')) return src;
+    if (el instanceof HTMLImageElement && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = el.naturalWidth;
+        canvas.height = el.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(el, 0, 0);
+          return canvas.toDataURL('image/png');
+        }
+      } catch {
+        // Cross-origin image without CORS might error on canvas export
+      }
+    }
+    return undefined;
+  };
+
+  return new Promise((resolve, reject) => {
+    const check = async () => {
+      if (signal?.aborted) return reject(new Error('Extract image aborted.'));
+
+      let elements = selector ? Array.from(document.querySelectorAll(selector)) : [];
+      if (elements.length === 0 && (!selector || selector === 'img')) {
+        elements = Array.from(document.querySelectorAll('img, picture, [style*="background-image"]'));
+      }
+
+      if (elements.length > 0) {
+        flashHighlight(elements[0]);
+
+        if (isMultiple) {
+          const items: any[] = [];
+          for (const el of elements.slice(0, 50)) {
+            const { src } = getElementImageSrc(el);
+            if (src) {
+              const alt = el.getAttribute('alt') || '';
+              const title = el.getAttribute('title') || '';
+              const width = (el as HTMLImageElement).naturalWidth || (el as HTMLElement).offsetWidth || undefined;
+              const height = (el as HTMLImageElement).naturalHeight || (el as HTMLElement).offsetHeight || undefined;
+              let dataUrl: string | undefined;
+              if (params.asBase64) {
+                dataUrl = await toDataUrl(el, src);
+              }
+              items.push({ url: src, alt, title, width, height, dataUrl: dataUrl || src });
+            }
+          }
+          return resolve({ success: true, items });
+        } else {
+          const el = elements[0];
+          const { src } = getElementImageSrc(el);
+          const alt = el.getAttribute('alt') || '';
+          const title = el.getAttribute('title') || '';
+          const width = (el as HTMLImageElement).naturalWidth || (el as HTMLElement).offsetWidth || undefined;
+          const height = (el as HTMLImageElement).naturalHeight || (el as HTMLElement).offsetHeight || undefined;
+          let dataUrl: string | undefined;
+          if (params.asBase64) {
+            dataUrl = await toDataUrl(el, src);
+          }
+          return resolve({
+            success: true,
+            url: src,
+            alt,
+            title,
+            width,
+            height,
+            dataUrl: dataUrl || src,
+          });
+        }
+      }
+
+      if (Date.now() - startTime >= timeout) {
+        return resolve({ success: false, url: '', items: [] });
+      }
+      setTimeout(check, pollInterval);
+    };
+    check();
+  });
+}
+
+export interface ExtractedPageImageItem {
+  url: string;
+  dataUrl?: string;
+  alt: string;
+  title: string;
+  width?: number;
+  height?: number;
+  tagName: string;
+  selector?: string;
+  isBackground?: boolean;
+}
+
+export async function extractAllPageImages(
+  params: {
+    containerSelector?: string;
+    includeBackground?: boolean;
+    asBase64?: boolean;
+    minWidth?: number;
+    minHeight?: number;
+    maxImages?: number;
+    timeout?: number;
+  } = {},
+  signal?: AbortSignal
+): Promise<{
+  success: boolean;
+  count: number;
+  items: ExtractedPageImageItem[];
+  urls: string[];
+}> {
+  const root = params.containerSelector ? (queryElement(params.containerSelector) || document) : document;
+  const includeBg = params.includeBackground !== false;
+  const minW = params.minWidth ?? 5;
+  const minH = params.minHeight ?? 5;
+  const maxLimit = params.maxImages || 100;
+
+  const resolveUrl = (src: string): string => {
+    if (!src) return '';
+    if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('http://') || src.startsWith('https://')) {
+      return src;
+    }
+    try {
+      return new URL(src, document.baseURI).href;
+    } catch {
+      return src;
+    }
+  };
+
+  const toDataUrl = async (el: Element, src: string): Promise<string | undefined> => {
+    if (src.startsWith('data:image/')) return src;
+    if (el instanceof HTMLImageElement && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = el.naturalWidth;
+        canvas.height = el.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(el, 0, 0);
+          return canvas.toDataURL('image/png');
+        }
+      } catch {
+        // Cross-origin image canvas security limitation
+      }
+    }
+    return undefined;
+  };
+
+  const seenUrls = new Set<string>();
+  const items: ExtractedPageImageItem[] = [];
+
+  // 1. Gather all <img> elements
+  const imgEls = Array.from(root.querySelectorAll('img'));
+  for (const img of imgEls) {
+    if (items.length >= maxLimit) break;
+    const rawSrc = img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
+    const src = resolveUrl(rawSrc);
+    if (!src || seenUrls.has(src)) continue;
+
+    const w = img.naturalWidth || img.offsetWidth || 0;
+    const h = img.naturalHeight || img.offsetHeight || 0;
+
+    // Filter out 1x1 tracking beacons if dimensions known
+    if (w > 0 && h > 0 && (w < minW || h < minH)) continue;
+
+    seenUrls.add(src);
+    let dataUrl: string | undefined;
+    if (params.asBase64) {
+      dataUrl = await toDataUrl(img, src);
+    }
+
+    items.push({
+      url: src,
+      dataUrl: dataUrl || src,
+      alt: img.getAttribute('alt') || '',
+      title: img.getAttribute('title') || '',
+      width: w || undefined,
+      height: h || undefined,
+      tagName: 'IMG',
+      isBackground: false,
+    });
+  }
+
+  // 2. Gather picture > source elements
+  if (items.length < maxLimit) {
+    const sources = Array.from(root.querySelectorAll('picture source'));
+    for (const s of sources) {
+      if (items.length >= maxLimit) break;
+      const rawSrc = s.getAttribute('srcset') || s.getAttribute('src') || '';
+      const firstSrc = rawSrc.split(',')[0]?.trim().split(' ')[0] || '';
+      const src = resolveUrl(firstSrc);
+      if (!src || seenUrls.has(src)) continue;
+
+      seenUrls.add(src);
+      items.push({
+        url: src,
+        dataUrl: src,
+        alt: '',
+        title: '',
+        tagName: 'SOURCE',
+        isBackground: false,
+      });
+    }
+  }
+
+  // 3. Gather background images if requested
+  if (includeBg && items.length < maxLimit) {
+    const allCandidateEls = Array.from(root.querySelectorAll('*'));
+    for (const el of allCandidateEls) {
+      if (items.length >= maxLimit) break;
+      if (el instanceof HTMLImageElement || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+
+      const inlineBg = (el as HTMLElement).style?.backgroundImage;
+      const computedBg = inlineBg || window.getComputedStyle(el).backgroundImage;
+      if (computedBg && computedBg !== 'none' && computedBg.includes('url(')) {
+        const match = computedBg.match(/url\(['"]?(.*?)['"]?\)/i);
+        if (match && match[1]) {
+          const src = resolveUrl(match[1]);
+          if (!src || seenUrls.has(src)) continue;
+
+          const w = (el as HTMLElement).offsetWidth || 0;
+          const h = (el as HTMLElement).offsetHeight || 0;
+          if (w > 0 && h > 0 && (w < minW || h < minH)) continue;
+
+          seenUrls.add(src);
+          items.push({
+            url: src,
+            dataUrl: src,
+            alt: '',
+            title: el.getAttribute('title') || '',
+            width: w || undefined,
+            height: h || undefined,
+            tagName: el.tagName,
+            isBackground: true,
+          });
+        }
+      }
+    }
+  }
+
+  // Flash highlight on the first few found images
+  if (imgEls.length > 0) {
+    imgEls.slice(0, 3).forEach(el => flashHighlight(el));
+  }
+
+  return {
+    success: true,
+    count: items.length,
+    items,
+    urls: items.map(i => i.url),
+  };
+}
+
 export async function manageStorage(params: {
   type?: 'local' | 'session';
   action?: 'get' | 'set' | 'remove' | 'clear';

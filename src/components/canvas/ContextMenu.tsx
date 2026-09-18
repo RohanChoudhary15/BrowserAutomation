@@ -1,16 +1,24 @@
 import React, { useEffect, useRef } from 'react';
-import { Play, Copy, EyeOff, Eye, Trash2, Edit3, Plus, Maximize2, CheckSquare } from 'lucide-react';
+import { Play, Copy, EyeOff, Eye, Trash2, Edit3, Plus, Maximize2, CheckSquare, ClipboardCopy, ClipboardPaste } from 'lucide-react';
 import { WorkflowNode } from '../../types/workflow';
 
 interface ContextMenuProps {
   x: number;
   y: number;
   node?: WorkflowNode | null;
+  selectedNodesCount?: number;
+  canPaste?: boolean;
   onClose: () => void;
   onRunNode?: (nodeId: string) => void;
+  onCopyNode?: (node: WorkflowNode) => void;
+  onCopySelected?: () => void;
+  onPaste?: (pos: { x: number; y: number }) => void;
   onDuplicateNode?: (node: WorkflowNode) => void;
+  onDuplicateSelected?: () => void;
   onToggleDisableNode?: (nodeId: string) => void;
+  onToggleDisableSelected?: () => void;
   onDeleteNode?: (nodeId: string) => void;
+  onDeleteSelected?: () => void;
   onAddNode?: (pos: { x: number; y: number }) => void;
   onFitView?: () => void;
   onSelectAll?: () => void;
@@ -20,11 +28,19 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   x,
   y,
   node,
+  selectedNodesCount = 0,
+  canPaste = false,
   onClose,
   onRunNode,
+  onCopyNode,
+  onCopySelected,
+  onPaste,
   onDuplicateNode,
+  onDuplicateSelected,
   onToggleDisableNode,
+  onToggleDisableSelected,
   onDeleteNode,
+  onDeleteSelected,
   onAddNode,
   onFitView,
   onSelectAll,
@@ -47,7 +63,54 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       style={{ left: `${x}px`, top: `${y}px` }}
       className="fixed z-50 min-w-[160px] bg-[#161a24] border border-[#232a3b] rounded-xl shadow-2xl p-1 text-xs text-gray-200 select-none backdrop-blur-md animate-in fade-in duration-100"
     >
-      {node ? (
+      {selectedNodesCount > 1 ? (
+        <>
+          <div className="px-2.5 py-1 text-[10px] font-semibold text-indigo-400 border-b border-[#232a3b] mb-1">
+            {selectedNodesCount} Nodes Selected
+          </div>
+          <button
+            onClick={() => {
+              onCopySelected?.();
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-left transition-colors"
+          >
+            <ClipboardCopy className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Copy ({selectedNodesCount})</span>
+          </button>
+          <button
+            onClick={() => {
+              onDuplicateSelected?.();
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-left transition-colors"
+          >
+            <Copy className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Duplicate ({selectedNodesCount})</span>
+          </button>
+          <button
+            onClick={() => {
+              onToggleDisableSelected?.();
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-left transition-colors"
+          >
+            <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+            <span>Toggle Disable ({selectedNodesCount})</span>
+          </button>
+          <div className="h-[1px] bg-[#232a3b] my-1" />
+          <button
+            onClick={() => {
+              onDeleteSelected?.();
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>Delete ({selectedNodesCount})</span>
+          </button>
+        </>
+      ) : node ? (
         <>
           <button
             onClick={() => {
@@ -58,6 +121,16 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>Run Node</span>
+          </button>
+          <button
+            onClick={() => {
+              onCopyNode?.(node);
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-left transition-colors"
+          >
+            <ClipboardCopy className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Copy Node</span>
           </button>
           <button
             onClick={() => {
@@ -103,6 +176,18 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Plus className="w-3.5 h-3.5" />
             <span>Add Node...</span>
           </button>
+          {canPaste && (
+            <button
+              onClick={() => {
+                onPaste?.({ x, y });
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-indigo-300 text-left transition-colors"
+            >
+              <ClipboardPaste className="w-3.5 h-3.5" />
+              <span>Paste Nodes</span>
+            </button>
+          )}
           <button
             onClick={() => {
               onFitView?.();

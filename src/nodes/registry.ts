@@ -270,13 +270,15 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
   },
   extract_multiple: {
     type: 'extract_multiple',
-    label: 'Extract Multiple',
+    label: 'Extract Multiple Elements',
     category: 'extraction',
-    description: 'Extract text or attributes from all matching elements into an array',
+    description: 'Extract text or attributes from all matching elements into an array with inline loop body',
     icon: 'ListChecks',
+    reactFlowType: 'iteratorNode',
     defaultProperties: {
       selector: '',
       attribute: '',
+      itemVariable: 'currentElement',
       outputVariable: 'extractedList',
       timeout: 10000,
     },
@@ -290,6 +292,42 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     defaultProperties: {
       selector: '',
       outputVariable: 'extractedLinks',
+      timeout: 10000,
+    },
+  },
+  extract_image: {
+    type: 'extract_image',
+    label: 'Extract Image',
+    category: 'extraction',
+    description: 'Extract image URL or base64 data from an element, background, or page',
+    icon: 'Image',
+    reactFlowType: 'iteratorNode',
+    defaultProperties: {
+      selector: 'img',
+      mode: 'single', // 'single' | 'multiple'
+      asBase64: false,
+      includeBackground: true,
+      itemVariable: 'currentImage',
+      outputVariable: 'extractedImage',
+      timeout: 10000,
+    },
+  },
+  extract_all_images: {
+    type: 'extract_all_images',
+    label: 'Find All Images',
+    category: 'extraction',
+    description: 'Find and extract all images from the page or container with inline loop body',
+    icon: 'Images',
+    reactFlowType: 'iteratorNode',
+    defaultProperties: {
+      containerSelector: '',
+      includeBackground: true,
+      asBase64: false,
+      minWidth: 10,
+      minHeight: 10,
+      maxImages: 100,
+      itemVariable: 'currentImage',
+      outputVariable: 'allImages',
       timeout: 10000,
     },
   },
@@ -527,6 +565,78 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'agentResult',
     },
   },
+
+  // Messaging & Notifications
+  telegram_message: {
+    type: 'telegram_message',
+    label: 'Telegram Message',
+    category: 'messaging',
+    description: 'Send messages, photos, screenshots, or alerts to Telegram via Bot API',
+    icon: 'Send',
+    defaultProperties: {
+      credentialId: '',
+      botToken: '',
+      chatId: '',
+      messageType: 'text', // 'text' | 'photo' | 'document'
+      message: 'AutoFlow notification: {{extractedText}}',
+      imageUrl: '', // Can be image URL, data URL, or {{screenshotUrl}}
+      caption: '',
+      parseMode: 'HTML',
+      silent: false,
+      protectContent: false,
+      outputVariable: 'telegramResponse',
+    },
+  },
+  discord_message: {
+    type: 'discord_message',
+    label: 'Discord Message',
+    category: 'messaging',
+    description: 'Send alerts, rich embeds, images, and screenshots to Discord',
+    icon: 'MessageSquare',
+    defaultProperties: {
+      credentialId: '',
+      mode: 'webhook',
+      webhookUrl: '',
+      botToken: '',
+      channelId: '',
+      messageType: 'text', // 'text' | 'embed' | 'image'
+      content: 'AutoFlow notification: {{extractedText}}',
+      imageUrl: '', // Image URL, base64 data URL, or {{screenshotUrl}}
+      username: 'AutoFlow Bot',
+      avatarUrl: '',
+      embedTitle: '',
+      embedDescription: '',
+      embedColor: '#5865F2',
+      embedFooter: '',
+      embedThumbnail: '',
+      embedFields: [], // [{ name: 'Status', value: 'OK', inline: true }]
+      outputVariable: 'discordResponse',
+    },
+  },
+  slack_message: {
+    type: 'slack_message',
+    label: 'Slack Message',
+    category: 'messaging',
+    description: 'Post messages, rich Block Kit cards, images, or screenshots to Slack',
+    icon: 'Hash',
+    defaultProperties: {
+      credentialId: '',
+      mode: 'webhook',
+      webhookUrl: '',
+      botToken: '',
+      channel: '#general',
+      messageType: 'text', // 'text' | 'rich' | 'image'
+      text: 'AutoFlow notification: {{extractedText}}',
+      headerText: '',
+      imageUrl: '', // Image URL, base64 data URL, or {{screenshotUrl}}
+      imageAlt: 'AutoFlow Image',
+      fields: [], // [{ label: 'Price', value: '{{price}}' }]
+      footerText: '',
+      username: 'AutoFlow Bot',
+      iconEmoji: ':robot_face:',
+      outputVariable: 'slackResponse',
+    },
+  },
 };
 
 export const CATEGORIES: { id: NodeCategory; label: string; color: string }[] = [
@@ -537,6 +647,7 @@ export const CATEGORIES: { id: NodeCategory; label: string; color: string }[] = 
   { id: 'logic', label: 'Logic', color: '#8b5cf6' },
   { id: 'data', label: 'Data', color: '#ec4899' },
   { id: 'utility', label: 'Utility', color: '#06b6d4' },
+  { id: 'messaging', label: 'Messaging', color: '#14b8a6' },
 ];
 
 export function getNodeDefinition(type: NodeType): NodeDefinition {

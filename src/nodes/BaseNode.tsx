@@ -34,6 +34,8 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.properties?.name) summary = `name: ${data.properties.name}`;
   else if (data.properties?.leftValue) summary = `${data.properties.leftValue} ${data.properties.operator || '=='} ${data.properties.rightValue || ''}`;
   else if (data.properties?.code) summary = data.properties.code.slice(0, 30);
+  else if (data.properties?.message) summary = `"${data.properties.message.slice(0, 28)}"`;
+  else if (data.properties?.content) summary = `"${data.properties.content.slice(0, 28)}"`;
 
   // Status-specific border and glow
   let borderClass = 'border-[#232a3b] hover:border-[#3b82f6]/60';

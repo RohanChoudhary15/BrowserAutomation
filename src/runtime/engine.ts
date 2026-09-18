@@ -270,11 +270,81 @@ export class WorkflowEngine {
         this.pause();
       }
 
-      // Follow next branch
-      const nextNodes = this.getNextNodes(node.id, result.nextBranch);
-      for (const next of nextNodes) {
-        if (ctx.signal.aborted) break;
-        await this.traverseAndExecute(next, ctx);
+      // Check if this node has inline loop body attached (e.g. extract_all_images, extract_multiple, extract_image, or any node with loop_body handle)
+      const bodyNodes = this.getNextNodes(node.id, 'loop_body');
+      const doneNodes = this.getNextNodes(node.id, 'loop_done');
+
+      if (bodyNodes.length > 0) {
+        // Resolve collection to iterate over
+        let items: any[] = [];
+        if (Array.isArray(result.output)) {
+          items = result.output;
+        } else if (Array.isArray(result.items)) {
+          items = result.items;
+        } else if (node.data.properties?.outputVariable && Array.isArray(this.variables[node.data.properties.outputVariable])) {
+          items = this.variables[node.data.properties.outputVariable];
+        } else if (result.output !== undefined && result.output !== null) {
+          items = [result.output];
+        }
+
+        const isImageNode = node.data.type === 'extract_all_images' || node.data.type === 'extract_image';
+        const isElementNode = node.data.type === 'extract_multiple';
+        const customVar = node.data.properties?.itemVariable;
+
+        this.log({
+          level: 'info',
+          message: `Iterating loop body for ${items.length} items from ${node.data.label}`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+
+        for (let index = 0; index < items.length; index++) {
+          if (ctx.signal.aborted) break;
+          const item = items[index];
+
+          ctx.variables.index = index;
+          ctx.variables.item = item;
+          if (isImageNode) {
+            ctx.variables.currentImage = item;
+            if (typeof item === 'object' && item !== null) {
+              if (item.url) ctx.variables.imageUrl = item.url;
+              if (item.dataUrl) ctx.variables.imageDataUrl = item.dataUrl;
+            } else if (typeof item === 'string') {
+              ctx.variables.imageUrl = item;
+            }
+          }
+          if (isElementNode) {
+            ctx.variables.currentElement = item;
+          }
+          if (customVar) {
+            ctx.variables[customVar] = item;
+          }
+
+          Object.assign(this.variables, ctx.variables);
+          this.events.onVariablesChange?.(this.variables);
+
+          for (const bNode of bodyNodes) {
+            if (ctx.signal.aborted) break;
+            await this.traverseAndExecute(bNode, ctx);
+          }
+        }
+
+        // After loop completes, follow 'loop_done' edges (or any non-loop_body edges)
+        const continuationNodes = doneNodes.length > 0
+          ? doneNodes
+          : this.getNextNodes(node.id).filter(n => !bodyNodes.some(bn => bn.id === n.id));
+
+        for (const next of continuationNodes) {
+          if (ctx.signal.aborted) break;
+          await this.traverseAndExecute(next, ctx);
+        }
+      } else {
+        // Standard branch execution
+        const nextNodes = this.getNextNodes(node.id, result.nextBranch);
+        for (const next of nextNodes) {
+          if (ctx.signal.aborted) break;
+          await this.traverseAndExecute(next, ctx);
+        }
       }
     } catch (err: any) {
       const durationMs = Date.now() - startTime;

@@ -4,6 +4,7 @@ import { interpolateVariables } from '../interpolator';
 import { evaluateCondition } from '../evaluator';
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
+import { getCredentialById } from '../../storage/credentialStore';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -35,8 +36,21 @@ async function sendDomAction(
     }
     return response;
   } else {
-    // In mock/test environment without chrome API, fallback or simulate
     console.warn(`[AutoFlow Mock] Simulating DOM action: ${action}`, params);
+    if (action === 'extract_image') {
+      return { success: true, url: 'https://example.com/mock-image.png', dataUrl: 'https://example.com/mock-image.png', items: [] };
+    }
+    if (action === 'extract_all_images') {
+      return {
+        success: true,
+        count: 2,
+        items: [
+          { url: 'https://example.com/mock1.png', dataUrl: 'https://example.com/mock1.png', alt: 'Mock 1', width: 200, height: 100, tagName: 'IMG' },
+          { url: 'https://example.com/mock2.png', dataUrl: 'https://example.com/mock2.png', alt: 'Mock 2', width: 300, height: 150, tagName: 'IMG' },
+        ],
+        urls: ['https://example.com/mock1.png', 'https://example.com/mock2.png'],
+      };
+    }
     return { success: true, text: 'Sample Text', html: '<div>Sample</div>', rows: [] };
   }
 }
@@ -645,6 +659,94 @@ export const executeExtractLinks: NodeExecutor = async (node, ctx) => {
   };
 };
 
+export const executeExtractImage: NodeExecutor = async (node, ctx) => {
+  const selector = node.data.properties.selector ? interpolateVariables(node.data.properties.selector, ctx.variables) : 'img';
+  const mode = node.data.properties.mode || 'single';
+  const asBase64 = !!node.data.properties.asBase64;
+  const includeBackground = node.data.properties.includeBackground !== false;
+  const outputVariable = node.data.properties.outputVariable || 'extractedImage';
+  const timeout = Number(node.data.properties.timeout) || 10000;
+
+  ctx.log({ level: 'info', message: `Extracting image(s) from ${selector || 'page'}`, nodeId: node.id, nodeName: node.data.label });
+  const res = await sendDomAction('extract_image', { selector, mode, asBase64, includeBackground, timeout }, ctx, timeout);
+
+  const mainValue = mode === 'multiple' ? (res?.items || []) : (res?.dataUrl || res?.url || '');
+
+  ctx.log({
+    level: 'success',
+    message: mode === 'multiple'
+      ? `Extracted ${res?.items?.length || 0} images`
+      : `Extracted image: ${res?.url ? res.url.slice(0, 50) : (res?.dataUrl ? 'base64 data' : 'none')}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: mainValue,
+    variables: {
+      [outputVariable]: mainValue,
+      [`${outputVariable}_details`]: res,
+    },
+  };
+};
+
+export const executeExtractAllImages: NodeExecutor = async (node, ctx) => {
+  const containerSelector = node.data.properties.containerSelector
+    ? interpolateVariables(node.data.properties.containerSelector, ctx.variables)
+    : undefined;
+  const includeBackground = node.data.properties.includeBackground !== false;
+  const asBase64 = !!node.data.properties.asBase64;
+  const minWidth = Number(node.data.properties.minWidth) || 10;
+  const minHeight = Number(node.data.properties.minHeight) || 10;
+  const maxImages = Number(node.data.properties.maxImages) || 100;
+  const outputVariable = node.data.properties.outputVariable || 'allImages';
+  const timeout = Number(node.data.properties.timeout) || 10000;
+
+  ctx.log({
+    level: 'info',
+    message: `Finding all images on page${containerSelector ? ` in ${containerSelector}` : ''}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const res = await sendDomAction(
+    'extract_all_images',
+    {
+      containerSelector,
+      includeBackground,
+      asBase64,
+      minWidth,
+      minHeight,
+      maxImages,
+      timeout,
+    },
+    ctx,
+    timeout
+  );
+
+  const items = res?.items || [];
+  const urls = res?.urls || items.map((i: any) => i.url || i);
+
+  ctx.log({
+    level: 'success',
+    message: `Found ${items.length} images on page`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: items,
+    items,
+    variables: {
+      [outputVariable]: items,
+      [`${outputVariable}_urls`]: urls,
+      [`${outputVariable}_count`]: items.length,
+    },
+  };
+};
+
 export const executeStorageManage: NodeExecutor = async (node, ctx) => {
   const storageType = node.data.properties.type || 'local';
   const action = node.data.properties.action || 'get';
@@ -857,6 +959,513 @@ export const executeAutonomousAgent: NodeExecutor = async (node, ctx) => {
   };
 };
 
+// ----------------- MESSAGING & NOTIFICATION EXECUTORS -----------------
+
+// ----------------- MESSAGING & NOTIFICATION EXECUTORS -----------------
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const parts = dataUrl.split(',');
+  const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/png';
+  const binary = atob(parts[1]);
+  const array = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    array[i] = binary.charCodeAt(i);
+  }
+  return new Blob([array], { type: mime });
+}
+
+export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawChatId = node.data.properties.chatId || savedCred?.defaultChatId || '';
+  const messageType = node.data.properties.messageType || 'text'; // 'text' | 'photo' | 'document'
+  const rawMessage = node.data.properties.message || '';
+  const rawCaption = node.data.properties.caption || '';
+  const rawImageUrl = node.data.properties.imageUrl || '';
+  const parseMode = node.data.properties.parseMode || 'HTML';
+  const silent = !!node.data.properties.silent;
+  const protectContent = !!node.data.properties.protectContent;
+  const outputVariable = node.data.properties.outputVariable || 'telegramResponse';
+
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const chatId = String(interpolateVariables(rawChatId, ctx.variables)).trim();
+  const message = String(interpolateVariables(rawMessage, ctx.variables));
+  const caption = String(interpolateVariables(rawCaption, ctx.variables));
+  const imageUrl = rawImageUrl ? String(interpolateVariables(rawImageUrl, ctx.variables)).trim() : '';
+
+  if (!botToken) {
+    throw new Error('Telegram Bot Token is required. Select a saved account or provide a token.');
+  }
+  if (!chatId) {
+    throw new Error('Telegram Chat ID is required. Use your chat ID or @channel.');
+  }
+
+  const isPhoto = messageType === 'photo' || (!!imageUrl && messageType !== 'document');
+  const isDocument = messageType === 'document';
+
+  let endpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  let fetchOptions: RequestInit = { method: 'POST', signal: ctx.signal };
+
+  const captionText = caption || message || '';
+
+  if (isPhoto && imageUrl) {
+    endpoint = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+    if (imageUrl.startsWith('data:')) {
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      const blob = dataUrlToBlob(imageUrl);
+      formData.append('photo', blob, 'screenshot.png');
+      if (captionText) formData.append('caption', captionText);
+      if (parseMode && parseMode !== 'None') formData.append('parse_mode', parseMode);
+      if (silent) formData.append('disable_notification', 'true');
+      if (protectContent) formData.append('protect_content', 'true');
+      fetchOptions.body = formData;
+    } else {
+      fetchOptions.headers = { 'Content-Type': 'application/json' };
+      fetchOptions.body = JSON.stringify({
+        chat_id: chatId,
+        photo: imageUrl,
+        ...(captionText ? { caption: captionText } : {}),
+        ...(parseMode && parseMode !== 'None' ? { parse_mode: parseMode } : {}),
+        ...(silent ? { disable_notification: true } : {}),
+        ...(protectContent ? { protect_content: true } : {}),
+      });
+    }
+  } else if (isDocument && imageUrl) {
+    endpoint = `https://api.telegram.org/bot${botToken}/sendDocument`;
+    if (imageUrl.startsWith('data:')) {
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      const blob = dataUrlToBlob(imageUrl);
+      formData.append('document', blob, 'document.png');
+      if (captionText) formData.append('caption', captionText);
+      if (parseMode && parseMode !== 'None') formData.append('parse_mode', parseMode);
+      if (silent) formData.append('disable_notification', 'true');
+      fetchOptions.body = formData;
+    } else {
+      fetchOptions.headers = { 'Content-Type': 'application/json' };
+      fetchOptions.body = JSON.stringify({
+        chat_id: chatId,
+        document: imageUrl,
+        ...(captionText ? { caption: captionText } : {}),
+        ...(parseMode && parseMode !== 'None' ? { parse_mode: parseMode } : {}),
+        ...(silent ? { disable_notification: true } : {}),
+      });
+    }
+  } else {
+    if (!message) {
+      throw new Error('Telegram message text cannot be empty.');
+    }
+    fetchOptions.headers = { 'Content-Type': 'application/json' };
+    fetchOptions.body = JSON.stringify({
+      chat_id: chatId,
+      text: message,
+      ...(parseMode && parseMode !== 'None' ? { parse_mode: parseMode } : {}),
+      ...(silent ? { disable_notification: true } : {}),
+      ...(protectContent ? { protect_content: true } : {}),
+    });
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Sending Telegram ${isPhoto ? 'photo' : isDocument ? 'document' : 'message'} to ${chatId}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const response = await fetch(endpoint, fetchOptions);
+  const contentType = response.headers.get('content-type') || '';
+  const resData = contentType.includes('application/json') ? await response.json() : await response.text();
+
+  if (!response.ok || (typeof resData === 'object' && resData.ok === false)) {
+    const errMsg =
+      (typeof resData === 'object' && resData.description) ||
+      response.statusText ||
+      'Telegram message dispatch failed';
+    throw new Error(`Telegram error (${response.status}): ${errMsg}`);
+  }
+
+  ctx.log({
+    level: 'success',
+    message: `Telegram ${isPhoto ? 'photo' : 'message'} delivered successfully to ${chatId}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: resData,
+    variables: { [outputVariable]: resData },
+  };
+};
+
+export const executeDiscordMessage: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const mode = node.data.properties.mode || savedCred?.mode || 'webhook';
+  const rawWebhookUrl = node.data.properties.webhookUrl || savedCred?.webhookUrl || '';
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawChannelId = node.data.properties.channelId || savedCred?.channelId || '';
+  const rawContent = node.data.properties.content || '';
+  const rawUsername = node.data.properties.username || savedCred?.username || '';
+  const rawAvatarUrl = node.data.properties.avatarUrl || savedCred?.avatarUrl || '';
+  const rawImageUrl = node.data.properties.imageUrl || '';
+  const rawEmbedTitle = node.data.properties.embedTitle || '';
+  const rawEmbedDescription = node.data.properties.embedDescription || '';
+  const rawEmbedFooter = node.data.properties.embedFooter || node.data.properties.footerText || '';
+  const rawEmbedThumbnail = node.data.properties.embedThumbnail || node.data.properties.thumbnailUrl || '';
+  const embedColor = node.data.properties.embedColor || '#5865F2';
+  const rawFields = node.data.properties.embedFields || [];
+  const outputVariable = node.data.properties.outputVariable || 'discordResponse';
+
+  const webhookUrl = String(interpolateVariables(rawWebhookUrl, ctx.variables)).trim();
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const channelId = String(interpolateVariables(rawChannelId, ctx.variables)).trim();
+  const content = rawContent ? String(interpolateVariables(rawContent, ctx.variables)) : '';
+  const username = rawUsername ? String(interpolateVariables(rawUsername, ctx.variables)).trim() : undefined;
+  const avatarUrl = rawAvatarUrl ? String(interpolateVariables(rawAvatarUrl, ctx.variables)).trim() : undefined;
+  const imageUrl = rawImageUrl ? String(interpolateVariables(rawImageUrl, ctx.variables)).trim() : '';
+  const embedTitle = rawEmbedTitle ? String(interpolateVariables(rawEmbedTitle, ctx.variables)) : '';
+  const embedDescription = rawEmbedDescription ? String(interpolateVariables(rawEmbedDescription, ctx.variables)) : '';
+  const embedFooter = rawEmbedFooter ? String(interpolateVariables(rawEmbedFooter, ctx.variables)) : '';
+  const embedThumbnail = rawEmbedThumbnail ? String(interpolateVariables(rawEmbedThumbnail, ctx.variables)) : '';
+
+  if (!content && !embedTitle && !embedDescription && !imageUrl) {
+    throw new Error('Discord message must include at least message content, an embed, or an image.');
+  }
+
+  let targetUrl = '';
+  let authHeaders: Record<string, string> = {};
+
+  if (mode === 'webhook') {
+    if (!webhookUrl || !webhookUrl.startsWith('http')) {
+      throw new Error('Discord Webhook URL is required in webhook mode (e.g. https://discord.com/api/webhooks/...).');
+    }
+    targetUrl = webhookUrl;
+  } else {
+    if (!botToken) {
+      throw new Error('Discord Bot Token is required in Bot mode.');
+    }
+    if (!channelId) {
+      throw new Error('Discord Channel ID is required in Bot mode.');
+    }
+    targetUrl = `https://discord.com/api/v10/channels/${channelId}/messages`;
+    authHeaders['Authorization'] = `Bot ${botToken}`;
+  }
+
+  let colorNum = 0x5865f2;
+  if (embedColor) {
+    const hex = embedColor.replace('#', '');
+    const parsed = parseInt(hex, 16);
+    if (!isNaN(parsed)) colorNum = parsed;
+  }
+
+  const fields = Array.isArray(rawFields)
+    ? rawFields
+        .filter((f) => f && f.name && f.value)
+        .map((f) => ({
+          name: String(interpolateVariables(f.name, ctx.variables)),
+          value: String(interpolateVariables(f.value, ctx.variables)),
+          inline: f.inline !== false,
+        }))
+    : [];
+
+  const hasEmbed = !!(embedTitle || embedDescription || embedFooter || embedThumbnail || fields.length > 0 || (imageUrl && !imageUrl.startsWith('data:')));
+
+  let fetchOptions: RequestInit = { method: 'POST', signal: ctx.signal };
+
+  if (imageUrl && imageUrl.startsWith('data:')) {
+    const formData = new FormData();
+    const blob = dataUrlToBlob(imageUrl);
+    formData.append('files[0]', blob, 'screenshot.png');
+
+    const payloadJson: Record<string, any> = {};
+    if (content) payloadJson.content = content;
+    if (mode === 'webhook') {
+      if (username) payloadJson.username = username;
+      if (avatarUrl) payloadJson.avatar_url = avatarUrl;
+    }
+
+    const embedObj: Record<string, any> = {
+      color: colorNum,
+      image: { url: 'attachment://screenshot.png' },
+      timestamp: new Date().toISOString(),
+      ...(embedTitle ? { title: embedTitle } : {}),
+      ...(embedDescription ? { description: embedDescription } : {}),
+      ...(embedFooter ? { footer: { text: embedFooter } } : {}),
+      ...(embedThumbnail ? { thumbnail: { url: embedThumbnail } } : {}),
+      ...(fields.length > 0 ? { fields } : {}),
+    };
+    payloadJson.embeds = [embedObj];
+
+    formData.append('payload_json', JSON.stringify(payloadJson));
+    fetchOptions.headers = authHeaders;
+    fetchOptions.body = formData;
+  } else {
+    const payload: Record<string, any> = {};
+    if (content) payload.content = content;
+    if (mode === 'webhook') {
+      if (username) payload.username = username;
+      if (avatarUrl) payload.avatar_url = avatarUrl;
+    }
+
+    if (hasEmbed) {
+      payload.embeds = [
+        {
+          color: colorNum,
+          timestamp: new Date().toISOString(),
+          ...(embedTitle ? { title: embedTitle } : {}),
+          ...(embedDescription ? { description: embedDescription } : {}),
+          ...(imageUrl ? { image: { url: imageUrl } } : {}),
+          ...(embedFooter ? { footer: { text: embedFooter } } : {}),
+          ...(embedThumbnail ? { thumbnail: { url: embedThumbnail } } : {}),
+          ...(fields.length > 0 ? { fields } : {}),
+        },
+      ];
+    }
+
+    fetchOptions.headers = { ...authHeaders, 'Content-Type': 'application/json' };
+    fetchOptions.body = JSON.stringify(payload);
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Sending Discord ${imageUrl ? 'image/screenshot' : 'message'} (${mode === 'webhook' ? 'Webhook' : `Channel #${channelId}`})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const response = await fetch(targetUrl, fetchOptions);
+
+  let resData: any = { ok: true, status: response.status };
+  if (response.status !== 204) {
+    const contentType = response.headers.get('content-type') || '';
+    resData = contentType.includes('application/json') ? await response.json() : await response.text();
+  }
+
+  if (!response.ok) {
+    const errMsg =
+      typeof resData === 'object' && resData.message
+        ? resData.message
+        : response.statusText || 'Discord notification failed';
+    throw new Error(`Discord error (${response.status}): ${errMsg}`);
+  }
+
+  ctx.log({
+    level: 'success',
+    message: 'Discord message delivered successfully',
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: resData,
+    variables: { [outputVariable]: resData },
+  };
+};
+
+export const executeSlackMessage: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const mode = node.data.properties.mode || savedCred?.mode || 'webhook';
+  const rawWebhookUrl = node.data.properties.webhookUrl || savedCred?.webhookUrl || '';
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawChannel = node.data.properties.channel || savedCred?.channel || '';
+  const rawText = node.data.properties.text || '';
+  const rawHeaderText = node.data.properties.headerText || '';
+  const rawImageUrl = node.data.properties.imageUrl || '';
+  const rawImageAlt = node.data.properties.imageAltText || node.data.properties.imageAlt || 'AutoFlow Image';
+  const rawFooterText = node.data.properties.footerText || '';
+  const rawFields = node.data.properties.fields || [];
+  const rawUsername = node.data.properties.username || savedCred?.username || '';
+  const iconEmoji = node.data.properties.iconEmoji || savedCred?.iconEmoji || '';
+  const outputVariable = node.data.properties.outputVariable || 'slackResponse';
+
+  const webhookUrl = String(interpolateVariables(rawWebhookUrl, ctx.variables)).trim();
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const channel = rawChannel ? String(interpolateVariables(rawChannel, ctx.variables)).trim() : undefined;
+  const text = String(interpolateVariables(rawText, ctx.variables));
+  const headerText = rawHeaderText ? String(interpolateVariables(rawHeaderText, ctx.variables)) : '';
+  const imageUrl = rawImageUrl ? String(interpolateVariables(rawImageUrl, ctx.variables)).trim() : '';
+  const imageAlt = String(interpolateVariables(rawImageAlt, ctx.variables));
+  const footerText = rawFooterText ? String(interpolateVariables(rawFooterText, ctx.variables)) : '';
+  const username = rawUsername ? String(interpolateVariables(rawUsername, ctx.variables)).trim() : undefined;
+
+  if (!text && !headerText && !imageUrl) {
+    throw new Error('Slack message text or image is required.');
+  }
+
+  // Uploading base64 image/screenshot with Slack Bot token
+  if (imageUrl && imageUrl.startsWith('data:') && mode === 'bot' && botToken && channel) {
+    ctx.log({
+      level: 'info',
+      message: `Uploading screenshot image to Slack channel ${channel}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    const formData = new FormData();
+    const blob = dataUrlToBlob(imageUrl);
+    formData.append('file', blob, 'screenshot.png');
+    formData.append('channels', channel);
+    formData.append('filename', 'screenshot.png');
+    formData.append('title', headerText || 'AutoFlow Screenshot');
+    if (text) formData.append('initial_comment', text);
+
+    const uploadRes = await fetch('https://slack.com/api/files.upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${botToken}` },
+      body: formData,
+      signal: ctx.signal,
+    });
+
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.ok) {
+      throw new Error(`Slack file upload error: ${uploadData.error || uploadRes.statusText}`);
+    }
+
+    ctx.log({
+      level: 'success',
+      message: 'Slack screenshot uploaded successfully',
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    return {
+      success: true,
+      output: uploadData,
+      variables: { [outputVariable]: uploadData },
+    };
+  }
+
+  let targetUrl = '';
+  let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  if (mode === 'webhook') {
+    if (!webhookUrl || !webhookUrl.startsWith('http')) {
+      throw new Error('Slack Webhook URL is required in webhook mode (e.g. https://hooks.slack.com/services/...).');
+    }
+    targetUrl = webhookUrl;
+  } else {
+    if (!botToken) {
+      throw new Error('Slack Bot Token is required in Bot mode (e.g. xoxb-...).');
+    }
+    if (!channel) {
+      throw new Error('Slack channel is required in Bot mode (e.g. #general or C1234567890).');
+    }
+    targetUrl = 'https://slack.com/api/chat.postMessage';
+    headers['Authorization'] = `Bearer ${botToken}`;
+  }
+
+  const payload: Record<string, any> = {
+    text: text || headerText || 'AutoFlow Notification',
+  };
+  if (channel) payload.channel = channel;
+  if (username) payload.username = username;
+  if (iconEmoji) payload.icon_emoji = iconEmoji;
+
+  // Build Block Kit blocks for rich layouts
+  const blocks: any[] = [];
+
+  if (headerText) {
+    blocks.push({
+      type: 'header',
+      text: { type: 'plain_text', text: headerText.slice(0, 150), emoji: true },
+    });
+  }
+
+  if (text) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text },
+    });
+  }
+
+  // Image block (for web URLs)
+  if (imageUrl && !imageUrl.startsWith('data:')) {
+    blocks.push({
+      type: 'image',
+      image_url: imageUrl,
+      alt_text: imageAlt || 'Image preview',
+      title: { type: 'plain_text', text: imageAlt.slice(0, 100) },
+    });
+  }
+
+  // Key-value fields
+  const fieldList = Array.isArray(rawFields) ? rawFields.filter((f) => f && (f.label || f.name)) : [];
+  if (fieldList.length > 0) {
+    const formattedFields = fieldList.slice(0, 10).map((f) => {
+      const label = String(interpolateVariables(f.label || f.name || '', ctx.variables));
+      const val = String(interpolateVariables(f.value || '', ctx.variables));
+      return { type: 'mrkdwn', text: `*${label}:*\n${val}` };
+    });
+    blocks.push({
+      type: 'section',
+      fields: formattedFields,
+    });
+  }
+
+  if (footerText) {
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: footerText }],
+    });
+  }
+
+  if (blocks.length > 0) {
+    payload.blocks = blocks;
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Sending Slack notification (${mode === 'webhook' ? 'Webhook' : `Channel ${channel}`})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    signal: ctx.signal,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  let resData: any;
+  if (contentType.includes('application/json')) {
+    resData = await response.json();
+  } else {
+    const textResp = await response.text();
+    resData = { ok: response.ok && (textResp === 'ok' || textResp.includes('"ok":true')), response: textResp };
+  }
+
+  if (!response.ok || (typeof resData === 'object' && resData.ok === false)) {
+    const errMsg =
+      (typeof resData === 'object' && (resData.error || resData.response)) ||
+      response.statusText ||
+      'Slack message dispatch failed';
+    throw new Error(`Slack error (${response.status}): ${errMsg}`);
+  }
+
+  ctx.log({
+    level: 'success',
+    message: 'Slack message sent successfully',
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: resData,
+    variables: { [outputVariable]: resData },
+  };
+};
+
 export const executors: Record<string, NodeExecutor> = {
   navigate: executeNavigate,
   back: executeBack,
@@ -883,6 +1492,8 @@ export const executors: Record<string, NodeExecutor> = {
   extract_table: executeExtractTable,
   extract_multiple: executeExtractMultiple,
   extract_links: executeExtractLinks,
+  extract_image: executeExtractImage,
+  extract_all_images: executeExtractAllImages,
   condition: executeCondition,
   contains: executeContains,
   break: executeBreak,
@@ -900,6 +1511,9 @@ export const executors: Record<string, NodeExecutor> = {
   clipboard: executeClipboard,
   ai_agent: executeAiAgent,
   autonomous_agent: executeAutonomousAgent,
+  telegram_message: executeTelegramMessage,
+  discord_message: executeDiscordMessage,
+  slack_message: executeSlackMessage,
 };
 
 

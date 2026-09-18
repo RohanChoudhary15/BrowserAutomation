@@ -9,14 +9,18 @@ AutoFlow is a production-grade Chrome/Edge browser automation extension with a v
 - **Visual Workflow Canvas**: Drag-and-drop node graph powered by `@xyflow/react`, with pan/zoom, minimap, controls, grid snapping, multi-select, and custom handles.
 - **Interactive Element Picker**: Visual overlay highlights elements on hover and captures robust, ranked selector strategies (`data-testid`, `id`, `name`, `aria-label`, role + text, stable CSS, XPath).
 - **Browser Action Recorder**: Live recording of clicks, text typing (automatically debounced into coherent text inputs), dropdown selection, and keypresses that instantly generate and auto-wire workflow nodes.
-- **27+ Node Types**:
+- **30+ Node Types**:
   - **Browser**: Navigate, Back, Forward, Reload, New Tab, Close Tab, Switch Tab
   - **Interaction**: Click (left/double/right), Type Text, Clear Input, Hover, Press Key, Scroll, Select Dropdown, Drag & Drop
-  - **Wait**: Wait (duration), Wait For Element, Wait For Text
-  - **Extraction**: Extract Text, Extract Attribute, Extract HTML, Extract Table (into structured JSON)
+  - **Wait**: Wait (duration), Wait For Element, Wait For Text, Wait For Navigation
+  - **Extraction**: Extract Text, Extract Attribute, Extract HTML, Extract Table (into structured JSON), Extract Multiple, Extract Links
   - **Logic**: Condition (TRUE/FALSE branching), Contains (checks if an element/text is present on the page, TRUE/FALSE branching), Loop, For Each, Try/Catch, Break, Continue
-  - **Data**: Set Variable, Get Variable, Transform (uppercase, lowercase, trim, replace, split, parseNumber, parseJSON), Regex, JSON Parse
-  - **Utility**: Screenshot (capture visible viewport), Execute JavaScript (in page context), HTTP Request (REST API calls)
+  - **Data**: Set Variable, Get Variable, Transform (uppercase, lowercase, trim, replace, split, parseNumber, parseJSON), Regex, JSON Parse, Generate Data (mock emails, names, UUIDs, timestamps)
+  - **Utility**: Screenshot (capture visible viewport), Execute JavaScript (in page context), HTTP Request (REST API calls), Storage Manage (local/sessionStorage), Clipboard (read/write), AI Agent, Autonomous Agent
+  - **Messaging & Notifications**:
+    - **Telegram Message**: Dispatch alerts, formatted HTML/MarkdownV2 messages, or data directly to Telegram chats or channels via Bot API.
+    - **Discord Message**: Post notifications, rich embeds with custom colors/titles/descriptions, or webhook messages to Discord channels via Webhooks or Bot Token.
+    - **Slack Message**: Deliver alerts and markdown reports to Slack channels via Incoming Webhooks or Bot User OAuth Tokens (`chat.postMessage`).
 - **Variable Interpolation**: Reference variables anywhere using `{{variable}}`, `{{user.name}}`, or `{{items[0].price}}`.
 - **Human Mode**: A per-workflow toggle that adds curved cursor travel and jittered micro-pauses (Subtle / Natural / Slow pacing) so runs look like real user activity.
 - **Debugging & Single Node Execution**: Execute individual nodes on demand directly against the active browser tab.

@@ -18,6 +18,7 @@ import { ExecutionPanel } from '../components/bottompanel/ExecutionPanel';
 import { WorkflowListModal } from '../components/sidebar/WorkflowListModal';
 import { AiCopilotDrawer } from '../components/ai/AiCopilotDrawer';
 import { BrowserAgentModal } from '../components/ai/BrowserAgentModal';
+import { BotCredentialsModal } from '../components/modals/BotCredentialsModal';
 
 import {
   loadAllWorkflows,
@@ -35,6 +36,12 @@ import { generateId } from '../utils/id';
 import { useHistory } from './hooks/useHistory';
 import { ElementSelectionResult } from '../types/selector';
 import { RecordedActionPayload } from '../types/messages';
+import {
+  copyNodesToClipboard,
+  getCopiedNodesFromClipboard,
+  hasCopiedNodes,
+  preparePastedNodes,
+} from '../utils/nodeClipboard';
 
 export const App: React.FC = () => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -58,6 +65,7 @@ export const App: React.FC = () => {
   const [isWorkflowsModalOpen, setIsWorkflowsModalOpen] = useState(false);
   const [isAiCopilotOpen, setIsAiCopilotOpen] = useState(false);
   const [isBrowserAgentOpen, setIsBrowserAgentOpen] = useState(false);
+  const [isBotCredentialsModalOpen, setIsBotCredentialsModalOpen] = useState(false);
 
   // Execution & Engine state
   const [executionStatus, setExecutionStatus] = useState<WorkflowExecutionStatus>('idle');
@@ -74,6 +82,9 @@ export const App: React.FC = () => {
   // Autosave tracking
   const [isSaving, setIsSaving] = useState(false);
   const saveTimeoutRef = useRef<any>(null);
+
+  // Clipboard revision tracker for UI reactivity
+  const [clipboardRevision, setClipboardRevision] = useState(0);
 
   // Load workflows on mount
   useEffect(() => {
@@ -229,6 +240,91 @@ export const App: React.FC = () => {
     [edges, setNodes, takeSnapshot, triggerAutosave]
   );
 
+  // Batch duplicate nodes (preserves internal edges between selected nodes)
+  const handleDuplicateNodes = useCallback(
+    (nodesToDup: WorkflowNode[]) => {
+      if (!nodesToDup.length) return;
+
+      const idMap = new Map<string, string>();
+      const newNodes: WorkflowNode[] = nodesToDup.map((node) => {
+        const newId = generateId('node');
+        idMap.set(node.id, newId);
+        return {
+          ...node,
+          id: newId,
+          position: { x: node.position.x + 40, y: node.position.y + 40 },
+          selected: true,
+          data: JSON.parse(JSON.stringify(node.data)),
+        };
+      });
+
+      const oldIdSet = new Set(nodesToDup.map((n) => n.id));
+      const internalEdges = edges.filter((e) => oldIdSet.has(e.source) && oldIdSet.has(e.target));
+      const newEdges: WorkflowEdge[] = internalEdges.map((e) => ({
+        ...e,
+        id: generateId('edge'),
+        source: idMap.get(e.source) || e.source,
+        target: idMap.get(e.target) || e.target,
+      }));
+
+      setNodes((nds) => {
+        const updated = nds.map((n) => ({ ...n, selected: false })).concat(newNodes);
+        setEdges((eds) => {
+          const updatedEdges = eds.concat(newEdges);
+          takeSnapshot(updated, updatedEdges);
+          triggerAutosave(updated, updatedEdges);
+          return updatedEdges;
+        });
+        return updated;
+      });
+
+      if (newNodes.length === 1) {
+        setSelectedNodeId(newNodes[0].id);
+      }
+    },
+    [edges, setEdges, setNodes, takeSnapshot, triggerAutosave]
+  );
+
+  // Copy nodes (single or multiple) to clipboard
+  const handleCopyNodes = useCallback(
+    (nodesToCopy: WorkflowNode[]) => {
+      if (!nodesToCopy || nodesToCopy.length === 0) return;
+      copyNodesToClipboard(nodesToCopy, edges);
+      setClipboardRevision((r) => r + 1);
+    },
+    [edges]
+  );
+
+  // Paste nodes from clipboard
+  const handlePasteNodes = useCallback(
+    (targetPosition?: { x: number; y: number }) => {
+      const payload = getCopiedNodesFromClipboard();
+      if (!payload || !payload.nodes.length) return;
+
+      const { newNodes, newEdges } = preparePastedNodes(payload, targetPosition);
+      if (!newNodes.length) return;
+
+      setNodes((nds) => {
+        const updated = nds.map((n) => ({ ...n, selected: false })).concat(newNodes);
+        setEdges((eds) => {
+          const updatedEdges = eds.concat(newEdges);
+          takeSnapshot(updated, updatedEdges);
+          triggerAutosave(updated, updatedEdges);
+          return updatedEdges;
+        });
+        return updated;
+      });
+
+      if (newNodes.length === 1) {
+        setSelectedNodeId(newNodes[0].id);
+        setIsPropertiesCollapsed(false);
+      } else {
+        setSelectedNodeId(null);
+      }
+    },
+    [setEdges, setNodes, takeSnapshot, triggerAutosave]
+  );
+
   // Delete node
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
@@ -244,6 +340,28 @@ export const App: React.FC = () => {
       });
 
       if (selectedNodeId === nodeId) {
+        setSelectedNodeId(null);
+      }
+    },
+    [selectedNodeId, setEdges, setNodes, takeSnapshot, triggerAutosave]
+  );
+
+  // Batch delete nodes
+  const handleDeleteNodes = useCallback(
+    (nodeIds: string[]) => {
+      const idSet = new Set(nodeIds);
+      setNodes((nds) => {
+        const updatedNodes = nds.filter((n) => !idSet.has(n.id));
+        setEdges((eds) => {
+          const updatedEdges = eds.filter((e) => !idSet.has(e.source) && !idSet.has(e.target));
+          takeSnapshot(updatedNodes, updatedEdges);
+          triggerAutosave(updatedNodes, updatedEdges);
+          return updatedEdges;
+        });
+        return updatedNodes;
+      });
+
+      if (selectedNodeId && idSet.has(selectedNodeId)) {
         setSelectedNodeId(null);
       }
     },
@@ -272,6 +390,98 @@ export const App: React.FC = () => {
       });
     },
     [edges, setNodes, takeSnapshot, triggerAutosave]
+  );
+
+  // Batch toggle nodes disabled
+  const handleToggleDisableNodes = useCallback(
+    (nodeIds: string[]) => {
+      const idSet = new Set(nodeIds);
+      setNodes((nds) => {
+        const updated = nds.map((n) => {
+          if (idSet.has(n.id)) {
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                disabled: !n.data.disabled,
+              },
+            };
+          }
+          return n;
+        });
+        takeSnapshot(updated, edges);
+        triggerAutosave(updated, edges);
+        return updated;
+      });
+    },
+    [edges, setNodes, takeSnapshot, triggerAutosave]
+  );
+
+  // Add node and immediately connect from a dragged handle
+  const handleAddNodeAndConnect = useCallback(
+    (
+      type: NodeType,
+      position: { x: number; y: number },
+      connection: { sourceNodeId: string; sourceHandleId?: string | null; handleType: 'source' | 'target' }
+    ) => {
+      const def = NODE_REGISTRY[type];
+      const reactFlowType = def.reactFlowType || 'customNode';
+      const newNode: WorkflowNode = {
+        id: generateId('node'),
+        type: reactFlowType,
+        position,
+        data: {
+          label: def.label,
+          category: def.category,
+          type: def.type,
+          properties: { ...def.defaultProperties },
+        },
+      };
+
+      let newEdge: WorkflowEdge;
+      if (connection.handleType === 'target') {
+        newEdge = {
+          id: generateId('edge'),
+          source: newNode.id,
+          target: connection.sourceNodeId,
+          targetHandle: connection.sourceHandleId || undefined,
+          animated: true,
+        };
+      } else {
+        newEdge = {
+          id: generateId('edge'),
+          source: connection.sourceNodeId,
+          target: newNode.id,
+          sourceHandle: connection.sourceHandleId || undefined,
+          animated: true,
+          label:
+            connection.sourceHandleId === 'true'
+              ? 'TRUE'
+              : connection.sourceHandleId === 'false'
+              ? 'FALSE'
+              : connection.sourceHandleId === 'loop_body'
+              ? 'Loop Body'
+              : connection.sourceHandleId === 'loop_done'
+              ? 'Done'
+              : undefined,
+        };
+      }
+
+      setNodes((nds) => {
+        const updatedNodes = [...nds, newNode];
+        setEdges((eds) => {
+          const updatedEdges = addEdge(newEdge as any, eds) as WorkflowEdge[];
+          takeSnapshot(updatedNodes, updatedEdges);
+          triggerAutosave(updatedNodes, updatedEdges);
+          return updatedEdges;
+        });
+        return updatedNodes;
+      });
+
+      setSelectedNodeId(newNode.id);
+      setIsPropertiesCollapsed(false);
+    },
+    [setEdges, setNodes, takeSnapshot, triggerAutosave]
   );
 
   // Update node properties
@@ -651,8 +861,29 @@ export const App: React.FC = () => {
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
         handleToggleRecord();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        const toCopy = nodes.filter((n) => n.selected);
+        if (toCopy.length > 0) {
+          e.preventDefault();
+          handleCopyNodes(toCopy);
+        } else if (selectedNodeId) {
+          const target = nodes.find((n) => n.id === selectedNodeId);
+          if (target) {
+            e.preventDefault();
+            handleCopyNodes([target]);
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        if (hasCopiedNodes()) {
+          e.preventDefault();
+          handlePasteNodes();
+        }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNodeId) {
+        const toDelete = nodes.filter((n) => n.selected);
+        if (toDelete.length > 0) {
+          e.preventDefault();
+          handleDeleteNodes(toDelete.map((n) => n.id));
+        } else if (selectedNodeId) {
           e.preventDefault();
           handleDeleteNode(selectedNodeId);
         }
@@ -661,9 +892,10 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleDeleteNode, handleRedo, handleRunWorkflow, handleToggleRecord, handleUndo, selectedNodeId]);
+  }, [handleCopyNodes, handleDeleteNode, handleDeleteNodes, handlePasteNodes, handleRedo, handleRunWorkflow, handleToggleRecord, handleUndo, nodes, selectedNodeId]);
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
+  const selectedNodes = nodes.filter((n) => n.selected);
+  const selectedNode = (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : (selectedNodes.length === 1 ? selectedNodes[0] : null)) || null;
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0c0e14]">
@@ -691,6 +923,7 @@ export const App: React.FC = () => {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onOpenWorkflows={() => setIsWorkflowsModalOpen(true)}
+        onOpenBotCredentials={() => setIsBotCredentialsModalOpen(true)}
         onExport={handleExport}
         onImport={handleImport}
         onFitView={() => {}}
@@ -722,9 +955,17 @@ export const App: React.FC = () => {
               if (node) setIsPropertiesCollapsed(false);
             }}
             onAddNode={handleAddNode}
+            onAddNodeAndConnect={handleAddNodeAndConnect}
             onDuplicateNode={handleDuplicateNode}
+            onDuplicateNodes={handleDuplicateNodes}
+            onCopyNode={(node) => handleCopyNodes([node])}
+            onCopyNodes={handleCopyNodes}
+            onPasteNodes={handlePasteNodes}
+            canPaste={clipboardRevision >= 0 && hasCopiedNodes()}
             onDeleteNode={handleDeleteNode}
+            onDeleteNodes={handleDeleteNodes}
             onToggleDisableNode={handleToggleDisableNode}
+            onToggleDisableNodes={handleToggleDisableNodes}
             onRunNode={(id) => {
               const target = nodes.find((n) => n.id === id);
               if (target) handleRunSingleNode(target);
@@ -733,15 +974,21 @@ export const App: React.FC = () => {
         </main>
 
         {/* Right: Properties Panel */}
-        {!isPropertiesCollapsed && selectedNode && (
+        {!isPropertiesCollapsed && (selectedNode || selectedNodes.length > 1) && (
           <PropertiesPanel
             selectedNode={selectedNode}
-            runtimeState={nodeStates[selectedNode.id]}
+            selectedNodes={selectedNodes}
+            runtimeState={selectedNode ? nodeStates[selectedNode.id] : undefined}
             variables={liveVariables}
             onUpdateProperties={handleUpdateProperties}
             onUpdateLabel={handleUpdateLabel}
             onToggleDisable={handleToggleDisableNode}
+            onToggleDisableNodes={handleToggleDisableNodes}
             onDeleteNode={handleDeleteNode}
+            onDeleteNodes={handleDeleteNodes}
+            onCopyNode={(node) => handleCopyNodes([node])}
+            onCopyNodes={handleCopyNodes}
+            onDuplicateNodes={handleDuplicateNodes}
             onRunSingleNode={handleRunSingleNode}
             onStartElementPicker={handleStartElementPicker}
             isPickingElement={isPickingElement}
@@ -824,6 +1071,12 @@ export const App: React.FC = () => {
           setEdges(newEdges);
           triggerAutosave(newNodes, newEdges);
         }}
+      />
+
+      {/* Bot Credentials Management Modal (Telegram, Discord, Slack) */}
+      <BotCredentialsModal
+        isOpen={isBotCredentialsModalOpen}
+        onClose={() => setIsBotCredentialsModalOpen(false)}
       />
     </div>
   );

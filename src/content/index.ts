@@ -5,7 +5,8 @@ import * as domActions from './domActions';
 import { ExtensionMessage } from '../types/messages';
 import { HumanConfig } from '../utils/human';
 
-console.log('🤖 AutoFlow Content Script loaded on', window.location.href);
+export const CONTENT_SCRIPT_VERSION = '1.3.0-qol-features';
+console.log('🤖 AutoFlow Content Script loaded on', window.location.href, `(v${CONTENT_SCRIPT_VERSION})`);
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   // Return true if async response is required
@@ -13,7 +14,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     try {
       switch (message.type) {
         case 'PING':
-          return { success: true, url: window.location.href };
+          return { success: true, url: window.location.href, version: CONTENT_SCRIPT_VERSION };
 
         case 'START_ELEMENT_PICKER':
           startElementPicker(
@@ -85,7 +86,9 @@ async function executeAction(
   timeout?: number,
   human?: HumanConfig
 ): Promise<any> {
-  switch (action) {
+  const normAction = (action || '').toLowerCase().trim().replace(/[\s\-]+/g, '_');
+
+  switch (normAction) {
     case 'get_interactive_snapshot':
       return { success: true, elements: domActions.getInteractiveElementsSnapshot() };
 
@@ -96,6 +99,7 @@ async function executeAction(
       return await domActions.typeIntoElement({ ...params, human });
 
     case 'click':
+    case 'click_element':
       return await domActions.clickElement(
         params.selector,
         {
@@ -108,6 +112,8 @@ async function executeAction(
       );
 
     case 'type_text':
+    case 'type':
+    case 'input_text':
       return await domActions.typeText(
         params.selector,
         {
@@ -121,6 +127,7 @@ async function executeAction(
       );
 
     case 'clear_input':
+    case 'clear':
       return await domActions.clearInput(params.selector, params.timeout || timeout, undefined, human);
 
     case 'hover':
@@ -163,15 +170,23 @@ async function executeAction(
       );
 
     case 'extract_text':
+    case 'extracttext':
+    case 'text':
       return await domActions.extractText(params.selector, params.timeout || timeout);
 
     case 'extract_attribute':
+    case 'extractattribute':
+    case 'attribute':
       return await domActions.extractAttribute(params.selector, params.attribute, params.timeout || timeout);
 
     case 'extract_html':
+    case 'extracthtml':
+    case 'html':
       return await domActions.extractHtml(params.selector, params.mode || 'outer', params.timeout || timeout);
 
     case 'extract_table':
+    case 'extracttable':
+    case 'table':
       return await domActions.extractTable(params.selector, params.timeout || timeout);
 
     case 'wait_for_element':
@@ -186,6 +201,7 @@ async function executeAction(
       return await domActions.waitForText(params.text, params.selector, params.timeout || timeout);
 
     case 'check_element_presence':
+    case 'contains':
       return await domActions.checkElementPresence(
         params.selector,
         {
@@ -197,13 +213,51 @@ async function executeAction(
       );
 
     case 'extract_multiple':
+    case 'extractmultiple':
+    case 'extract_all':
       return await domActions.extractMultipleElements(params.selector, {
         attribute: params.attribute,
         timeout: params.timeout || timeout,
       });
 
     case 'extract_links':
+    case 'extractlinks':
+    case 'extract_urls':
       return await domActions.extractLinks(params.selector, params.timeout || timeout);
+
+    case 'extract_image':
+    case 'extract_images':
+    case 'extractimage':
+    case 'extractimages':
+    case 'image':
+      return await domActions.extractImageElement(
+        params.selector,
+        {
+          mode: params.mode,
+          asBase64: params.asBase64,
+          includeBackground: params.includeBackground,
+          timeout: params.timeout || timeout,
+        },
+        undefined
+      );
+
+    case 'extract_all_images':
+    case 'find_all_images':
+    case 'findallimages':
+    case 'extractallimages':
+    case 'all_images':
+      return await domActions.extractAllPageImages(
+        {
+          containerSelector: params.containerSelector || params.selector,
+          includeBackground: params.includeBackground,
+          asBase64: params.asBase64,
+          minWidth: params.minWidth,
+          minHeight: params.minHeight,
+          maxImages: params.maxImages,
+          timeout: params.timeout || timeout,
+        },
+        undefined
+      );
 
     case 'storage_manage':
       return await domActions.manageStorage({

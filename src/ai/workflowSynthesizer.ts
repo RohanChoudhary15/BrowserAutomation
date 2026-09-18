@@ -280,6 +280,74 @@ export function synthesizeWithSemanticParser(request: SynthesisRequest): Synthes
         },
       },
     });
+    currentY += 130;
+  }
+
+  // 10. Detect Messaging (Telegram, Discord, Slack)
+  if (prompt.includes('telegram')) {
+    const id = generateId('ai_node');
+    nodes.push({
+      id,
+      type: 'customNode',
+      position: { x: baseX, y: currentY },
+      data: {
+        label: 'Send Telegram Message',
+        category: 'messaging',
+        type: 'telegram_message',
+        properties: {
+          botToken: '{{telegramToken}}',
+          chatId: '{{chatId}}',
+          message: 'AutoFlow Notification: {{extractedContent}}',
+          parseMode: 'HTML',
+          silent: false,
+          outputVariable: 'telegramResponse',
+        },
+      },
+    });
+    currentY += 130;
+  }
+
+  if (prompt.includes('discord')) {
+    const id = generateId('ai_node');
+    nodes.push({
+      id,
+      type: 'customNode',
+      position: { x: baseX, y: currentY },
+      data: {
+        label: 'Send Discord Message',
+        category: 'messaging',
+        type: 'discord_message',
+        properties: {
+          mode: 'webhook',
+          webhookUrl: '{{discordWebhookUrl}}',
+          content: 'AutoFlow Notification: {{extractedContent}}',
+          username: 'AutoFlow Bot',
+          outputVariable: 'discordResponse',
+        },
+      },
+    });
+    currentY += 130;
+  }
+
+  if (prompt.includes('slack')) {
+    const id = generateId('ai_node');
+    nodes.push({
+      id,
+      type: 'customNode',
+      position: { x: baseX, y: currentY },
+      data: {
+        label: 'Send Slack Message',
+        category: 'messaging',
+        type: 'slack_message',
+        properties: {
+          mode: 'webhook',
+          webhookUrl: '{{slackWebhookUrl}}',
+          text: 'AutoFlow Notification: {{extractedContent}}',
+          outputVariable: 'slackResponse',
+        },
+      },
+    });
+    currentY += 130;
   }
 
   // Connect linear edges or branching edges
