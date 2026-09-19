@@ -346,6 +346,19 @@ export const App: React.FC = () => {
     [selectedNodeId, setEdges, setNodes, takeSnapshot, triggerAutosave]
   );
 
+  // Delete edge / connection
+  const handleDeleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => {
+        const updated = eds.filter((e) => e.id !== edgeId);
+        takeSnapshot(nodes, updated);
+        triggerAutosave(nodes, updated);
+        return updated;
+      });
+    },
+    [nodes, setEdges, takeSnapshot, triggerAutosave]
+  );
+
   // Batch delete nodes
   const handleDeleteNodes = useCallback(
     (nodeIds: string[]) => {
@@ -964,6 +977,7 @@ export const App: React.FC = () => {
             canPaste={clipboardRevision >= 0 && hasCopiedNodes()}
             onDeleteNode={handleDeleteNode}
             onDeleteNodes={handleDeleteNodes}
+            onDeleteEdge={handleDeleteEdge}
             onToggleDisableNode={handleToggleDisableNode}
             onToggleDisableNodes={handleToggleDisableNodes}
             onRunNode={(id) => {

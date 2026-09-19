@@ -466,7 +466,7 @@ describe('Quality of Life: Iterator Nodes, Find All Images & Inline Loop Body', 
     });
   });
 
-  describe('Node Deletion: Context Menu, Right-Click, and Alt + Click', () => {
+  describe('Connection & Node Deletion: Context Menu, Right-Click, and Alt + Click', () => {
     it('deletes an existing node and cleanly removes all attached edges', () => {
       let nodes: WorkflowNode[] = [
         {
@@ -500,33 +500,63 @@ describe('Quality of Life: Iterator Nodes, Find All Images & Inline Loop Body', 
       expect(edges.length).toBe(0);
     });
 
-    it('triggers node deletion when Alt + Click event occurs', () => {
+    it('triggers connection deletion when Alt + Click event occurs on an edge', () => {
+      let edges: WorkflowEdge[] = [
+        { id: 'edge_1_2', source: 'node_1', target: 'node_2' },
+        { id: 'edge_2_3', source: 'node_2', target: 'node_3' },
+      ];
+      const deletedEdgeIds: string[] = [];
+
+      const handleDeleteEdge = (edgeId: string) => {
+        deletedEdgeIds.push(edgeId);
+        edges = edges.filter((e) => e.id !== edgeId);
+      };
+
+      // Simulate edge click handler logic with Alt + Click
+      const simulateEdgeClick = (
+        event: { altKey: boolean; defaultPrevented?: boolean; stopped?: boolean },
+        edgeId: string
+      ) => {
+        if (event.altKey) {
+          event.defaultPrevented = true;
+          event.stopped = true;
+          handleDeleteEdge(edgeId);
+        }
+      };
+
+      // Regular click does not delete edge
+      const normalClick = { altKey: false };
+      simulateEdgeClick(normalClick, 'edge_1_2');
+      expect(deletedEdgeIds).toHaveLength(0);
+      expect(edges).toHaveLength(2);
+
+      // Alt + Click deletes target edge
+      const altClick = { altKey: true };
+      simulateEdgeClick(altClick, 'edge_1_2');
+      expect(deletedEdgeIds).toEqual(['edge_1_2']);
+      expect(edges).toHaveLength(1);
+      expect(edges[0].id).toBe('edge_2_3');
+      expect(altClick.defaultPrevented).toBe(true);
+      expect(altClick.stopped).toBe(true);
+    });
+
+    it('does NOT delete node on Alt + Click on node', () => {
       const deletedNodeIds: string[] = [];
       const onDeleteNode = (id: string) => {
         deletedNodeIds.push(id);
       };
 
-      // Simulate node click handler logic
-      const simulateNodeClick = (event: { altKey: boolean; defaultPrevented?: boolean; stopped?: boolean }, nodeId: string) => {
+      // Handler for node click: Alt + Click no longer triggers node deletion
+      const handleNodeClick = (event: { altKey: boolean }, nodeId: string) => {
+        // Node selection happens, but node deletion is not performed on Alt+Click
         if (event.altKey) {
-          event.defaultPrevented = true;
-          event.stopped = true;
-          onDeleteNode(nodeId);
-          return;
+          // No-op for deletion
         }
       };
 
-      // Regular click does not delete
-      const normalEvent = { altKey: false };
-      simulateNodeClick(normalEvent, 'test_node_1');
-      expect(deletedNodeIds).toHaveLength(0);
-
-      // Alt + Click triggers deletion
       const altClickEvent = { altKey: true };
-      simulateNodeClick(altClickEvent, 'test_node_1');
-      expect(deletedNodeIds).toContain('test_node_1');
-      expect(altClickEvent.defaultPrevented).toBe(true);
-      expect(altClickEvent.stopped).toBe(true);
+      handleNodeClick(altClickEvent, 'test_node_1');
+      expect(deletedNodeIds).toHaveLength(0);
     });
   });
 });

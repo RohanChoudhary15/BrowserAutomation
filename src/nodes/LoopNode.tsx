@@ -39,13 +39,6 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
 
   return (
     <div
-      onClick={(e) => {
-        if (e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          data.onDeleteNode?.(id);
-        }
-      }}
       className={`group relative min-w-[220px] max-w-[270px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
@@ -87,7 +80,7 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
               e.stopPropagation();
               data.onDeleteNode?.(id);
             }}
-            title="Delete this node (Alt+Click)"
+            title="Delete node (Del)"
             className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-all"
           >
             <Trash2 className="w-3 h-3" />

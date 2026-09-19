@@ -49,6 +49,7 @@ interface WorkflowCanvasProps {
   canPaste?: boolean;
   onDeleteNode: (nodeId: string) => void;
   onDeleteNodes?: (nodeIds: string[]) => void;
+  onDeleteEdge?: (edgeId: string) => void;
   onToggleDisableNode: (nodeId: string) => void;
   onToggleDisableNodes?: (nodeIds: string[]) => void;
   onRunNode: (nodeId: string) => void;
@@ -72,6 +73,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
   canPaste = false,
   onDeleteNode,
   onDeleteNodes,
+  onDeleteEdge,
   onToggleDisableNode,
   onToggleDisableNodes,
   onRunNode,
@@ -87,6 +89,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
     x: number;
     y: number;
     node?: WorkflowNode | null;
+    edge?: WorkflowEdge | null;
   } | null>(null);
 
   // Quick Add Modal state
@@ -287,33 +290,54 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
   );
 
   const handleNodeClick = useCallback(
-    (event: React.MouseEvent, node: WorkflowNode) => {
-      if (event.altKey) {
-        event.preventDefault();
-        event.stopPropagation();
-        onDeleteNode(node.id);
-        setContextMenu(null);
-        return;
-      }
+    (_: any, node: WorkflowNode) => {
       onSelectNode(node);
       setContextMenu(null);
       setQuickAdd((prev) => ({ ...prev, isOpen: false }));
       setPendingConnection(null);
     },
-    [onDeleteNode, onSelectNode]
+    [onSelectNode]
   );
 
-  // Capture phase listener for Alt+Click on any node element
+  const handleEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: WorkflowEdge) => {
+      if (event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        onDeleteEdge?.(edge.id);
+        setContextMenu(null);
+      }
+    },
+    [onDeleteEdge]
+  );
+
+  const handleEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: WorkflowEdge) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        node: null,
+        edge,
+      });
+      setQuickAdd((prev) => ({ ...prev, isOpen: false }));
+      setPendingConnection(null);
+    },
+    []
+  );
+
+  // Capture phase listener for Alt+Click on any edge/connection element
   const handleCanvasClickCapture = useCallback(
     (e: React.MouseEvent) => {
       if (e.altKey) {
-        const nodeEl = (e.target as HTMLElement).closest('.react-flow__node');
-        if (nodeEl) {
-          const nodeId = nodeEl.getAttribute('data-id');
-          if (nodeId) {
+        const edgeEl = (e.target as HTMLElement).closest('.react-flow__edge');
+        if (edgeEl) {
+          const edgeId = edgeEl.getAttribute('data-id');
+          if (edgeId) {
             e.preventDefault();
             e.stopPropagation();
-            onDeleteNode(nodeId);
+            onDeleteEdge?.(edgeId);
             setContextMenu(null);
             setQuickAdd((prev) => ({ ...prev, isOpen: false }));
             setPendingConnection(null);
@@ -321,7 +345,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         }
       }
     },
-    [onDeleteNode]
+    [onDeleteEdge]
   );
 
   const handlePaneClick = useCallback(() => {
@@ -344,6 +368,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         x: e.clientX,
         y: e.clientY,
         node,
+        edge: null,
       });
       setQuickAdd((prev) => ({ ...prev, isOpen: false }));
       setPendingConnection(null);
@@ -357,6 +382,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
       x: e.clientX,
       y: e.clientY,
       node: null,
+      edge: null,
     });
     setQuickAdd((prev) => ({ ...prev, isOpen: false }));
     setPendingConnection(null);
@@ -388,12 +414,19 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
     >
       {isAltPressed && (
         <style>{`
-          .alt-delete-mode .react-flow__node {
+          .alt-delete-mode .react-flow__edge {
             cursor: pointer !important;
           }
-          .alt-delete-mode .react-flow__node:hover {
-            outline: 2px dashed #f43f5e !important;
-            outline-offset: 3px;
+          .alt-delete-mode .react-flow__edge:hover .react-flow__edge-path {
+            stroke: #f43f5e !important;
+            stroke-width: 3.5px !important;
+            filter: drop-shadow(0 0 6px rgba(244, 63, 94, 0.9));
+          }
+          .alt-delete-mode .react-flow__edge:hover .react-flow__edge-interaction {
+            cursor: pointer !important;
+          }
+          .alt-delete-mode .react-flow__edge-textwrapper:hover {
+            cursor: pointer !important;
           }
         `}</style>
       )}
@@ -407,8 +440,10 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         onConnectStart={handleConnectStart}
         onConnectEnd={handleConnectEnd}
         onNodeClick={handleNodeClick}
-        onPaneClick={handlePaneClick}
+        onEdgeClick={handleEdgeClick as any}
         onNodeContextMenu={handleNodeContextMenu}
+        onEdgeContextMenu={handleEdgeContextMenu as any}
+        onPaneClick={handlePaneClick}
         onPaneContextMenu={handlePaneContextMenu}
         onDoubleClick={handleDoubleClick}
         snapToGrid={true}
@@ -509,6 +544,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
           x={contextMenu.x}
           y={contextMenu.y}
           node={contextMenu.node}
+          edge={contextMenu.edge}
           selectedNodesCount={selectedNodes.length}
           canPaste={canPaste}
           onClose={() => setContextMenu(null)}
@@ -537,6 +573,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
             if (onDeleteNodes) onDeleteNodes(selectedNodes.map((n) => n.id));
             else selectedNodes.forEach((n) => onDeleteNode(n.id));
           }}
+          onDeleteEdge={onDeleteEdge}
           onAddNode={(pos) => {
             const flowPos = screenToFlowPosition(pos);
             setPendingConnection(null);

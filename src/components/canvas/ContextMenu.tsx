@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { Play, Copy, EyeOff, Eye, Trash2, Edit3, Plus, Maximize2, CheckSquare, ClipboardCopy, ClipboardPaste } from 'lucide-react';
-import { WorkflowNode } from '../../types/workflow';
+import { WorkflowNode, WorkflowEdge } from '../../types/workflow';
 
 interface ContextMenuProps {
   x: number;
   y: number;
   node?: WorkflowNode | null;
+  edge?: WorkflowEdge | null;
   selectedNodesCount?: number;
   canPaste?: boolean;
   onClose: () => void;
@@ -18,7 +19,9 @@ interface ContextMenuProps {
   onToggleDisableNode?: (nodeId: string) => void;
   onToggleDisableSelected?: () => void;
   onDeleteNode?: (nodeId: string) => void;
+  onDeleteNodes?: (nodeIds: string[]) => void;
   onDeleteSelected?: () => void;
+  onDeleteEdge?: (edgeId: string) => void;
   onAddNode?: (pos: { x: number; y: number }) => void;
   onFitView?: () => void;
   onSelectAll?: () => void;
@@ -28,6 +31,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   x,
   y,
   node,
+  edge,
   selectedNodesCount = 0,
   canPaste = false,
   onClose,
@@ -41,6 +45,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onToggleDisableSelected,
   onDeleteNode,
   onDeleteSelected,
+  onDeleteEdge,
   onAddNode,
   onFitView,
   onSelectAll,
@@ -106,13 +111,13 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
                 onClose();
               }}
               className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
-              title="Delete this node (Alt+Click)"
+              title="Delete this node (Del)"
             >
               <div className="flex items-center gap-2">
                 <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                 <span>Delete Node</span>
               </div>
-              <span className="text-[10px] text-gray-500 font-mono">Alt+Click</span>
+              <span className="text-[10px] text-gray-500 font-mono">Del</span>
             </button>
           )}
           <button
@@ -178,11 +183,31 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               onClose();
             }}
             className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
-            title="Delete this node (Alt+Click or Del)"
+            title="Delete this node (Del)"
           >
             <div className="flex items-center gap-2">
               <Trash2 className="w-3.5 h-3.5" />
               <span>Delete Node</span>
+            </div>
+            <span className="text-[10px] text-gray-500 font-mono">Del</span>
+          </button>
+        </>
+      ) : edge ? (
+        <>
+          <div className="px-2.5 py-1 text-[10px] font-semibold text-indigo-400 border-b border-[#232a3b] mb-1">
+            Connection
+          </div>
+          <button
+            onClick={() => {
+              onDeleteEdge?.(edge.id);
+              onClose();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+            title="Delete this connection (Alt+Click)"
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Delete Connection</span>
             </div>
             <span className="text-[10px] text-gray-500 font-mono">Alt+Click</span>
           </button>
