@@ -3,6 +3,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  ControlButton,
   MiniMap,
   Connection,
   Edge,
@@ -25,7 +26,7 @@ import { ContextMenu } from './ContextMenu';
 import { QuickAddModal } from './QuickAddModal';
 import { NODE_REGISTRY } from '../../nodes/registry';
 import { generateId } from '../../utils/id';
-import { Copy, Trash2, EyeOff, X, ClipboardCopy, ClipboardPaste } from 'lucide-react';
+import { Copy, Trash2, EyeOff, X, ClipboardCopy, ClipboardPaste, Sparkles } from 'lucide-react';
 
 interface WorkflowCanvasProps {
   nodes: WorkflowNode[];
@@ -53,6 +54,7 @@ interface WorkflowCanvasProps {
   onToggleDisableNode: (nodeId: string) => void;
   onToggleDisableNodes?: (nodeIds: string[]) => void;
   onRunNode: (nodeId: string) => void;
+  onAutoLayout?: () => void;
 }
 
 const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
@@ -77,9 +79,17 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
   onToggleDisableNode,
   onToggleDisableNodes,
   onRunNode,
+  onAutoLayout,
 }) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
+
+  const handleAutoLayout = useCallback(() => {
+    onAutoLayout?.();
+    setTimeout(() => {
+      fitView({ padding: 0.2, duration: 400 });
+    }, 60);
+  }, [onAutoLayout, fitView]);
 
   // Selected nodes list
   const selectedNodes = nodes.filter((n) => n.selected);
@@ -250,6 +260,10 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
       if (e.key === 'Alt' || e.altKey) {
         setIsAltPressed(true);
       }
+      if (e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        handleAutoLayout();
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt' || !e.altKey) {
@@ -266,7 +280,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, []);
+  }, [handleAutoLayout]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -459,7 +473,18 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         deleteKeyCode={null}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1c2230" />
-        <Controls className="!m-4 !border-[#1c2230] !bg-[#11141c]" />
+        <Controls className="!m-4 !border-[#1c2230] !bg-[#11141c]">
+          {onAutoLayout && (
+            <ControlButton
+              onClick={handleAutoLayout}
+              title="Auto-Layout / Tidy Nodes (Alt+L)"
+              aria-label="Auto-Layout / Tidy Nodes"
+              className="!bg-[#11141c] hover:!bg-[#1c2230] !border-[#1c2230] !text-indigo-400"
+            >
+              <Sparkles className="w-4 h-4 text-indigo-400 hover:text-indigo-300" />
+            </ControlButton>
+          )}
+        </Controls>
         <MiniMap
           nodeStrokeWidth={3}
           nodeColor={(n: any) => {
@@ -538,6 +563,21 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         </div>
       )}
 
+      {/* Canvas Tidy Nodes Toolbar Button */}
+      {onAutoLayout && (
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+          <button
+            onClick={handleAutoLayout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#11141c]/90 hover:bg-[#1c2230] border border-[#232a3b] text-gray-200 hover:text-white shadow-xl backdrop-blur-md text-xs font-medium transition-all group hover:border-indigo-500/50"
+            title="Automatically arrange nodes into a clean top-to-bottom flowchart (Alt+L)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400 group-hover:rotate-12 transition-transform" />
+            <span>Tidy Nodes</span>
+            <span className="text-[10px] text-gray-500 font-mono ml-0.5">Alt+L</span>
+          </button>
+        </div>
+      )}
+
       {/* Context Menu */}
       {contextMenu && (
         <ContextMenu
@@ -585,6 +625,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
           }}
           onFitView={() => fitView({ padding: 0.2, duration: 400 })}
           onSelectAll={() => onNodesChange(nodes.map((n) => ({ type: 'select', id: n.id, selected: true })))}
+          onAutoLayout={handleAutoLayout}
         />
       )}
 

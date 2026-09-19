@@ -26,6 +26,7 @@ import {
   Download,
   Bell,
   Calculator,
+  FileText,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { ModelOption, AiProvider } from '../../ai/types';
@@ -1313,11 +1314,70 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
             </div>
 
+            {selectedNode.data.type === 'ai_agent' && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Document Format</label>
+                  <select
+                    value={props.outputFormat || (props.jsonMode ? 'json' : 'text')}
+                    onChange={(e) => {
+                      const fmt = e.target.value;
+                      handlePropChange('outputFormat', fmt);
+                      if (fmt === 'json') {
+                        handlePropChange('jsonMode', true);
+                      }
+                    }}
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value="text">Plain Text (.txt)</option>
+                    <option value="json">Structured JSON (.json)</option>
+                    <option value="csv">CSV Spreadsheet (.csv)</option>
+                    <option value="xlsx">Microsoft Excel (.xlsx)</option>
+                    <option value="pdf">PDF Document (.pdf)</option>
+                  </select>
+                </div>
+
+                {props.outputFormat && props.outputFormat !== 'text' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-gray-400">Download Filename</label>
+                      <span className="text-[10px] text-purple-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={props.downloadFilename || 'ai_report'}
+                      onChange={(e) => handlePropChange('downloadFilename', e.target.value)}
+                      placeholder="e.g. ai_report_{{timestamp}}"
+                      className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                    />
+                  </div>
+                )}
+
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={!!props.autoDownload}
+                    onChange={(e) => handlePropChange('autoDownload', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] flex items-center gap-1.5">
+                    <Download className="w-3.5 h-3.5 text-indigo-400" />
+                    Auto-download file on completion
+                  </span>
+                </label>
+              </>
+            )}
+
             <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-1">
               <input
                 type="checkbox"
                 checked={!!props.jsonMode}
-                onChange={(e) => handlePropChange('jsonMode', e.target.checked)}
+                onChange={(e) => {
+                  handlePropChange('jsonMode', e.target.checked);
+                  if (e.target.checked && (!props.outputFormat || props.outputFormat === 'text')) {
+                    handlePropChange('outputFormat', 'json');
+                  }
+                }}
                 className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
               />
               <span className="text-[11px]">JSON Mode (parse response into structured object)</span>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Play, Copy, EyeOff, Eye, Trash2, Edit3, Plus, Maximize2, CheckSquare, ClipboardCopy, ClipboardPaste } from 'lucide-react';
+import { Play, Copy, EyeOff, Eye, Trash2, Edit3, Plus, Maximize2, CheckSquare, ClipboardCopy, ClipboardPaste, Sparkles } from 'lucide-react';
 import { WorkflowNode, WorkflowEdge } from '../../types/workflow';
 
 interface ContextMenuProps {
@@ -25,6 +25,7 @@ interface ContextMenuProps {
   onAddNode?: (pos: { x: number; y: number }) => void;
   onFitView?: () => void;
   onSelectAll?: () => void;
+  onAutoLayout?: () => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -49,6 +50,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onAddNode,
   onFitView,
   onSelectAll,
+  onAutoLayout,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -234,6 +236,22 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <ClipboardPaste className="w-3.5 h-3.5" />
               <span>Paste Nodes</span>
+            </button>
+          )}
+          {onAutoLayout && (
+            <button
+              onClick={() => {
+                onAutoLayout();
+                onClose();
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-[#232a3b] text-indigo-300 text-left transition-colors"
+              title="Auto-arrange nodes into a clean top-to-bottom flowchart (Alt+L)"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Tidy Nodes (Auto-Layout)</span>
+              </div>
+              <span className="text-[10px] text-gray-500 font-mono">Alt+L</span>
             </button>
           )}
           <button

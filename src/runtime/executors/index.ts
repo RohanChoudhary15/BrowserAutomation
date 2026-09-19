@@ -5,6 +5,7 @@ import { evaluateCondition } from '../evaluator';
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
+import { formatAiAgentDocument, AiAgentOutputFormat } from '../../utils/documentExporter';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -978,6 +979,10 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
     : undefined;
   const outputVariable = node.data.properties.outputVariable || 'aiAnalysis';
   const jsonMode = !!node.data.properties.jsonMode;
+  const outputFormat = (node.data.properties.outputFormat || (jsonMode ? 'json' : 'text')) as AiAgentOutputFormat;
+  const autoDownload = !!node.data.properties.autoDownload;
+  const rawDownloadFilename = node.data.properties.downloadFilename || `${outputVariable}_output`;
+  const downloadFilename = interpolateVariables(rawDownloadFilename, ctx.variables);
 
   const customModel = node.data.properties.model;
   const customProvider = node.data.properties.provider;
@@ -989,19 +994,56 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
     ...(customOpenaiBaseUrl ? { openaiBaseUrl: customOpenaiBaseUrl } : {}),
   });
 
-  let output: any = responseText;
-  if (jsonMode) {
+  const docResult = formatAiAgentDocument(responseText, outputFormat, downloadFilename);
+  const output = docResult.parsedOutput;
+
+  if (autoDownload && docResult.dataUrl) {
     try {
-      const cleanJson = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      output = JSON.parse(cleanJson);
-    } catch {
-      output = responseText;
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        await new Promise<number | undefined>((resolve, reject) => {
+          chrome.downloads.download(
+            {
+              url: docResult.dataUrl,
+              filename: docResult.defaultFilename,
+              saveAs: false,
+            },
+            (downloadId) => {
+              if (chrome.runtime?.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+              } else {
+                resolve(downloadId);
+              }
+            }
+          );
+        });
+      } else if (typeof document !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = docResult.dataUrl;
+        a.download = docResult.defaultFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (err: any) {
+      ctx.log({
+        level: 'warn',
+        message: `Auto-download failed: ${err.message}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
     }
   }
 
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `${outputFormat.toUpperCase()}${autoDownload ? ' (saved)' : ''}`,
+    },
+  });
+
   ctx.log({
     level: 'success',
-    message: `AI Agent finished analysis`,
+    message: `AI Agent finished analysis (${outputFormat.toUpperCase()})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -1009,7 +1051,12 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
   return {
     success: true,
     output,
-    variables: { [outputVariable]: output },
+    variables: {
+      [outputVariable]: output,
+      [`${outputVariable}_dataUrl`]: docResult.dataUrl,
+      [`${outputVariable}_content`]: docResult.formattedContent,
+      [`${outputVariable}_filename`]: docResult.defaultFilename,
+    },
   };
 };
 

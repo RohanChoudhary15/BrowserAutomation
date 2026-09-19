@@ -42,6 +42,7 @@ import {
   hasCopiedNodes,
   preparePastedNodes,
 } from '../utils/nodeClipboard';
+import { autoLayoutNodes } from '../utils/autoLayout';
 
 export const App: React.FC = () => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -853,6 +854,17 @@ export const App: React.FC = () => {
     [setEdges, setNodes, takeSnapshot, triggerAutosave]
   );
 
+  // Auto-Layout / Tidy Nodes callback
+  const handleAutoLayout = useCallback(() => {
+    setNodes((currentNodes) => {
+      if (currentNodes.length === 0) return currentNodes;
+      const layoutedNodes = autoLayoutNodes(currentNodes, edges, { direction: 'TB' });
+      takeSnapshot(layoutedNodes, edges);
+      triggerAutosave(layoutedNodes, edges);
+      return layoutedNodes;
+    });
+  }, [edges, setNodes, takeSnapshot, triggerAutosave]);
+
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -984,6 +996,7 @@ export const App: React.FC = () => {
               const target = nodes.find((n) => n.id === id);
               if (target) handleRunSingleNode(target);
             }}
+            onAutoLayout={handleAutoLayout}
           />
         </main>
 

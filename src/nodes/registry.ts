@@ -608,6 +608,9 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       model: 'gpt-5.6-sol',
       outputVariable: 'aiAnalysis',
       jsonMode: false,
+      outputFormat: 'text', // 'text' | 'json' | 'csv' | 'xlsx' | 'pdf'
+      autoDownload: false,
+      downloadFilename: 'ai_report',
     },
   },
   autonomous_agent: {
