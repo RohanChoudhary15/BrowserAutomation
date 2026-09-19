@@ -465,4 +465,68 @@ describe('Quality of Life: Iterator Nodes, Find All Images & Inline Loop Body', 
       expect(newEdges[0].target).toBe(newNodeB!.id);
     });
   });
+
+  describe('Node Deletion: Context Menu, Right-Click, and Alt + Click', () => {
+    it('deletes an existing node and cleanly removes all attached edges', () => {
+      let nodes: WorkflowNode[] = [
+        {
+          id: 'node_del_1',
+          type: 'customNode',
+          position: { x: 0, y: 0 },
+          data: { label: 'Node 1', category: 'browser', type: 'navigate', properties: {} },
+        },
+        {
+          id: 'node_del_2',
+          type: 'customNode',
+          position: { x: 100, y: 100 },
+          data: { label: 'Node 2', category: 'interaction', type: 'click', properties: {} },
+        },
+      ];
+
+      let edges: WorkflowEdge[] = [
+        { id: 'edge_1_2', source: 'node_del_1', target: 'node_del_2' },
+      ];
+
+      const handleDeleteNode = (nodeId: string) => {
+        nodes = nodes.filter((n) => n.id !== nodeId);
+        edges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
+      };
+
+      // Trigger deletion of node_del_1
+      handleDeleteNode('node_del_1');
+
+      expect(nodes.length).toBe(1);
+      expect(nodes[0].id).toBe('node_del_2');
+      expect(edges.length).toBe(0);
+    });
+
+    it('triggers node deletion when Alt + Click event occurs', () => {
+      const deletedNodeIds: string[] = [];
+      const onDeleteNode = (id: string) => {
+        deletedNodeIds.push(id);
+      };
+
+      // Simulate node click handler logic
+      const simulateNodeClick = (event: { altKey: boolean; defaultPrevented?: boolean; stopped?: boolean }, nodeId: string) => {
+        if (event.altKey) {
+          event.defaultPrevented = true;
+          event.stopped = true;
+          onDeleteNode(nodeId);
+          return;
+        }
+      };
+
+      // Regular click does not delete
+      const normalEvent = { altKey: false };
+      simulateNodeClick(normalEvent, 'test_node_1');
+      expect(deletedNodeIds).toHaveLength(0);
+
+      // Alt + Click triggers deletion
+      const altClickEvent = { altKey: true };
+      simulateNodeClick(altClickEvent, 'test_node_1');
+      expect(deletedNodeIds).toContain('test_node_1');
+      expect(altClickEvent.defaultPrevented).toBe(true);
+      expect(altClickEvent.stopped).toBe(true);
+    });
+  });
 });

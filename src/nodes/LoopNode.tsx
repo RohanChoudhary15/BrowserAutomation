@@ -3,12 +3,13 @@ import { Handle, Position, NodeProps } from '@xyflow/react';
 import { Icon } from '../components/common/Icon';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Loader2, CheckCircle2, AlertCircle, Play } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Play, Trash2 } from 'lucide-react';
 
 export interface LoopNodeProps extends NodeProps {
   data: WorkflowNodeData & {
     runtimeState?: NodeRuntimeState;
     onRunNode?: (nodeId: string) => void;
+    onDeleteNode?: (nodeId: string) => void;
   };
 }
 
@@ -38,6 +39,13 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
 
   return (
     <div
+      onClick={(e) => {
+        if (e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          data.onDeleteNode?.(id);
+        }
+      }}
       className={`group relative min-w-[220px] max-w-[270px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
@@ -58,7 +66,7 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
           <div className="truncate font-semibold text-gray-100">{data.label || (isForEach ? 'For Each' : 'Loop')}</div>
         </div>
 
-        <div className="shrink-0 flex items-center">
+        <div className="shrink-0 flex items-center gap-1">
           {status === 'running' && <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />}
           {status === 'success' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
           {status === 'error' && <AlertCircle className="w-3.5 h-3.5 text-rose-400" />}
@@ -74,6 +82,16 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
               <Play className="w-3 h-3 fill-current" />
             </button>
           )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDeleteNode?.(id);
+            }}
+            title="Delete this node (Alt+Click)"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-all"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
         </div>
       </div>
 

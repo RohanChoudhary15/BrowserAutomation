@@ -120,6 +120,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
       ...n.data,
       runtimeState: nodeStates[n.id],
       onRunNode: onRunNode,
+      onDeleteNode: onDeleteNode,
     },
   }));
 
@@ -238,6 +239,32 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [nodes, onDeleteNodes, onDeleteNode, onDuplicateNodes, onDuplicateNode, onCopyNodes, onCopyNode, onPasteNodes, canPaste, onNodesChange, onSelectNode]);
 
+  // Track Alt key globally for tactile cursor and visual cue
+  const [isAltPressed, setIsAltPressed] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' || e.altKey) {
+        setIsAltPressed(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' || !e.altKey) {
+        setIsAltPressed(false);
+      }
+    };
+    const handleBlur = () => setIsAltPressed(false);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -260,13 +287,41 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
   );
 
   const handleNodeClick = useCallback(
-    (_: any, node: WorkflowNode) => {
+    (event: React.MouseEvent, node: WorkflowNode) => {
+      if (event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        onDeleteNode(node.id);
+        setContextMenu(null);
+        return;
+      }
       onSelectNode(node);
       setContextMenu(null);
       setQuickAdd((prev) => ({ ...prev, isOpen: false }));
       setPendingConnection(null);
     },
-    [onSelectNode]
+    [onDeleteNode, onSelectNode]
+  );
+
+  // Capture phase listener for Alt+Click on any node element
+  const handleCanvasClickCapture = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.altKey) {
+        const nodeEl = (e.target as HTMLElement).closest('.react-flow__node');
+        if (nodeEl) {
+          const nodeId = nodeEl.getAttribute('data-id');
+          if (nodeId) {
+            e.preventDefault();
+            e.stopPropagation();
+            onDeleteNode(nodeId);
+            setContextMenu(null);
+            setQuickAdd((prev) => ({ ...prev, isOpen: false }));
+            setPendingConnection(null);
+          }
+        }
+      }
+    },
+    [onDeleteNode]
   );
 
   const handlePaneClick = useCallback(() => {
@@ -276,17 +331,25 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
     setPendingConnection(null);
   }, [onSelectNode]);
 
-  const handleNodeContextMenu = useCallback((e: React.MouseEvent, node: WorkflowNode) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      node,
-    });
-    setQuickAdd((prev) => ({ ...prev, isOpen: false }));
-    setPendingConnection(null);
-  }, []);
+  const handleNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: WorkflowNode) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Right-clicking a node selects it if not already selected
+      if (!node.selected) {
+        onNodesChange(nodes.map((n) => ({ type: 'select', id: n.id, selected: n.id === node.id })));
+        onSelectNode(node);
+      }
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        node,
+      });
+      setQuickAdd((prev) => ({ ...prev, isOpen: false }));
+      setPendingConnection(null);
+    },
+    [nodes, onNodesChange, onSelectNode]
+  );
 
   const handlePaneContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -318,10 +381,22 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
   return (
     <div
       ref={reactFlowWrapper}
-      className="w-full h-full relative select-none bg-[#0c0e14]"
+      className={`w-full h-full relative select-none bg-[#0c0e14] ${isAltPressed ? 'alt-delete-mode' : ''}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onClickCapture={handleCanvasClickCapture}
     >
+      {isAltPressed && (
+        <style>{`
+          .alt-delete-mode .react-flow__node {
+            cursor: pointer !important;
+          }
+          .alt-delete-mode .react-flow__node:hover {
+            outline: 2px dashed #f43f5e !important;
+            outline-offset: 3px;
+          }
+        `}</style>
+      )}
       <ReactFlow
         nodes={enrichedNodes as any}
         edges={edges as any}

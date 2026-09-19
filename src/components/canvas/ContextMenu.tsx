@@ -99,15 +99,34 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <span>Toggle Disable ({selectedNodesCount})</span>
           </button>
           <div className="h-[1px] bg-[#232a3b] my-1" />
+          {node && (
+            <button
+              onClick={() => {
+                onDeleteNode?.(node.id);
+                onClose();
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+              title="Delete this node (Alt+Click)"
+            >
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Delete Node</span>
+              </div>
+              <span className="text-[10px] text-gray-500 font-mono">Alt+Click</span>
+            </button>
+          )}
           <button
             onClick={() => {
               onDeleteSelected?.();
               onClose();
             }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
           >
-            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>Delete ({selectedNodesCount})</span>
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Delete ({selectedNodesCount})</span>
+            </div>
+            <span className="text-[10px] text-gray-500 font-mono">Del</span>
           </button>
         </>
       ) : node ? (
@@ -158,10 +177,14 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               onDeleteNode?.(node.id);
               onClose();
             }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 text-left transition-colors"
+            title="Delete this node (Alt+Click or Del)"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete</span>
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Node</span>
+            </div>
+            <span className="text-[10px] text-gray-500 font-mono">Alt+Click</span>
           </button>
         </>
       ) : (
