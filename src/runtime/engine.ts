@@ -298,7 +298,8 @@ export class WorkflowEngine {
           nodeName: node.data.label,
         });
 
-        for (let index = 0; index < items.length; index++) {
+        const totalItems = items.length;
+        for (let index = 0; index < totalItems; index++) {
           if (ctx.signal.aborted) break;
           const item = items[index];
 
@@ -323,11 +324,42 @@ export class WorkflowEngine {
           Object.assign(this.variables, ctx.variables);
           this.events.onVariablesChange?.(this.variables);
 
+          const progress = Math.round(((index + 1) / Math.max(1, totalItems)) * 100);
+          const detail = typeof item === 'object' && item?.url
+            ? item.url
+            : typeof item === 'string'
+            ? item.slice(0, 30)
+            : undefined;
+
+          this.updateNodeState(node.id, {
+            status: 'running',
+            dynamicState: {
+              currentIteration: index + 1,
+              totalIterations: totalItems,
+              currentItem: item,
+              progress,
+              message: isImageNode
+                ? `Image ${index + 1} of ${totalItems}`
+                : `Element ${index + 1} of ${totalItems}`,
+              detail,
+            },
+          });
+
           for (const bNode of bodyNodes) {
             if (ctx.signal.aborted) break;
             await this.traverseAndExecute(bNode, ctx);
           }
         }
+
+        this.updateNodeState(node.id, {
+          status: 'success',
+          dynamicState: {
+            currentIteration: totalItems,
+            totalIterations: totalItems,
+            progress: 100,
+            message: `Processed ${totalItems} items`,
+          },
+        });
 
         // After loop completes, follow 'loop_done' edges (or any non-loop_body edges)
         const continuationNodes = doneNodes.length > 0
@@ -406,13 +438,33 @@ export class WorkflowEngine {
       nodeName: loopNode.data.label,
     });
 
-    for (let index = 0; index < iterations.length; index++) {
+    const totalIterations = iterations.length;
+    for (let index = 0; index < totalIterations; index++) {
       if (ctx.signal.aborted) break;
 
       const item = iterations[index];
       ctx.variables.index = index;
       ctx.variables.item = item;
       this.events.onVariablesChange?.(this.variables);
+
+      const progress = Math.round(((index + 1) / Math.max(1, totalIterations)) * 100);
+      const detail = typeof item === 'object'
+        ? (item?.name || item?.id || item?.url || JSON.stringify(item).slice(0, 25))
+        : String(item);
+
+      this.updateNodeState(loopNode.id, {
+        status: 'running',
+        dynamicState: {
+          currentIteration: index + 1,
+          totalIterations,
+          currentItem: item,
+          progress,
+          message: isForEach
+            ? `Item ${index + 1} of ${totalIterations}`
+            : `Iteration ${index + 1} of ${totalIterations}`,
+          detail: isForEach ? detail : undefined,
+        },
+      });
 
       let shouldBreak = false;
       for (const bNode of bodyNodes) {
@@ -422,6 +474,16 @@ export class WorkflowEngine {
 
       if (shouldBreak) break;
     }
+
+    this.updateNodeState(loopNode.id, {
+      status: 'success',
+      dynamicState: {
+        currentIteration: totalIterations,
+        totalIterations,
+        progress: 100,
+        message: `Completed ${totalIterations} iterations`,
+      },
+    });
 
     // Once loop completes, continue on 'loop_done' branch
     for (const dNode of doneNodes) {

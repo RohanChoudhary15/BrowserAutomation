@@ -24,6 +24,7 @@ export type NodeType =
   | 'hover'
   | 'press_key'
   | 'scroll'
+  | 'smart_scroll'
   | 'select_dropdown'
   | 'drag_and_drop'
   // Wait
@@ -55,12 +56,15 @@ export type NodeType =
   | 'regex'
   | 'json_parse'
   | 'generate_data'
+  | 'math_calculate'
   // Utility
   | 'screenshot'
   | 'execute_javascript'
   | 'http_request'
   | 'storage_manage'
   | 'clipboard'
+  | 'download_file'
+  | 'show_notification'
   | 'ai_agent'
   | 'autonomous_agent'
   // Messaging & Notifications

@@ -23,6 +23,9 @@ import {
   Copy,
   ClipboardCopy,
   Layers,
+  Download,
+  Bell,
+  Calculator,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { ModelOption, AiProvider } from '../../ai/types';
@@ -593,8 +596,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent'].includes(
+        {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -946,6 +949,203 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               placeholder="e.g. /dashboard or https://..."
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
             />
+          </div>
+        )}
+
+        {/* Smart Scroll Node */}
+        {selectedNode.data.type === 'smart_scroll' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Scroll Mode</label>
+              <select
+                value={props.mode || 'to_bottom'}
+                onChange={(e) => handlePropChange('mode', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="to_bottom">Scroll to Bottom (Infinite Scroll)</option>
+                <option value="distance">Scroll Fixed Distance in Steps</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Max Passes</label>
+                <input
+                  type="number"
+                  value={props.maxScrolls ?? 5}
+                  onChange={(e) => handlePropChange('maxScrolls', Number(e.target.value))}
+                  min={1}
+                  max={50}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Delay (ms)</label>
+                <input
+                  type="number"
+                  value={props.scrollDelay ?? 1000}
+                  onChange={(e) => handlePropChange('scrollDelay', Number(e.target.value))}
+                  min={200}
+                  step={100}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Distance per step (px)</label>
+              <input
+                type="number"
+                value={props.distance ?? 600}
+                onChange={(e) => handlePropChange('distance', Number(e.target.value))}
+                min={100}
+                step={100}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Math & Counter Node */}
+        {selectedNode.data.type === 'math_calculate' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Operation</label>
+              <select
+                value={props.operation || 'add'}
+                onChange={(e) => handlePropChange('operation', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="add">Add (+)</option>
+                <option value="increment">Increment by value</option>
+                <option value="subtract">Subtract (-)</option>
+                <option value="decrement">Decrement by value</option>
+                <option value="multiply">Multiply (*)</option>
+                <option value="divide">Divide (/)</option>
+                <option value="formula">Custom Math Formula</option>
+              </select>
+            </div>
+            {props.operation === 'formula' ? (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">Formula Expression</label>
+                  <span className="text-[10px] text-purple-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                </div>
+                <input
+                  type="text"
+                  value={props.formula || ''}
+                  onChange={(e) => handlePropChange('formula', e.target.value)}
+                  placeholder="e.g. {{price}} * 1.08 + 5"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Left Value</label>
+                  <input
+                    type="text"
+                    value={props.leftOperand ?? '{{counter}}'}
+                    onChange={(e) => handlePropChange('leftOperand', e.target.value)}
+                    placeholder="{{counter}}"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Right Value</label>
+                  <input
+                    type="text"
+                    value={props.rightOperand ?? '1'}
+                    onChange={(e) => handlePropChange('rightOperand', e.target.value)}
+                    placeholder="1"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Download File Node */}
+        {selectedNode.data.type === 'download_file' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Source Type</label>
+              <select
+                value={props.sourceType || 'variable'}
+                onChange={(e) => handlePropChange('sourceType', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="variable">URL or Variable (e.g. &#123;&#123;screenshotUrl&#125;&#125;)</option>
+                <option value="content">Raw Text or CSV/JSON Content</option>
+              </select>
+            </div>
+            {props.sourceType === 'content' ? (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">File Content</label>
+                <textarea
+                  rows={3}
+                  value={props.content || ''}
+                  onChange={(e) => handlePropChange('content', e.target.value)}
+                  placeholder="Data text or {{extractedTable}} to save as file"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">File URL / Variable</label>
+                <input
+                  type="text"
+                  value={props.url || '{{screenshotUrl}}'}
+                  onChange={(e) => handlePropChange('url', e.target.value)}
+                  placeholder="https://... or {{screenshotUrl}}"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Save Filename</label>
+              <input
+                type="text"
+                value={props.filename || 'downloaded_file.png'}
+                onChange={(e) => handlePropChange('filename', e.target.value)}
+                placeholder="e.g. screenshot.png, data.csv"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!props.saveAs}
+                onChange={(e) => handlePropChange('saveAs', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Prompt user with "Save As" file dialog</span>
+            </label>
+          </div>
+        )}
+
+        {/* Desktop Notification Node */}
+        {selectedNode.data.type === 'show_notification' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Notification Title</label>
+              <input
+                type="text"
+                value={props.title || 'AutoFlow Alert'}
+                onChange={(e) => handlePropChange('title', e.target.value)}
+                placeholder="Alert Title"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Message Body</label>
+              <textarea
+                rows={2}
+                value={props.message || 'Workflow step finished!'}
+                onChange={(e) => handlePropChange('message', e.target.value)}
+                placeholder="Body text or {{variable}}"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
           </div>
         )}
 

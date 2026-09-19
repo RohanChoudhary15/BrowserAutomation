@@ -245,19 +245,75 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
   if (node.data.properties.unit === 's' || duration < 50) {
     duration = duration * 1000;
   }
-  ctx.log({ level: 'info', message: `Waiting for ${duration}ms`, nodeId: node.id, nodeName: node.data.label });
+  const totalSeconds = Number((duration / 1000).toFixed(1));
+  const startTime = Date.now();
+
+  ctx.log({ level: 'info', message: `Waiting for ${duration}ms (${totalSeconds}s)`, nodeId: node.id, nodeName: node.data.label });
+
+  // Initial countdown state on canvas
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      remainingSeconds: totalSeconds,
+      totalSeconds,
+      elapsedSeconds: 0,
+      progress: 0,
+      message: `${totalSeconds}s remaining`,
+    },
+  });
 
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, duration);
+    const updateInterval = 100;
+    const intervalTimer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const remainingMs = Math.max(0, duration - elapsed);
+      const remainingSec = Number((remainingMs / 1000).toFixed(1));
+      const elapsedSec = Number((elapsed / 1000).toFixed(1));
+      const progress = Math.min(100, Math.round((elapsed / duration) * 100));
+
+      ctx.updateNodeState(node.id, {
+        status: 'running',
+        dynamicState: {
+          remainingSeconds: remainingSec,
+          totalSeconds,
+          elapsedSeconds: elapsedSec,
+          progress,
+          message: `${remainingSec}s remaining`,
+        },
+      });
+
+      if (remainingMs <= 0) {
+        clearInterval(intervalTimer);
+      }
+    }, updateInterval);
+
+    const timer = setTimeout(() => {
+      clearInterval(intervalTimer);
+      resolve();
+    }, duration);
+
     if (ctx.signal) {
       ctx.signal.addEventListener('abort', () => {
+        clearInterval(intervalTimer);
         clearTimeout(timer);
         reject(new Error('Wait aborted by user.'));
       });
     }
   });
 
-  return { success: true, output: { durationMs: duration } };
+  // Final success state
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      remainingSeconds: 0,
+      totalSeconds,
+      elapsedSeconds: totalSeconds,
+      progress: 100,
+      message: `Waited ${totalSeconds}s`,
+    },
+  });
+
+  return { success: true, output: { durationMs: duration, seconds: totalSeconds } };
 };
 
 export const executeWaitForElement: NodeExecutor = async (node, ctx) => {
@@ -269,7 +325,24 @@ export const executeWaitForElement: NodeExecutor = async (node, ctx) => {
   if (!selector) throw new Error('Wait For Element node requires a selector.');
 
   ctx.log({ level: 'info', message: `Waiting for element: ${selector}`, nodeId: node.id, nodeName: node.data.label });
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Searching for ${selector.slice(0, 20)}...`,
+      detail: selector,
+    },
+  });
+
   const res = await sendDomAction('wait_for_element', { selector, timeout, visible, enabled }, ctx, timeout);
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: 'Found element',
+      detail: selector,
+    },
+  });
+
   return { success: true, output: res };
 };
 
@@ -280,7 +353,24 @@ export const executeWaitForText: NodeExecutor = async (node, ctx) => {
   const timeout = Number(node.data.properties.timeout) || 10000;
 
   ctx.log({ level: 'info', message: `Waiting for text: "${text}"`, nodeId: node.id, nodeName: node.data.label });
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Waiting for "${text.slice(0, 18)}"...`,
+      detail: text,
+    },
+  });
+
   const res = await sendDomAction('wait_for_text', { text, selector, timeout }, ctx, timeout);
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `Found "${text.slice(0, 18)}"`,
+      detail: text,
+    },
+  });
+
   return { success: true, output: res };
 };
 
@@ -536,6 +626,10 @@ export const executeJsonParse: NodeExecutor = async (node, ctx) => {
 
 export const executeScreenshot: NodeExecutor = async (node, ctx) => {
   ctx.log({ level: 'info', message: 'Capturing screenshot', nodeId: node.id, nodeName: node.data.label });
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: { message: 'Capturing screenshot...' },
+  });
 
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     const res = await chrome.runtime.sendMessage({
@@ -554,6 +648,14 @@ export const executeScreenshot: NodeExecutor = async (node, ctx) => {
       screenshotUrl: res.dataUrl,
     });
 
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: 'Screenshot captured',
+        previewUrl: res.dataUrl,
+      },
+    });
+
     return {
       success: true,
       output: res.dataUrl,
@@ -561,7 +663,12 @@ export const executeScreenshot: NodeExecutor = async (node, ctx) => {
     };
   }
 
-  return { success: true, output: 'data:image/png;base64,mock' };
+  const mockUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: { message: 'Screenshot captured', previewUrl: mockUrl },
+  });
+  return { success: true, output: mockUrl };
 };
 
 export const executeJavaScript: NodeExecutor = async (node, ctx) => {
@@ -601,6 +708,10 @@ export const executeHttpRequest: NodeExecutor = async (node, ctx) => {
   }
 
   ctx.log({ level: 'info', message: `HTTP ${method} ${url}`, nodeId: node.id, nodeName: node.data.label });
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: { message: `${method} ${url.slice(0, 20)}...` },
+  });
 
   const response = await fetch(url, {
     method,
@@ -618,6 +729,11 @@ export const executeHttpRequest: NodeExecutor = async (node, ctx) => {
     ok: response.ok,
     data,
   };
+
+  ctx.updateNodeState(node.id, {
+    status: response.ok ? 'success' : 'error',
+    dynamicState: { message: `${response.status} ${response.statusText}` },
+  });
 
   return {
     success: response.ok,
@@ -1466,6 +1582,253 @@ export const executeSlackMessage: NodeExecutor = async (node, ctx) => {
   };
 };
 
+// ----------------- NEW DYNAMIC EXECUTORS -----------------
+
+export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
+  const mode = node.data.properties.mode || 'to_bottom';
+  const selector = node.data.properties.selector ? interpolateVariables(node.data.properties.selector, ctx.variables) : undefined;
+  const maxScrolls = Math.min(Number(node.data.properties.maxScrolls) || 5, 50);
+  const distance = Number(node.data.properties.distance) || 600;
+  const scrollDelay = Number(node.data.properties.scrollDelay) || 800;
+  const outputVariable = node.data.properties.outputVariable || 'scrollResult';
+
+  ctx.log({
+    level: 'info',
+    message: `Starting Smart Scroll (${mode}, max ${maxScrolls} passes)`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Scrolling (${mode})...`,
+      currentIteration: 0,
+      totalIterations: maxScrolls,
+      progress: 0,
+    },
+  });
+
+  let totalScrolls = 0;
+  for (let pass = 1; pass <= maxScrolls; pass++) {
+    if (ctx.signal?.aborted) throw new Error('Smart Scroll aborted by user.');
+
+    ctx.updateNodeState(node.id, {
+      status: 'running',
+      dynamicState: {
+        message: `Scroll pass ${pass}/${maxScrolls}`,
+        currentIteration: pass,
+        totalIterations: maxScrolls,
+        progress: Math.round((pass / maxScrolls) * 100),
+      },
+    });
+
+    await sendDomAction(
+      'scroll',
+      {
+        direction: 'down',
+        amount: distance,
+        selector,
+        smooth: true,
+      },
+      ctx
+    );
+
+    totalScrolls++;
+
+    if (pass < maxScrolls) {
+      await new Promise((r) => setTimeout(r, scrollDelay));
+    }
+  }
+
+  const result = { totalScrolls, mode, maxScrolls };
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `Finished ${totalScrolls} passes`,
+      progress: 100,
+    },
+  });
+
+  return {
+    success: true,
+    output: result,
+    variables: { [outputVariable]: result },
+  };
+};
+
+export const executeMathCalculate: NodeExecutor = async (node, ctx) => {
+  const operation = node.data.properties.operation || 'add';
+  const outputVariable = node.data.properties.outputVariable || 'counter';
+  const leftRaw = interpolateVariables(node.data.properties.leftOperand ?? '0', ctx.variables);
+  const rightRaw = interpolateVariables(node.data.properties.rightOperand ?? '1', ctx.variables);
+
+  let result = 0;
+  const left = Number(leftRaw) || 0;
+  const right = Number(rightRaw) || 0;
+
+  switch (operation) {
+    case 'add':
+    case 'increment':
+      result = left + right;
+      break;
+    case 'subtract':
+    case 'decrement':
+      result = left - right;
+      break;
+    case 'multiply':
+      result = left * right;
+      break;
+    case 'divide':
+      result = right !== 0 ? left / right : 0;
+      break;
+    case 'formula': {
+      const formulaRaw = String(node.data.properties.formula || '');
+      const formula = interpolateVariables(formulaRaw, ctx.variables);
+      try {
+        const mathFunc = new Function(`return (${formula});`);
+        result = Number(mathFunc()) || 0;
+      } catch (e) {
+        result = 0;
+      }
+      break;
+    }
+    default:
+      result = left + right;
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Math Calculate: ${outputVariable} = ${result}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `${outputVariable} = ${result}`,
+      detail: `${left} ${operation} ${right} = ${result}`,
+    },
+  });
+
+  return {
+    success: true,
+    output: result,
+    variables: { [outputVariable]: result },
+  };
+};
+
+export const executeDownloadFile: NodeExecutor = async (node, ctx) => {
+  const sourceType = node.data.properties.sourceType || 'variable';
+  const rawUrl = node.data.properties.url || '';
+  const rawContent = node.data.properties.content || '';
+  const rawFilename = node.data.properties.filename || 'download.txt';
+  const saveAs = !!node.data.properties.saveAs;
+  const outputVariable = node.data.properties.outputVariable || 'downloadResult';
+
+  const filename = String(interpolateVariables(rawFilename, ctx.variables));
+  let downloadUrl = String(interpolateVariables(rawUrl, ctx.variables));
+
+  if (sourceType === 'content' || (!downloadUrl && rawContent)) {
+    const content = String(interpolateVariables(rawContent, ctx.variables));
+    downloadUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Downloading file: ${filename}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Downloading ${filename}...`,
+      progress: 50,
+    },
+  });
+
+  let downloadId: any = 1;
+  if (typeof chrome !== 'undefined' && chrome.downloads && chrome.downloads.download) {
+    try {
+      downloadId = await chrome.downloads.download({
+        url: downloadUrl,
+        filename,
+        saveAs,
+      });
+    } catch (e: any) {
+      downloadId = 'download_fallback';
+    }
+  }
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `Saved: ${filename}`,
+      progress: 100,
+    },
+  });
+
+  return {
+    success: true,
+    output: { filename, downloadId },
+    variables: { [outputVariable]: { filename, downloadId } },
+  };
+};
+
+export const executeShowNotification: NodeExecutor = async (node, ctx) => {
+  const rawTitle = node.data.properties.title || 'AutoFlow Alert';
+  const rawMsg = node.data.properties.message || 'Workflow finished!';
+  const title = String(interpolateVariables(rawTitle, ctx.variables));
+  const message = String(interpolateVariables(rawMsg, ctx.variables));
+  const outputVariable = node.data.properties.outputVariable || 'notificationResult';
+
+  ctx.log({
+    level: 'info',
+    message: `Showing notification: ${title} - ${message}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: 'Displaying alert...',
+    },
+  });
+
+  const notificationId = `notif_${Date.now()}`;
+  if (typeof chrome !== 'undefined' && chrome.notifications && chrome.notifications.create) {
+    try {
+      chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl: node.data.properties.iconUrl || 'icons/icon128.png',
+        title,
+        message,
+        priority: 2,
+      });
+    } catch (e) {
+      console.warn('Chrome notification warning:', e);
+    }
+  }
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `Alerted: ${title.slice(0, 18)}`,
+    },
+  });
+
+  return {
+    success: true,
+    output: { notificationId, title, message },
+    variables: { [outputVariable]: { notificationId, title, message } },
+  };
+};
+
 export const executors: Record<string, NodeExecutor> = {
   navigate: executeNavigate,
   back: executeBack,
@@ -1480,6 +1843,7 @@ export const executors: Record<string, NodeExecutor> = {
   hover: executeHover,
   press_key: executePressKey,
   scroll: executeScroll,
+  smart_scroll: executeSmartScroll,
   select_dropdown: executeSelectDropdown,
   drag_and_drop: executeDragAndDrop,
   wait: executeWait,
@@ -1504,11 +1868,14 @@ export const executors: Record<string, NodeExecutor> = {
   regex: executeRegex,
   json_parse: executeJsonParse,
   generate_data: executeGenerateData,
+  math_calculate: executeMathCalculate,
   screenshot: executeScreenshot,
   execute_javascript: executeJavaScript,
   http_request: executeHttpRequest,
   storage_manage: executeStorageManage,
   clipboard: executeClipboard,
+  download_file: executeDownloadFile,
+  show_notification: executeShowNotification,
   ai_agent: executeAiAgent,
   autonomous_agent: executeAutonomousAgent,
   telegram_message: executeTelegramMessage,

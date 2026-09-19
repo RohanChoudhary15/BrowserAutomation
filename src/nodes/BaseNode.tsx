@@ -4,7 +4,7 @@ import { Icon } from '../components/common/Icon';
 import { NODE_REGISTRY, CATEGORIES } from './registry';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Play, CheckCircle2, AlertCircle, Loader2, Trash2 } from 'lucide-react';
+import { Play, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react';
 
 export interface CustomNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -28,7 +28,11 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
 
   // Summary of primary configuration
   let summary = '';
-  if (data.properties?.url) summary = data.properties.url;
+  if (data.type === 'smart_scroll') summary = `${data.properties?.mode || 'to_bottom'} (${data.properties?.maxScrolls || 5} passes)`;
+  else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
+  else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
+  else if (data.type === 'math_calculate') summary = `${data.properties?.outputVariable || 'counter'} (${data.properties?.operation || 'add'})`;
+  else if (data.properties?.url) summary = data.properties.url;
   else if (data.properties?.selector) summary = data.properties.selector;
   else if (data.properties?.text) summary = `"${data.properties.text}"`;
   else if (data.properties?.duration) summary = `${data.properties.duration}ms`;
@@ -117,10 +121,75 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
         </div>
       )}
 
+      {/* Wait Node Live Countdown Widget */}
+      {data.type === 'wait' && status === 'running' && (
+        <div className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 space-y-1.5 animate-pulse">
+          <div className="flex items-center justify-between text-[11px] font-mono text-amber-300 font-semibold">
+            <span className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+              <span>
+                {runtime?.dynamicState?.remainingSeconds !== undefined
+                  ? `${runtime.dynamicState.remainingSeconds}s remaining`
+                  : `${((data.properties?.duration || 1000) / 1000).toFixed(1)}s remaining`}
+              </span>
+            </span>
+            <span className="text-[10px] text-amber-400/70">
+              {runtime?.dynamicState?.totalSeconds ?? ((data.properties?.duration || 1000) / 1000).toFixed(1)}s total
+            </span>
+          </div>
+          <div className="w-full bg-[#11141c] rounded-full h-1.5 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-amber-500 to-amber-400 h-1.5 rounded-full transition-all duration-150"
+              style={{ width: `${runtime?.dynamicState?.progress ?? 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Generic Dynamic Live State on Node */}
+      {data.type !== 'wait' && status === 'running' && runtime?.dynamicState?.message && (
+        <div className="mt-2 p-2 rounded-lg bg-blue-950/40 border border-blue-500/40 space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] font-mono text-blue-200">
+            <span className="flex items-center gap-1.5 truncate font-semibold">
+              <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
+              <span className="truncate">{runtime.dynamicState.message}</span>
+            </span>
+            {runtime.dynamicState.progress !== undefined && (
+              <span className="text-[10px] text-blue-400 font-bold shrink-0 ml-1">
+                {runtime.dynamicState.progress}%
+              </span>
+            )}
+          </div>
+          {runtime.dynamicState.progress !== undefined && (
+            <div className="w-full bg-[#11141c] rounded-full h-1 overflow-hidden">
+              <div
+                className="bg-blue-500 h-1 rounded-full transition-all duration-150"
+                style={{ width: `${runtime.dynamicState.progress}%` }}
+              />
+            </div>
+          )}
+          {runtime.dynamicState.detail && (
+            <div className="text-[9px] text-blue-300/80 font-mono truncate bg-[#11141c]/60 px-1 py-0.5 rounded">
+              {runtime.dynamicState.detail}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Mini Screenshot preview if present */}
+      {runtime?.dynamicState?.previewUrl && status === 'success' && (
+        <div className="mt-2 rounded-lg border border-[#1c2230] overflow-hidden bg-black/60 relative group/thumb">
+          <img src={runtime.dynamicState.previewUrl} alt="Preview" className="w-full h-14 object-cover" />
+          <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1.5 py-0.5 text-[9px] text-emerald-300 font-mono flex items-center justify-between">
+            <span>Captured image</span>
+          </div>
+        </div>
+      )}
+
       {/* Execution timing / Error message badge */}
       {runtime?.durationMs !== undefined && status === 'success' && (
         <div className="mt-1.5 text-[10px] text-emerald-400/80 font-mono">
-          ✓ completed in {runtime.durationMs}ms
+          ✓ {runtime.dynamicState?.message || `completed in ${runtime.durationMs}ms`}
         </div>
       )}
 

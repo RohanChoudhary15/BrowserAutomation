@@ -88,10 +88,51 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
         </div>
       </div>
 
-      {/* Summary */}
-      <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3">
-        {summary}
-      </div>
+      {/* Summary or Live Iteration Widget */}
+      {status === 'running' && runtime?.dynamicState ? (
+        <div className="bg-indigo-950/50 rounded-lg p-2 border border-indigo-500/50 mb-3 space-y-1.5 shadow-sm">
+          <div className="flex items-center justify-between text-[11px] font-mono text-indigo-200">
+            <span className="font-semibold flex items-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0" />
+              <span>
+                {runtime.dynamicState.message ||
+                  `${isForEach ? 'Item' : 'Iteration'} ${runtime.dynamicState.currentIteration || 1}${
+                    runtime.dynamicState.totalIterations ? ` / ${runtime.dynamicState.totalIterations}` : ''
+                  }`}
+              </span>
+            </span>
+            {runtime.dynamicState.progress !== undefined && (
+              <span className="text-[10px] text-indigo-400 font-bold shrink-0 ml-1">
+                {runtime.dynamicState.progress}%
+              </span>
+            )}
+          </div>
+          {runtime.dynamicState.progress !== undefined && (
+            <div className="w-full bg-[#11141c] rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-indigo-500 h-1.5 rounded-full transition-all duration-150"
+                style={{ width: `${runtime.dynamicState.progress}%` }}
+              />
+            </div>
+          )}
+          {runtime.dynamicState.detail && (
+            <div className="text-[9px] text-indigo-300/80 font-mono truncate bg-[#11141c]/70 px-1.5 py-0.5 rounded border border-indigo-900/40">
+              {runtime.dynamicState.detail}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-2">
+          {summary}
+        </div>
+      )}
+
+      {status === 'success' && runtime?.dynamicState?.message && (
+        <div className="text-[10px] text-emerald-400 font-mono mb-2 flex items-center gap-1">
+          <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+          <span className="truncate">{runtime.dynamicState.message}</span>
+        </div>
+      )}
 
       {/* Output Handle Labels */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">

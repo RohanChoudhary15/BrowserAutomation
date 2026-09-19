@@ -17,6 +17,25 @@ export type WorkflowExecutionStatus =
   | 'failed'
   | 'stopped';
 
+export interface NodeDynamicState {
+  // Wait countdown
+  remainingSeconds?: number;
+  totalSeconds?: number;
+  elapsedSeconds?: number;
+
+  // Loop & iteration tracking
+  currentIteration?: number; // 1-indexed for display
+  totalIterations?: number;
+  currentItem?: any;
+
+  // Live dynamic message, progress bar & previews
+  message?: string;
+  detail?: string;
+  progress?: number; // 0 - 100 percentage
+  subStatus?: string;
+  previewUrl?: string;
+}
+
 export interface NodeRuntimeState {
   status: NodeExecutionStatus;
   startTime?: number;
@@ -30,6 +49,7 @@ export interface NodeRuntimeState {
     selector?: string;
     timeout?: number;
   };
+  dynamicState?: NodeDynamicState;
 }
 
 export interface ExecutionLog {

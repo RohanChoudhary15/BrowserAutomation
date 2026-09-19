@@ -9,7 +9,9 @@
     "scripting",
     "activeTab",
     "sidePanel",
-    "webNavigation"
+    "webNavigation",
+    "downloads",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

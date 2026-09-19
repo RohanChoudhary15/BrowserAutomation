@@ -147,6 +147,21 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       smooth: true,
     },
   },
+  smart_scroll: {
+    type: 'smart_scroll',
+    label: 'Smart Scroll',
+    category: 'interaction',
+    description: 'Smoothly scroll until bottom, element appears, or N iterations with live step progress',
+    icon: 'ChevronsDown',
+    defaultProperties: {
+      mode: 'to_bottom', // 'to_bottom' | 'to_element' | 'distance'
+      selector: '',
+      distance: 600,
+      maxScrolls: 5,
+      scrollDelay: 1000,
+      outputVariable: 'scrollResult',
+    },
+  },
   select_dropdown: {
     type: 'select_dropdown',
     label: 'Select Dropdown',
@@ -478,13 +493,27 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'generatedData',
     },
   },
+  math_calculate: {
+    type: 'math_calculate',
+    label: 'Math & Counter',
+    category: 'data',
+    description: 'Perform arithmetic operations, increment counters, or evaluate math expressions with live value display',
+    icon: 'Calculator',
+    defaultProperties: {
+      operation: 'add', // 'add' | 'subtract' | 'multiply' | 'divide' | 'increment' | 'decrement' | 'formula'
+      leftOperand: '{{counter}}',
+      rightOperand: '1',
+      formula: '',
+      outputVariable: 'counter',
+    },
+  },
 
   // Utility
   screenshot: {
     type: 'screenshot',
     label: 'Screenshot',
     category: 'utility',
-    description: 'Capture screenshot of current page or viewport',
+    description: 'Capture screenshot of current page or viewport with live canvas thumbnail preview',
     icon: 'Camera',
     defaultProperties: {
       outputVariable: 'screenshotUrl',
@@ -505,7 +534,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     type: 'http_request',
     label: 'HTTP Request',
     category: 'utility',
-    description: 'Make an API request (GET, POST, etc.)',
+    description: 'Make an API request (GET, POST, etc.) with real-time status display',
     icon: 'Send',
     defaultProperties: {
       method: 'GET',
@@ -537,6 +566,35 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       action: 'write',
       text: '{{extractedData}}',
       outputVariable: 'clipboardText',
+    },
+  },
+  download_file: {
+    type: 'download_file',
+    label: 'Download File',
+    category: 'utility',
+    description: 'Download file, image, data URL, or CSV/JSON content to disk with live progress feedback',
+    icon: 'Download',
+    defaultProperties: {
+      sourceType: 'variable', // 'variable' | 'url' | 'content'
+      url: '{{screenshotUrl}}',
+      content: '',
+      filename: 'downloaded_file.png',
+      saveAs: false,
+      outputVariable: 'downloadResult',
+    },
+  },
+  show_notification: {
+    type: 'show_notification',
+    label: 'Desktop Notification',
+    category: 'utility',
+    description: 'Trigger an interactive desktop alert notification with sound and title',
+    icon: 'Bell',
+    defaultProperties: {
+      title: 'AutoFlow Alert',
+      message: 'Workflow reached this step successfully!',
+      iconUrl: '',
+      requireInteraction: false,
+      outputVariable: 'notificationResult',
     },
   },
   ai_agent: {
