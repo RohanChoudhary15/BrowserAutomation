@@ -478,6 +478,113 @@ export async function queryLlm(
 /**
  * Calls selected LLM provider with multimodal image (screenshot) and prompt
  */
+/**
+ * Valid 100x100 PNG image data URI used when viewport screenshots fail or are empty.
+ * Guarantees compliance with OpenAI's minimum image dimension requirement (>= 10x10px).
+ */
+export const VALID_FALLBACK_IMAGE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAIAAAD/gAIDAAAAtklEQVR4nO3QQQkAIADAQBv4tIP9A1rBjwzhYAHGjbm2Lhv5wUfBggUrDxYsWHmwYMHKgwULVh4sWLDyYMGClQcLFqw8WLBg5cGCBSsPFixYebBgwcqDBQtWHixYsPJgwYKVBwsWrDxYsGDlwYIFKw8WLFh5sGDByoMFC1YeLFiw8mDBgpUHCxasPFiwYOXBggUrDxYsWHmwYMHKgwULVh4sWLDyYMGClQcLFqw8WLBg5cGC9aYDN7o1tSd902oAAAAASUVORK5CYII=';
+
+/**
+ * Decodes base64 string to Uint8Array safely across Node.js and Browser environments.
+ */
+function decodeBase64ToBytes(base64: string): Uint8Array | null {
+  try {
+    const raw = base64.replace(/^data:image\/[a-z]+;base64,/, '').trim();
+    if (typeof Buffer !== 'undefined') {
+      return Uint8Array.from(Buffer.from(raw, 'base64'));
+    } else if (typeof atob !== 'undefined') {
+      const binary = atob(raw);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Extracts width and height from PNG, GIF, or JPEG image headers.
+ */
+export function getImageDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+  if (!bytes || bytes.length < 24) return null;
+
+  // 1. PNG check
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    const width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+    const height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    return { width, height };
+  }
+
+  // 2. GIF check
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    const width = bytes[6] | (bytes[7] << 8);
+    const height = bytes[8] | (bytes[9] << 8);
+    return { width, height };
+  }
+
+  // 3. JPEG check
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset < bytes.length - 8) {
+      if (bytes[offset] === 0xff) {
+        const marker = bytes[offset + 1];
+        if (
+          (marker >= 0xc0 && marker <= 0xc3) ||
+          (marker >= 0xc5 && marker <= 0xc7) ||
+          (marker >= 0xc9 && marker <= 0xcb) ||
+          (marker >= 0xcd && marker <= 0xcf)
+        ) {
+          const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
+          const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
+          return { width, height };
+        }
+        offset += 2 + ((bytes[offset + 2] << 8) | bytes[offset + 3]);
+      } else {
+        offset++;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validates and sanitizes base64 images before sending to multimodal Vision LLMs.
+ * Replaces corrupted, 1x1, or <10x10 images with a compliant 100x100 image to prevent
+ * OpenAI API 400 errors ("image should be at least 10px got 1 by 1 px").
+ */
+export function sanitizeVisionImage(imageBase64?: string): string | undefined {
+  if (!imageBase64 || typeof imageBase64 !== 'string') return undefined;
+
+  const trimmed = imageBase64.trim();
+  if (trimmed === '') return undefined;
+
+  // Known 1x1 pixel signatures
+  if (
+    trimmed.includes('wgALCAABAAEBAREA') || // 1x1 JPEG placeholder from browserAgent
+    trimmed.includes('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7') || // 1x1 GIF
+    trimmed.includes('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCA') // 1x1 PNG
+  ) {
+    return VALID_FALLBACK_IMAGE;
+  }
+
+  // Check actual image dimensions if header can be parsed
+  const bytes = decodeBase64ToBytes(trimmed);
+  if (bytes) {
+    const dims = getImageDimensions(bytes);
+    if (dims && (dims.width < 10 || dims.height < 10)) {
+      return VALID_FALLBACK_IMAGE;
+    }
+  }
+
+  return trimmed.startsWith('data:') ? trimmed : `data:image/jpeg;base64,${trimmed}`;
+}
+
 export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   const { prompt, systemInstruction, imageBase64, config, temperature = 0.2 } = params;
   const baseConfig = await getAiConfig();
@@ -486,19 +593,18 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     ...config,
   };
 
+  const sanitizedImage = sanitizeVisionImage(imageBase64);
+
   // 1. OpenAI / OpenAI Compatible Gateway (including ExperientialLabs)
   if (currentConfig.provider === 'openai' && currentConfig.apiKey) {
     const baseUrl = getOpenAiBaseUrl(currentConfig);
     const userContent: any[] = [{ type: 'text', text: prompt }];
 
-    if (imageBase64) {
-      const formattedUrl = imageBase64.startsWith('data:')
-        ? imageBase64
-        : `data:image/jpeg;base64,${imageBase64}`;
+    if (sanitizedImage) {
       userContent.push({
         type: 'image_url',
         image_url: {
-          url: formattedUrl,
+          url: sanitizedImage,
           detail: 'high',
         },
       });
@@ -536,13 +642,10 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     const model = currentConfig.model || 'ministral-8b-latest';
 
     const userContent: any[] = [{ type: 'text', text: prompt }];
-    if (imageBase64) {
-      const formattedUrl = imageBase64.startsWith('data:')
-        ? imageBase64
-        : `data:image/jpeg;base64,${imageBase64}`;
+    if (sanitizedImage) {
       userContent.push({
         type: 'image_url',
-        image_url: { url: formattedUrl },
+        image_url: { url: sanitizedImage },
       });
     }
 
@@ -579,8 +682,8 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     if (systemInstruction) parts.push({ text: systemInstruction });
     parts.push({ text: prompt });
 
-    if (imageBase64) {
-      const rawBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+    if (sanitizedImage) {
+      const rawBase64 = sanitizedImage.replace(/^data:image\/[a-z]+;base64,/, '');
       parts.push({
         inline_data: {
           mime_type: 'image/jpeg',
@@ -609,13 +712,10 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   // 3. OpenRouter Multimodal
   if (currentConfig.provider === 'openrouter' && currentConfig.apiKey) {
     const userContent: any[] = [{ type: 'text', text: prompt }];
-    if (imageBase64) {
-      const formattedUrl = imageBase64.startsWith('data:')
-        ? imageBase64
-        : `data:image/jpeg;base64,${imageBase64}`;
+    if (sanitizedImage) {
       userContent.push({
         type: 'image_url',
-        image_url: { url: formattedUrl },
+        image_url: { url: sanitizedImage },
       });
     }
 
@@ -648,13 +748,10 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   if (currentConfig.provider === 'custom') {
     const endpoint = (currentConfig.customEndpoint || 'http://localhost:11434/v1').replace(/\/$/, '');
     const userContent: any[] = [{ type: 'text', text: prompt }];
-    if (imageBase64) {
-      const formattedUrl = imageBase64.startsWith('data:')
-        ? imageBase64
-        : `data:image/jpeg;base64,${imageBase64}`;
+    if (sanitizedImage) {
       userContent.push({
         type: 'image_url',
-        image_url: { url: formattedUrl },
+        image_url: { url: sanitizedImage },
       });
     }
 

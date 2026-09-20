@@ -6,7 +6,7 @@ import {
   AiConfig,
   HumanGuidanceRequest,
 } from './types';
-import { queryVisionLlm, getAiConfig } from './aiService';
+import { queryVisionLlm, getAiConfig, VALID_FALLBACK_IMAGE } from './aiService';
 import { WorkflowNode, WorkflowEdge } from '../types/workflow';
 import { generateId } from '../utils/id';
 
@@ -79,7 +79,6 @@ Your mission is to accomplish the user's goal step-by-step with precision.
 RESPONSE FORMAT:
 You MUST respond with a single valid JSON object strictly matching this schema:
 {
-  "taskId": "task_1",
   "thought": "Your visual observation of the screenshot and plan for this immediate step",
   "action": {
     "type": "click" | "type" | "press_key" | "shortcut" | "copy_to_clipboard" | "paste" | "navigate" | "scroll" | "wait" | "hover" | "extract" | "ask_human" | "done",
@@ -153,8 +152,8 @@ export async function captureTabScreenshot(tabId?: number): Promise<string> {
     }
   }
 
-  // Fallback mock screenshot for tests or offline environments
-  return 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+  // Fallback compliant (>=10x10px) mock screenshot for tests or offline environments
+  return VALID_FALLBACK_IMAGE;
 }
 
 /**
@@ -532,94 +531,12 @@ export async function executeAgentAction(
 }
 
 /**
- * Automatically creates an initial structured task plan from a user's natural language goal
- */
-export function createInitialTaskPlan(goal: string): AgentTask[] {
-  const trimmed = goal.trim();
-  const tasks: AgentTask[] = [];
-
-  const urlMatch = trimmed.match(/https?:\/\/[^\s"',]+/i);
-  const mentionsNavigate = /(?:go to|open|navigate to|visit)\s+([a-zA-Z0-9.-]+)/i.test(trimmed);
-
-  // Split by sequential delimiters: "then", "and then", "after that", ";", ","
-  const subGoalPhrases = trimmed
-    .split(/\s+(?:and\s+then|then|after\s+that)\s+|[;]\s*/i)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  if (subGoalPhrases.length >= 2) {
-    subGoalPhrases.forEach((phrase, idx) => {
-      const cleanPhrase = phrase.replace(/^(?:and|afterwards|finally)\s+/i, '');
-      const title = cleanPhrase.charAt(0).toUpperCase() + cleanPhrase.slice(1);
-      tasks.push({
-        id: `task_${idx + 1}`,
-        title,
-        status: 'pending',
-      });
-    });
-  } else {
-    let taskIdx = 1;
-    if (urlMatch || mentionsNavigate) {
-      const dest = urlMatch ? urlMatch[0] : (trimmed.match(/(?:go to|navigate to|open|visit)\s+([a-zA-Z0-9.-]+)/i)?.[1] || 'website');
-      tasks.push({
-        id: `task_${taskIdx++}`,
-        title: `Navigate to ${dest}`,
-        status: 'pending',
-      });
-    }
-
-    if (/search|find|query|type|enter/i.test(trimmed)) {
-      const searchMatch = trimmed.match(/(?:search for|type|enter|find)\s+["']?([^"',.]+)/i);
-      const searchTarget = searchMatch ? `"${searchMatch[1].trim()}"` : 'required query';
-      tasks.push({
-        id: `task_${taskIdx++}`,
-        title: `Locate input field and enter ${searchTarget}`,
-        status: 'pending',
-      });
-    }
-
-    if (/click|select|press|choose|open/i.test(trimmed)) {
-      tasks.push({
-        id: `task_${taskIdx++}`,
-        title: 'Interact with target element / submit action',
-        status: 'pending',
-      });
-    }
-
-    if (/extract|scrape|copy|get price|get details|check/i.test(trimmed)) {
-      tasks.push({
-        id: `task_${taskIdx++}`,
-        title: 'Extract requested information and verify result',
-        status: 'pending',
-      });
-    } else {
-      tasks.push({
-        id: `task_${taskIdx++}`,
-        title: 'Complete goal and verify final page state',
-        status: 'pending',
-      });
-    }
-  }
-
-  if (tasks.length === 1) {
-    tasks.push({
-      id: `task_2`,
-      title: 'Verify goal completion',
-      status: 'pending',
-    });
-  }
-
-  return tasks;
-}
-
-/**
  * Parses JSON response from Vision model with defensive fallbacks
  */
 export function parseAgentModelResponse(rawText: string): {
   thought: string;
   action: AgentAction;
   isComplete: boolean;
-  taskId?: string;
 } {
   try {
     const cleaned = rawText
@@ -635,7 +552,7 @@ export function parseAgentModelResponse(rawText: string): {
       : cleaned;
 
     const parsed = JSON.parse(jsonStr);
-    let parsedAction: AgentAction = parsed.action || { type: 'done', answer: 'Task complete.' };
+    let parsedAction: AgentAction = parsed.action || { type: 'done', answer: 'Goal accomplished.' };
 
     if (parsed.question && !parsedAction.question) parsedAction.question = parsed.question;
     if (parsed.reason && !parsedAction.reason) parsedAction.reason = parsed.reason;
@@ -657,7 +574,6 @@ export function parseAgentModelResponse(rawText: string): {
       thought: parsed.thought || 'Inspecting current browser view.',
       action: parsedAction,
       isComplete: !!parsed.isComplete || parsedAction.type === 'done',
-      taskId: parsed.taskId || parsedAction.taskId,
     };
   } catch {
     // Semantic heuristic fallback if model returned plain text
@@ -705,11 +621,9 @@ export async function runBrowserAgent(options: BrowserAgentOptions): Promise<Age
     tabId,
     config,
     stepDelay = 1200,
-    initialTasks,
     onStep,
     onStatusUpdate,
     onScreenshot,
-    onTasksUpdate,
     signal,
     pauseController,
     onRequestHumanGuidance,
@@ -720,13 +634,7 @@ export async function runBrowserAgent(options: BrowserAgentOptions): Promise<Age
   const humanInstructionsHistory: string[] = [];
   let consecutiveWaitCount = 0;
 
-  // Initialize tasks
-  const tasks: AgentTask[] = initialTasks && initialTasks.length > 0
-    ? [...initialTasks]
-    : createInitialTaskPlan(goal);
-
-  onTasksUpdate?.([...tasks]);
-  onStatusUpdate?.('Initializing autonomous browser agent with task breakdown...');
+  onStatusUpdate?.('Initializing autonomous browser agent...');
 
   for (let stepIndex = 1; stepIndex <= maxSteps; stepIndex++) {
     if (signal?.aborted) {
@@ -747,17 +655,6 @@ export async function runBrowserAgent(options: BrowserAgentOptions): Promise<Age
     if (signal?.aborted) {
       onStatusUpdate?.('Agent stopped by user.');
       break;
-    }
-
-    // Determine currently active task
-    let activeTask = tasks.find(t => t.status === 'in_progress');
-    if (!activeTask) {
-      activeTask = tasks.find(t => t.status === 'pending');
-      if (activeTask) {
-        activeTask.status = 'in_progress';
-        activeTask.stepNumber = stepIndex;
-        onTasksUpdate?.([...tasks]);
-      }
     }
 
     onStatusUpdate?.(`Step ${stepIndex}/${maxSteps}: Perceiving page & taking screenshot...`);
@@ -785,18 +682,7 @@ export async function runBrowserAgent(options: BrowserAgentOptions): Promise<Age
       ? humanInstructionsHistory.map((g, i) => `${i + 1}. ${g}`).join('\n')
       : '';
 
-    const tasksSummary = tasks.length > 0
-      ? tasks.map(t => {
-          const icon = t.status === 'completed' ? '[✓ DONE]' : (t.status === 'in_progress' ? '[► ACTIVE]' : (t.status === 'failed' ? '[✗ FAILED]' : '[  TODO ]'));
-          return `${icon} ${t.title} (${t.id})`;
-        }).join('\n')
-      : 'None';
-
     const userPrompt = `GOAL: "${goal}"
-
-CURRENT TASK LIST:
-${tasksSummary}
-${activeTask ? `FOCUS ON TASK: "${activeTask.title}" (${activeTask.id})` : ''}
 
 ${guidanceSummary ? `HUMAN GUIDANCE & INSTRUCTIONS (MUST PRIORITIZE):\n${guidanceSummary}\n\n` : ''}PREVIOUS ACTIONS TAKEN:
 ${historySummary}
@@ -818,17 +704,11 @@ Analyze the attached live screenshot and output the single next JSON action to a
         temperature: 0.2,
       });
     } catch (err: any) {
-      if (activeTask) {
-        activeTask.status = 'failed';
-        activeTask.error = err.message;
-        onTasksUpdate?.([...tasks]);
-      }
       const errorStep: AgentStep = {
         stepNumber: stepIndex,
         timestamp: Date.now(),
         thought: `Vision query encountered an error: ${err.message}`,
         action: { type: 'done', answer: `Stopped due to error: ${err.message}` },
-        taskId: activeTask?.id,
         screenshotBefore,
         success: false,
         error: err.message,
@@ -923,39 +803,11 @@ Analyze the attached live screenshot and output the single next JSON action to a
     const screenshotAfter = await captureTabScreenshot(tabId);
     onScreenshot?.(screenshotAfter);
 
-    // Update task statuses based on execution result
-    if (activeTask) {
-      if (parsed.action.type === 'ask_human') {
-        // Task remains in_progress so the subsequent steps act on the human instruction
-        activeTask.status = 'in_progress';
-      } else if (execResult.success) {
-        if (parsed.isComplete || parsed.action.type === 'done') {
-          activeTask.status = 'completed';
-          tasks.forEach(t => {
-            if (t.status === 'pending' || t.status === 'in_progress') {
-              t.status = 'completed';
-            }
-          });
-        } else if (
-          parsed.action.type === 'navigate' ||
-          (parsed.action.type === 'type' && parsed.action.pressEnter) ||
-          parsed.action.type === 'extract'
-        ) {
-          activeTask.status = 'completed';
-        }
-      } else {
-        activeTask.status = 'failed';
-        activeTask.error = execResult.error;
-      }
-      onTasksUpdate?.([...tasks]);
-    }
-
     const step: AgentStep = {
       stepNumber: stepIndex,
       timestamp: Date.now(),
       thought: parsed.thought,
       action: parsed.action,
-      taskId: activeTask?.id,
       humanGuidance: humanResponseRecorded || undefined,
       screenshotBefore,
       screenshotAfter,

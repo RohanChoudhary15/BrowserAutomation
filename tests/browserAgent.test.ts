@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { queryVisionLlm } from '../src/ai/aiService';
+import { queryVisionLlm, VALID_FALLBACK_IMAGE, sanitizeVisionImage } from '../src/ai/aiService';
 import {
   parseAgentModelResponse,
   convertAgentStepsToWorkflow,
   runBrowserAgent,
-  createInitialTaskPlan,
   AgentPauseController,
 } from '../src/ai/browserAgent';
-import { AgentStep, AgentTask } from '../src/ai/types';
+import { AgentStep } from '../src/ai/types';
 
 describe('Autonomous AI Browser Agent & Vision', () => {
   beforeEach(() => {
@@ -327,7 +326,7 @@ describe('Autonomous AI Browser Agent & Vision', () => {
       expect(screenshotCallbacks.length).toBeGreaterThan(0);
     });
 
-    it('creates and updates task statuses throughout agent execution', async () => {
+    it('executes steps directly without task plan breakdown', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,
         status: 200,
@@ -336,7 +335,6 @@ describe('Autonomous AI Browser Agent & Vision', () => {
             {
               message: {
                 content: JSON.stringify({
-                  taskId: 'task_1',
                   thought: 'Navigating to website first.',
                   action: { type: 'navigate', url: 'https://example.com' },
                   isComplete: false,
@@ -347,49 +345,75 @@ describe('Autonomous AI Browser Agent & Vision', () => {
         }),
       } as Response);
 
-      let latestTasks: AgentTask[] = [];
-
       const steps = await runBrowserAgent({
         goal: 'Navigate to https://example.com and then search for mechanical keyboard',
         maxSteps: 1,
         stepDelay: 10,
-        onTasksUpdate: (tasks) => {
-          latestTasks = tasks;
+      });
+
+      expect(steps.length).toBe(1);
+      expect(steps[0].action.type).toBe('navigate');
+      expect(steps[0].action.url).toBe('https://example.com');
+      expect((steps[0] as any).taskId).toBeUndefined();
+    });
+  });
+
+  describe('Vision Image Sanitization & Minimum Dimension Guard', () => {
+    it('replaces 1x1 base64 JPEG fallback with VALID_FALLBACK_IMAGE', () => {
+      const onePixel = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+      const sanitized = sanitizeVisionImage(onePixel);
+      expect(sanitized).toBe(VALID_FALLBACK_IMAGE);
+    });
+
+    it('replaces tiny truncated base64 strings (<200 bytes) with VALID_FALLBACK_IMAGE', () => {
+      const tiny = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const sanitized = sanitizeVisionImage(tiny);
+      expect(sanitized).toBe(VALID_FALLBACK_IMAGE);
+    });
+
+    it('preserves valid base64 image strings', () => {
+      const validLargeImage = 'data:image/jpeg;base64,' + 'A'.repeat(500);
+      const sanitized = sanitizeVisionImage(validLargeImage);
+      expect(sanitized).toBe(validLargeImage);
+    });
+
+    it('prevents sending 1x1 image in queryVisionLlm payloads to OpenAI', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  thought: 'Saw the 100x100 fallback canvas',
+                  action: { type: 'done' },
+                  isComplete: true,
+                }),
+              },
+            },
+          ],
+        }),
+      } as Response);
+
+      const onePixel = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+      await queryVisionLlm({
+        prompt: 'Inspect view',
+        imageBase64: onePixel,
+        config: {
+          provider: 'openai',
+          apiKey: 'test-key',
+          model: 'gpt-5.6-sol',
         },
       });
 
-      expect(latestTasks.length).toBeGreaterThan(0);
-      expect(latestTasks[0].status).toBe('completed');
-      expect(steps[0].taskId).toBeDefined();
-    });
-  });
-
-  describe('createInitialTaskPlan', () => {
-    it('breaks sequential goals into structured tasks', () => {
-      const tasks = createInitialTaskPlan('Go to https://google.com, then search for "mechanical keyboard", and then extract the price');
-      expect(tasks.length).toBeGreaterThanOrEqual(2);
-      expect(tasks[0].title).toContain('Go to');
-      expect(tasks[0].status).toBe('pending');
-    });
-
-    it('generates fallback tasks for simple goals', () => {
-      const tasks = createInitialTaskPlan('Find the login button');
-      expect(tasks.length).toBeGreaterThanOrEqual(2);
-      expect(tasks.some(t => t.title.toLowerCase().includes('interact') || t.title.toLowerCase().includes('verify'))).toBe(true);
-    });
-  });
-
-  describe('parseAgentModelResponse with taskId', () => {
-    it('parses taskId from model response', () => {
-      const json = JSON.stringify({
-        taskId: 'task_2',
-        thought: 'Typing into search input',
-        action: { type: 'type', selector: 'input', text: 'hello' },
-        isComplete: false,
-      });
-      const parsed = parseAgentModelResponse(json);
-      expect(parsed.taskId).toBe('task_2');
-      expect(parsed.action.type).toBe('type');
+      expect(fetchSpy).toHaveBeenCalled();
+      const [, options] = fetchSpy.mock.calls[0];
+      const body = JSON.parse(options.body as string);
+      const imageUrl = body.messages[0].content[1].image_url.url;
+      expect(imageUrl).toBe(VALID_FALLBACK_IMAGE);
+      expect(imageUrl).not.toContain('wgALCAABAAEBAREA');
     });
   });
 
