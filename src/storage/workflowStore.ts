@@ -1,11 +1,21 @@
 import { db } from './db';
 import { Workflow } from '../types/workflow';
-import { STARTER_WORKFLOW, ALL_TEMPLATES } from './starterWorkflow';
+import { STARTER_WORKFLOW, ALL_TEMPLATES, DEPRECATED_TEMPLATE_IDS } from './starterWorkflow';
 import { generateId } from '../utils/id';
 
 export async function loadAllWorkflows(): Promise<Workflow[]> {
-  const workflows = await db.getAllWorkflows();
-  if (!workflows || workflows.length === 0) {
+  let workflows = (await db.getAllWorkflows()) || [];
+
+  // Automatically purge deprecated starter templates from storage
+  const hasDeprecated = workflows.some((w) => DEPRECATED_TEMPLATE_IDS.includes(w.id));
+  if (hasDeprecated) {
+    for (const depId of DEPRECATED_TEMPLATE_IDS) {
+      await db.deleteWorkflow(depId);
+    }
+    workflows = workflows.filter((w) => !DEPRECATED_TEMPLATE_IDS.includes(w.id));
+  }
+
+  if (workflows.length === 0) {
     for (const tpl of ALL_TEMPLATES) {
       await db.saveWorkflow(tpl);
     }
@@ -14,7 +24,7 @@ export async function loadAllWorkflows(): Promise<Workflow[]> {
 
   // Ensure any newly added templates are seeded
   for (const tpl of ALL_TEMPLATES) {
-    if (!workflows.some(w => w.id === tpl.id)) {
+    if (!workflows.some((w) => w.id === tpl.id)) {
       await db.saveWorkflow(tpl);
       workflows.push(tpl);
     }
@@ -23,10 +33,23 @@ export async function loadAllWorkflows(): Promise<Workflow[]> {
   return workflows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
+export async function resetToOfficialTemplates(): Promise<Workflow[]> {
+  for (const depId of DEPRECATED_TEMPLATE_IDS) {
+    await db.deleteWorkflow(depId);
+  }
+  for (const tpl of ALL_TEMPLATES) {
+    await db.saveWorkflow(tpl);
+  }
+  return loadAllWorkflows();
+}
+
 export async function getWorkflowById(id: string): Promise<Workflow | null> {
+  if (DEPRECATED_TEMPLATE_IDS.includes(id)) {
+    return null;
+  }
   const wf = await db.getWorkflow(id);
   if (!wf) {
-    const tpl = ALL_TEMPLATES.find(t => t.id === id);
+    const tpl = ALL_TEMPLATES.find((t) => t.id === id);
     if (tpl) {
       await db.saveWorkflow(tpl);
       return tpl;

@@ -28,6 +28,7 @@ import {
   deleteWorkflow,
   exportWorkflowJson,
   validateAndParseWorkflow,
+  resetToOfficialTemplates,
 } from '../storage/workflowStore';
 import { STARTER_WORKFLOW } from '../storage/starterWorkflow';
 import { NODE_REGISTRY } from '../nodes/registry';
@@ -92,7 +93,7 @@ export const App: React.FC = () => {
     loadAllWorkflows().then((all) => {
       setWorkflows(all);
       if (all.length > 0) {
-        const initial = all[0];
+        const initial = all.find((w) => w.id === STARTER_WORKFLOW.id) || all[0];
         setActiveWorkflow(initial);
         setNodes(initial.nodes);
         setEdges(initial.edges);
@@ -1074,6 +1075,15 @@ export const App: React.FC = () => {
             setEdges(remaining[0].edges);
             resetHistory(remaining[0].nodes, remaining[0].edges);
           }
+        }}
+        onResetTemplates={async () => {
+          const fresh = await resetToOfficialTemplates();
+          setWorkflows(fresh);
+          const initial = fresh.find((w) => w.id === STARTER_WORKFLOW.id) || fresh[0];
+          setActiveWorkflow(initial);
+          setNodes(initial.nodes);
+          setEdges(initial.edges);
+          resetHistory(initial.nodes, initial.edges);
         }}
       />
 

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Workflow } from '../../types/workflow';
-import { Plus, Trash2, Copy, Edit2, X, ExternalLink, Clock } from 'lucide-react';
+import { Plus, Trash2, Copy, Edit2, X, ExternalLink, Clock, Sparkles } from 'lucide-react';
 import { formatTimestamp } from '../../utils/formatters';
+import { ALL_TEMPLATES } from '../../storage/starterWorkflow';
 
 interface WorkflowListModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ interface WorkflowListModalProps {
   onCreateWorkflow: () => void;
   onDuplicateWorkflow: (workflow: Workflow) => void;
   onDeleteWorkflow: (id: string) => void;
+  onResetTemplates?: () => void;
 }
 
 export const WorkflowListModal: React.FC<WorkflowListModalProps> = ({
@@ -23,6 +25,7 @@ export const WorkflowListModal: React.FC<WorkflowListModalProps> = ({
   onCreateWorkflow,
   onDuplicateWorkflow,
   onDeleteWorkflow,
+  onResetTemplates,
 }) => {
   if (!isOpen) return null;
 
@@ -36,6 +39,20 @@ export const WorkflowListModal: React.FC<WorkflowListModalProps> = ({
             <p className="text-xs text-gray-400 mt-0.5">Manage and switch between your automation workflows</p>
           </div>
           <div className="flex items-center gap-2">
+            {onResetTemplates && (
+              <button
+                onClick={() => {
+                  if (confirm('Restore all 5 complex official templates? This will refresh any missing templates.')) {
+                    onResetTemplates();
+                  }
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#252c3d] text-gray-200 hover:text-white font-medium text-xs transition-colors border border-[#2d374d]"
+                title="Restore all official complex templates"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Restore Templates</span>
+              </button>
+            )}
             <button
               onClick={onCreateWorkflow}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-colors"
@@ -56,6 +73,7 @@ export const WorkflowListModal: React.FC<WorkflowListModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {workflows.map((wf) => {
             const isActive = wf.id === activeWorkflowId;
+            const isTemplate = ALL_TEMPLATES.some((t) => t.id === wf.id);
             return (
               <div
                 key={wf.id}
@@ -69,16 +87,26 @@ export const WorkflowListModal: React.FC<WorkflowListModalProps> = ({
                     : 'bg-[#161a24] hover:bg-[#1c2230] border-[#232a3b]'
                 }`}
               >
-                <div className="overflow-hidden pr-3">
-                  <div className="flex items-center gap-2">
+                <div className="overflow-hidden pr-3 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-xs text-white truncate">{wf.name}</span>
                     {isActive && (
                       <span className="text-[10px] bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-1.5 py-0.2 rounded font-mono">
                         Active
                       </span>
                     )}
+                    {isTemplate && (
+                      <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1.5 py-0.2 rounded font-mono font-medium">
+                        Template
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-3 text-[11px] text-gray-400 mt-1">
+                  {wf.description && (
+                    <p className="text-[11px] text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                      {wf.description}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1.5">
                     <span>{wf.nodes.length} nodes</span>
                     <span>•</span>
                     <span className="flex items-center gap-1">
