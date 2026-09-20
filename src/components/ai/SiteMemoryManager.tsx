@@ -80,17 +80,22 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
     }
   }, [isOpen, initialDomain]);
 
-  if (!isOpen) return null;
-
   // Compute unique domains list
-  const availableDomains = Object.keys(allNotesMap).sort();
+  const availableDomains = useMemo(() => {
+    if (!allNotesMap || typeof allNotesMap !== 'object') return [];
+    return Object.keys(allNotesMap).sort();
+  }, [allNotesMap]);
 
   // Flatten and filter notes
   const allNotesList = useMemo(() => {
     const list: SiteNote[] = [];
-    Object.values(allNotesMap).forEach((notes) => {
-      list.push(...notes);
-    });
+    if (allNotesMap && typeof allNotesMap === 'object') {
+      Object.values(allNotesMap).forEach((notes) => {
+        if (Array.isArray(notes)) {
+          list.push(...notes);
+        }
+      });
+    }
     // Sort descending by updatedAt
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [allNotesMap]);
@@ -104,8 +109,8 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
       // Search query filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchContent = note.content.toLowerCase().includes(q);
-        const matchDomain = note.domain.toLowerCase().includes(q);
+        const matchContent = (note.content || '').toLowerCase().includes(q);
+        const matchDomain = (note.domain || '').toLowerCase().includes(q);
         const matchTitle = (note.title || '').toLowerCase().includes(q);
         return matchContent || matchDomain || matchTitle;
       }
@@ -117,7 +122,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
     e.preventDefault();
     if (!newContent.trim()) return;
 
-    const domainToSave = normalizeDomain(newDomain.trim() || activeDomainTab !== 'all' ? activeDomainTab : currentNormalizedDomain);
+    const domainToSave = normalizeDomain(newDomain.trim() || (activeDomainTab !== 'all' ? activeDomainTab : currentNormalizedDomain));
     await saveSiteNote(domainToSave, newContent.trim(), 'user', newTitle.trim() || undefined);
     setNewContent('');
     setNewTitle('');
@@ -150,6 +155,8 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
     }
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-fade-in">
       <div className="relative w-full max-w-4xl h-[85vh] bg-[#0e121a] border border-[#1f2638] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-gray-200">
@@ -177,6 +184,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setShowAddForm(!showAddForm)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md transition-all"
             >
@@ -184,6 +192,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
               <span>Add Note</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
               className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#1c2230] transition-colors"
             >
@@ -197,6 +206,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
           {/* Domain Tabs */}
           <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 scrollbar-none">
             <button
+              type="button"
               onClick={() => setActiveDomainTab('all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                 activeDomainTab === 'all'
@@ -210,6 +220,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
 
             {currentNormalizedDomain !== 'global' && (
               <button
+                type="button"
                 onClick={() => setActiveDomainTab(currentNormalizedDomain)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                   activeDomainTab === currentNormalizedDomain
@@ -226,6 +237,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
               .filter((d) => d !== currentNormalizedDomain)
               .map((domain) => (
                 <button
+                  type="button"
                   key={domain}
                   onClick={() => setActiveDomainTab(domain)}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
@@ -251,6 +263,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
               >
@@ -362,6 +375,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowAddForm(true)}
                 className="px-3.5 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 rounded-lg text-xs font-medium border border-purple-500/30 transition-colors"
               >
@@ -384,6 +398,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
                           Edit Note ({note.domain})
                         </span>
                         <button
+                          type="button"
                           onClick={() => setEditingNoteId(null)}
                           className="text-gray-400 hover:text-white"
                         >
@@ -405,12 +420,14 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
                       />
                       <div className="flex justify-end gap-2">
                         <button
+                          type="button"
                           onClick={() => setEditingNoteId(null)}
                           className="px-2.5 py-1 bg-[#1a202c] text-gray-300 rounded text-xs"
                         >
                           Cancel
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleSaveEdit(note.id)}
                           className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold flex items-center gap-1"
                         >
@@ -461,6 +478,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
                             {new Date(note.updatedAt).toLocaleDateString()}
                           </span>
                           <button
+                            type="button"
                             onClick={() => handleStartEdit(note)}
                             className="p-1 text-gray-400 hover:text-white hover:bg-[#1f2638] rounded transition-colors"
                             title="Edit note"
@@ -468,6 +486,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
                             <Edit3 className="w-3 h-3" />
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleDelete(note.id)}
                             className="p-1 text-gray-400 hover:text-red-400 hover:bg-[#1f2638] rounded transition-colors"
                             title="Delete note"
@@ -497,6 +516,7 @@ export const SiteMemoryManager: React.FC<SiteMemoryManagerProps> = ({
           </div>
           {activeDomainTab !== 'all' && (allNotesMap[activeDomainTab] || []).length > 0 && (
             <button
+              type="button"
               onClick={() => handleClearDomain(activeDomainTab)}
               className="text-[11px] text-red-400 hover:text-red-300 hover:underline transition-colors shrink-0 ml-2"
             >

@@ -392,6 +392,98 @@ export function parseApiError(
 }
 
 /**
+ * Resilient fetch wrapper that tries direct fetch first, and if blocked by CORS or network,
+ * delegates to the background service worker (which has host_permissions for <all_urls> and zero CORS restrictions).
+ */
+export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    const res = await fetch(url, init);
+    return res;
+  } catch (err: any) {
+    // If running in Chrome extension context and direct fetch threw (typically CORS / Network block)
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        const bgRes = await chrome.runtime.sendMessage({
+          type: 'PROXY_FETCH',
+          payload: {
+            url,
+            options: {
+              method: init?.method || 'GET',
+              headers: init?.headers as any,
+              body: init?.body as any,
+            },
+          },
+        });
+        if (bgRes && bgRes.success && bgRes.response) {
+          return new Response(bgRes.response.text, {
+            status: bgRes.response.status,
+            statusText: bgRes.response.statusText,
+            headers: bgRes.response.headers,
+          });
+        }
+      } catch (bgErr) {
+        console.warn('[AutoFlow] Background proxy fetch error:', bgErr);
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Ensures the requested model is compatible with the target provider,
+ * falling back to the provider's default model if incompatible.
+ */
+export function resolveCompatibleModel(provider: AiProvider, requestedModel?: string): string {
+  if (!requestedModel || requestedModel.trim() === '') {
+    return getDefaultModelForProvider(provider);
+  }
+  const clean = requestedModel.trim().toLowerCase();
+  if (provider === 'mistral') {
+    if (!clean.includes('mistral') && !clean.includes('codestral')) {
+      return 'ministral-8b-latest';
+    }
+  } else if (provider === 'gemini') {
+    if (!clean.includes('gemini')) {
+      return 'gemini-1.5-flash';
+    }
+  } else if (provider === 'openai') {
+    if (clean.includes('mistral') || clean.includes('gemini') || clean.includes('claude')) {
+      return 'gpt-5.6-sol';
+    }
+  }
+  return requestedModel.trim();
+}
+
+/**
+ * Mistral AI fallback execution
+ */
+async function executeMistralFallback(prompt: string, systemInstruction?: string): Promise<string> {
+  const res = await safeFetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${DEFAULT_MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'ministral-8b-latest',
+      messages: [
+        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(parseApiError(err, res.status, 'Mistral Fallback', 'ministral-8b-latest'));
+  }
+
+  const json = await res.json();
+  return json.choices?.[0]?.message?.content || '';
+}
+
+/**
  * Calls selected LLM provider with prompt and system instructions
  */
 export async function queryLlm(
@@ -405,51 +497,71 @@ export async function queryLlm(
     ...config,
   };
 
-  const model = currentConfig.model || getDefaultModelForProvider(currentConfig.provider);
+  const provider = currentConfig.provider || 'openai';
+  const model = resolveCompatibleModel(provider, currentConfig.model);
 
   // 1. OpenAI / OpenAI Compatible
-  if (currentConfig.provider === 'openai') {
+  if (provider === 'openai') {
     if (!currentConfig.apiKey) {
       throw new Error(`[OpenAI] API Key missing. Please open AutoFlow Settings / AI Copilot and enter your OpenAI API key.`);
     }
 
     const baseUrl = getOpenAiBaseUrl(currentConfig);
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${currentConfig.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.2,
-      }),
-    });
+    try {
+      const res = await safeFetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.2,
+        }),
+      });
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(parseApiError(err, res.status, 'OpenAI', model));
+      if (!res.ok) {
+        const err = await res.text();
+        // If default ExperientialLabs endpoint returns model locked or purchase required, fall back to Mistral
+        if (/purchase|locked|credit/i.test(err) && (!currentConfig.apiKey || currentConfig.apiKey === DEFAULT_OPENAI_API_KEY)) {
+          console.warn('[AutoFlow AI] Primary gateway model locked. Falling back to Mistral AI.');
+          return await executeMistralFallback(prompt, systemInstruction);
+        }
+        throw new Error(parseApiError(err, res.status, 'OpenAI', model));
+      }
+
+      const json = await res.json();
+      return json.choices?.[0]?.message?.content || '';
+    } catch (openAiErr: any) {
+      // If default gateway failed with network/CORS or fetch failure, automatically fallback to Mistral
+      const isDefaultGateway = !currentConfig.openaiBaseUrl || currentConfig.openaiBaseUrl === DEFAULT_OPENAI_BASE_URL || currentConfig.apiKey === DEFAULT_OPENAI_API_KEY;
+      if (isDefaultGateway && /fetch|network|cors|offline|locked|purchase/i.test(openAiErr.message)) {
+        console.warn('[AutoFlow AI] Primary gateway fetch failed, auto-falling back to Mistral AI:', openAiErr.message);
+        try {
+          return await executeMistralFallback(prompt, systemInstruction);
+        } catch (fallbackErr) {
+          console.warn('Mistral fallback failed:', fallbackErr);
+        }
+      }
+      throw openAiErr;
     }
-
-    const json = await res.json();
-    return json.choices[0]?.message?.content || '';
   }
 
   // 2. Mistral AI
-  if (currentConfig.provider === 'mistral') {
+  if (provider === 'mistral') {
     const keyToUse = currentConfig.apiKey || DEFAULT_MISTRAL_API_KEY;
-    const res = await fetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
+    const res = await safeFetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${keyToUse}`,
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'mistral-large-latest',
+        model: model || 'ministral-8b-latest',
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: prompt },
@@ -460,22 +572,22 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(parseApiError(err, res.status, 'Mistral', currentConfig.model || 'mistral-large-latest'));
+      throw new Error(parseApiError(err, res.status, 'Mistral', model || 'ministral-8b-latest'));
     }
 
     const json = await res.json();
-    return json.choices[0]?.message?.content || '';
+    return json.choices?.[0]?.message?.content || '';
   }
 
   // 3. Google Gemini
-  if (currentConfig.provider === 'gemini') {
+  if (provider === 'gemini') {
     if (!currentConfig.apiKey) {
       throw new Error(`[Gemini] API Key missing. Please open AutoFlow Settings and enter your Google Gemini API key.`);
     }
 
-    const geminiModel = currentConfig.model || 'gemini-1.5-flash';
+    const geminiModel = model || 'gemini-1.5-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${currentConfig.apiKey}`;
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -500,13 +612,13 @@ export async function queryLlm(
   }
 
   // 4. OpenRouter
-  if (currentConfig.provider === 'openrouter') {
+  if (provider === 'openrouter') {
     if (!currentConfig.apiKey) {
       throw new Error(`[OpenRouter] API Key missing. Please open AutoFlow Settings and enter your OpenRouter API key.`);
     }
 
-    const routerModel = currentConfig.model || 'openai/gpt-4o-mini';
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const routerModel = model || 'openai/gpt-4o-mini';
+    const res = await safeFetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -527,14 +639,14 @@ export async function queryLlm(
     }
 
     const json = await res.json();
-    return json.choices[0]?.message?.content || '';
+    return json.choices?.[0]?.message?.content || '';
   }
 
   // 5. Custom / Local LLM
-  if (currentConfig.provider === 'custom') {
+  if (provider === 'custom') {
     const endpoint = (currentConfig.customEndpoint || 'http://localhost:11434/v1').replace(/\/$/, '');
-    const customModel = currentConfig.model || 'default';
-    const res = await fetch(`${endpoint}/chat/completions`, {
+    const customModel = model || 'default';
+    const res = await safeFetch(`${endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -673,6 +785,48 @@ export function sanitizeVisionImage(imageBase64?: string): string | undefined {
   return trimmed.startsWith('data:') ? trimmed : `data:image/jpeg;base64,${trimmed}`;
 }
 
+/**
+ * Mistral AI Vision fallback execution
+ */
+async function executeMistralVisionFallback(
+  prompt: string,
+  systemInstruction?: string,
+  sanitizedImage?: string,
+  temperature = 0.2
+): Promise<string> {
+  const userContent: any[] = [{ type: 'text', text: prompt }];
+  if (sanitizedImage) {
+    userContent.push({
+      type: 'image_url',
+      image_url: { url: sanitizedImage },
+    });
+  }
+
+  const res = await safeFetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${DEFAULT_MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'ministral-8b-latest',
+      messages: [
+        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+        { role: 'user', content: userContent },
+      ],
+      temperature,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(parseApiError(err, res.status, 'Mistral Vision Fallback', 'ministral-8b-latest'));
+  }
+
+  const json = await res.json();
+  return json.choices?.[0]?.message?.content || '';
+}
+
 export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   const { prompt, systemInstruction, imageBase64, config, temperature = 0.2 } = params;
   const baseConfig = await getAiConfig();
@@ -681,10 +835,12 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     ...config,
   };
 
+  const provider = currentConfig.provider || 'openai';
+  const model = resolveCompatibleModel(provider, currentConfig.model);
   const sanitizedImage = sanitizeVisionImage(imageBase64);
 
   // 1. OpenAI / OpenAI Compatible Gateway (including ExperientialLabs)
-  if (currentConfig.provider === 'openai' && currentConfig.apiKey) {
+  if (provider === 'openai' && currentConfig.apiKey) {
     const baseUrl = getOpenAiBaseUrl(currentConfig);
     const userContent: any[] = [{ type: 'text', text: prompt }];
 
@@ -698,36 +854,52 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
       });
     }
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${currentConfig.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: currentConfig.model || 'gpt-5.6-sol',
-        messages: [
-          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-          { role: 'user', content: userContent },
-        ],
-        temperature,
-      }),
-    });
+    try {
+      const res = await safeFetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+            { role: 'user', content: userContent },
+          ],
+          temperature,
+        }),
+      });
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(parseApiError(err, res.status, 'OpenAI Vision'));
+      if (!res.ok) {
+        const err = await res.text();
+        if (/purchase|locked|credit/i.test(err) && currentConfig.apiKey === DEFAULT_OPENAI_API_KEY) {
+          console.warn('[AutoFlow AI] Primary vision gateway model locked. Falling back to Mistral Vision.');
+          return await executeMistralVisionFallback(prompt, systemInstruction, sanitizedImage, temperature);
+        }
+        throw new Error(parseApiError(err, res.status, 'OpenAI Vision'));
+      }
+
+      const json = await res.json();
+      return json.choices?.[0]?.message?.content || '';
+    } catch (openAiErr: any) {
+      const isDefaultGateway = !currentConfig.openaiBaseUrl || currentConfig.openaiBaseUrl === DEFAULT_OPENAI_BASE_URL || currentConfig.apiKey === DEFAULT_OPENAI_API_KEY;
+      if (isDefaultGateway && /fetch|network|cors|offline|locked|purchase/i.test(openAiErr.message)) {
+        console.warn('[AutoFlow AI] Primary vision gateway fetch failed, auto-falling back to Mistral Vision:', openAiErr.message);
+        try {
+          return await executeMistralVisionFallback(prompt, systemInstruction, sanitizedImage, temperature);
+        } catch (fallbackErr) {
+          console.warn('Mistral vision fallback failed:', fallbackErr);
+        }
+      }
+      throw openAiErr;
     }
-
-    const json = await res.json();
-    return json.choices?.[0]?.message?.content || '';
   }
 
   // 2. Mistral AI Multimodal / Vision
-  if (currentConfig.provider === 'mistral') {
+  if (provider === 'mistral') {
     const keyToUse = currentConfig.apiKey || DEFAULT_MISTRAL_API_KEY;
-    // Always strictly respect the user's chosen model
-    const model = currentConfig.model || 'ministral-8b-latest';
+    const mistralModel = model || 'ministral-8b-latest';
 
     const userContent: any[] = [{ type: 'text', text: prompt }];
     if (sanitizedImage) {
@@ -737,14 +909,14 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
       });
     }
 
-    const res = await fetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
+    const res = await safeFetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${keyToUse}`,
       },
       body: JSON.stringify({
-        model,
+        model: mistralModel,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: userContent },
@@ -763,9 +935,9 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   }
 
   // 3. Google Gemini Vision
-  if (currentConfig.provider === 'gemini' && currentConfig.apiKey) {
-    const model = currentConfig.model || 'gemini-1.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentConfig.apiKey}`;
+  if (provider === 'gemini' && currentConfig.apiKey) {
+    const geminiModel = model || 'gemini-1.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${currentConfig.apiKey}`;
     const parts: any[] = [];
     if (systemInstruction) parts.push({ text: systemInstruction });
     parts.push({ text: prompt });
@@ -780,7 +952,7 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
       });
     }
 
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -797,8 +969,8 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
 
-  // 3. OpenRouter Multimodal
-  if (currentConfig.provider === 'openrouter' && currentConfig.apiKey) {
+  // 4. OpenRouter Multimodal
+  if (provider === 'openrouter' && currentConfig.apiKey) {
     const userContent: any[] = [{ type: 'text', text: prompt }];
     if (sanitizedImage) {
       userContent.push({
@@ -807,14 +979,15 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
       });
     }
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const routerModel = model || 'openai/gpt-4o-mini';
+    const res = await safeFetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${currentConfig.apiKey}`,
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'openai/gpt-4o-mini',
+        model: routerModel,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: userContent },
@@ -832,9 +1005,10 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
     return json.choices?.[0]?.message?.content || '';
   }
 
-  // 4. Custom Endpoint Multimodal
-  if (currentConfig.provider === 'custom') {
+  // 5. Custom Endpoint Multimodal
+  if (provider === 'custom') {
     const endpoint = (currentConfig.customEndpoint || 'http://localhost:11434/v1').replace(/\/$/, '');
+    const customModel = model || 'default';
     const userContent: any[] = [{ type: 'text', text: prompt }];
     if (sanitizedImage) {
       userContent.push({
@@ -843,14 +1017,14 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
       });
     }
 
-    const res = await fetch(`${endpoint}/chat/completions`, {
+    const res = await safeFetch(`${endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(currentConfig.apiKey ? { Authorization: `Bearer ${currentConfig.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'default',
+        model: customModel,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: userContent },

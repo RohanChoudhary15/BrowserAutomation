@@ -284,6 +284,7 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setShowSiteMemoryModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181f2f] hover:bg-[#20293d] text-purple-300 hover:text-purple-200 rounded-lg text-xs font-semibold border border-purple-500/30 shadow-sm transition-all"
               title="Inspect, add, and edit permanent site memory notes"

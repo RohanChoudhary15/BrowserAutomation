@@ -44,7 +44,8 @@ export type ExtensionMessage =
         durationMs?: number;
       };
     }
-  | { type: 'PING' };
+  | { type: 'PING' }
+  | { type: 'PROXY_FETCH'; payload: { url: string; options?: any } };
 
 export interface MessageResponse<T = any> {
   success: boolean;

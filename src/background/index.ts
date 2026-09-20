@@ -321,6 +321,36 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           return { success: true };
         }
 
+        case 'PROXY_FETCH': {
+          const { url, options } = message.payload || {};
+          try {
+            const res = await fetch(url, options);
+            const status = res.status;
+            const statusText = res.statusText;
+            const ok = res.ok;
+            const headers: Record<string, string> = {};
+            res.headers.forEach((v, k) => {
+              headers[k] = v;
+            });
+            const text = await res.text();
+            return {
+              success: true,
+              response: {
+                status,
+                statusText,
+                ok,
+                headers,
+                text,
+              },
+            };
+          } catch (fetchErr: any) {
+            return {
+              success: false,
+              error: fetchErr.message || String(fetchErr),
+            };
+          }
+        }
+
         default:
           return { success: true };
       }
