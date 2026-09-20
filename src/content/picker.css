@@ -128,3 +128,70 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------
+   Visual 2-Click Pattern Detection Styles
+   --------------------------------------------------------------- */
+.autoflow-item1-highlight {
+  outline: 3px solid #6366f1 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(99, 102, 241, 0.22) !important;
+  position: relative !important;
+  box-shadow: 0 0 14px rgba(99, 102, 241, 0.6) !important;
+}
+
+.autoflow-pattern-match {
+  outline: 2px solid #10b981 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(16, 185, 129, 0.14) !important;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.45) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+.autoflow-pattern-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #064e3b;
+  color: #6ee7b7;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #059669;
+}
+
+.autoflow-pattern-btn {
+  background: #10b981;
+  color: #ffffff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background-color 0.15s;
+}
+
+.autoflow-pattern-btn:hover {
+  background: #059669;
+}
+
+.autoflow-pattern-btn-secondary {
+  background: #334155;
+  color: #e2e8f0;
+  border: 1px solid #475569;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.autoflow-pattern-btn-secondary:hover {
+  background: #475569;
+  color: #ffffff;
+}

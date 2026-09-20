@@ -1006,11 +1006,23 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
   const customProvider = node.data.properties.provider;
   const customOpenaiBaseUrl = node.data.properties.openaiBaseUrl;
 
-  const responseText = await queryLlm(prompt, systemInstruction, {
-    ...(customModel ? { model: customModel } : {}),
-    ...(customProvider ? { provider: customProvider } : {}),
-    ...(customOpenaiBaseUrl ? { openaiBaseUrl: customOpenaiBaseUrl } : {}),
-  });
+  let responseText = '';
+  try {
+    responseText = await queryLlm(prompt, systemInstruction, {
+      ...(customModel ? { model: customModel } : {}),
+      ...(customProvider ? { provider: customProvider } : {}),
+      ...(customOpenaiBaseUrl ? { openaiBaseUrl: customOpenaiBaseUrl } : {}),
+    });
+  } catch (err: any) {
+    const errorMsg = err.message || String(err);
+    ctx.log({
+      level: 'error',
+      message: `AI Agent "${node.data.label}" failed: ${errorMsg}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+    throw new Error(`AI Agent (${node.data.label}): ${errorMsg}`);
+  }
 
   const docResult = formatAiAgentDocument(responseText, outputFormat, downloadFilename);
   const output = docResult.parsedOutput;

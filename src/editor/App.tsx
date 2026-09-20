@@ -671,11 +671,11 @@ export const App: React.FC = () => {
   );
 
   // Element Picker Integration
-  const handleStartElementPicker = useCallback(async () => {
+  const handleStartElementPicker = useCallback(async (mode: 'single' | 'pattern_2click' = 'single') => {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       setIsPickingElement(true);
       try {
-        const res = await chrome.runtime.sendMessage({ type: 'START_ELEMENT_PICKER' });
+        const res = await chrome.runtime.sendMessage({ type: 'START_ELEMENT_PICKER', payload: { mode } });
         if (res && !res.success) {
           setIsPickingElement(false);
           alert(res.error || 'Could not start Element Picker. Please ensure a webpage is open in another tab.');
@@ -729,6 +729,15 @@ export const App: React.FC = () => {
             strategies: picked.strategies,
             tagName: picked.tagName,
             textSnippet: picked.textSnippet,
+            ...(picked.patternMode
+              ? {
+                  patternMode: true,
+                  patternMatchCount: picked.matchCount,
+                  patternSampleTexts: picked.sampleTexts,
+                  item1Selector: picked.item1Selector,
+                  item2Selector: picked.item2Selector,
+                }
+              : {}),
           });
         }
       }

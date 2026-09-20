@@ -16,7 +16,7 @@ export type ExtensionMessage =
   | { type: 'CAPTURE_SCREENSHOT'; payload?: { tabId?: number; format?: 'png' | 'jpeg'; quality?: number } }
 
   // Element Picker
-  | { type: 'START_ELEMENT_PICKER'; payload?: { tabId?: number } }
+  | { type: 'START_ELEMENT_PICKER'; payload?: { tabId?: number; mode?: 'single' | 'pattern_2click' } }
   | { type: 'STOP_ELEMENT_PICKER'; payload?: { tabId?: number } }
   | { type: 'ELEMENT_PICKED'; payload: ElementSelectionResult }
   | { type: 'PICKER_CANCELLED' }

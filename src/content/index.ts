@@ -16,7 +16,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         case 'PING':
           return { success: true, url: window.location.href, version: CONTENT_SCRIPT_VERSION };
 
-        case 'START_ELEMENT_PICKER':
+        case 'START_ELEMENT_PICKER': {
+          const pickerMode = (message as any).payload?.mode || 'single';
           startElementPicker(
             (result) => {
               chrome.runtime.sendMessage({
@@ -28,9 +29,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
               chrome.runtime.sendMessage({
                 type: 'PICKER_CANCELLED',
               });
-            }
+            },
+            pickerMode
           );
           return { success: true };
+        }
 
         case 'STOP_ELEMENT_PICKER':
           stopElementPicker();

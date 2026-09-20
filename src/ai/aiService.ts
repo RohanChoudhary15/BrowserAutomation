@@ -313,15 +313,82 @@ export async function fetchAvailableModels(config?: Partial<AiConfig>): Promise<
   return DEFAULT_FALLBACK_MODELS[provider] || DEFAULT_FALLBACK_MODELS.openai;
 }
 
-function parseApiError(errText: string, status: number, providerName: string): string {
+export function parseApiError(
+  errOrText: any,
+  statusOrProvider?: number | string,
+  providerName?: string,
+  modelName?: string
+): string {
+  let errText = '';
+  let status = 0;
+  let provider = 'AI';
+  let model = modelName;
+
+  if (typeof errOrText === 'string') {
+    errText = errOrText;
+  } else if (errOrText && typeof errOrText === 'object') {
+    errText = errOrText.message || errOrText.error || String(errOrText);
+  } else {
+    errText = String(errOrText || '');
+  }
+
+  if (typeof statusOrProvider === 'number') {
+    status = statusOrProvider;
+    provider = providerName || 'AI';
+  } else if (typeof statusOrProvider === 'string') {
+    provider = statusOrProvider;
+    model = providerName;
+    const codeMatch = errText.match(/\b(400|401|403|404|429|500|502|503|504)\b/);
+    if (codeMatch) {
+      status = parseInt(codeMatch[1], 10);
+    }
+  }
+
+  let parsedMessage = '';
   try {
     const json = JSON.parse(errText);
-    const msg = json.error?.message || json.message || json.error;
-    if (typeof msg === 'string' && msg.trim()) {
-      return `${providerName} error (${status}): ${msg.trim()}`;
+    parsedMessage = json.error?.message || json.message || json.error || '';
+  } catch {
+    parsedMessage = typeof errText === 'string' ? errText.slice(0, 300) : String(errText);
+  }
+
+  const modelTag = model ? ` [Model: ${model}]` : '';
+  const prefix = `[${provider}${modelTag}]`;
+
+  // Specific check for missing API key
+  if (/missing|no api key|api key.*missing|unconfigured/i.test(errText) && !/invalid/i.test(errText)) {
+    return `${prefix} API Key is Missing: Please configure your ${provider} API key in AutoFlow AI Settings to use this model.`;
+  }
+
+  // Network or CORS error
+  if (/failed to fetch|network error|cors|offline|connection refused/i.test(errText)) {
+    return `${prefix} Network Connection / CORS Error: Failed to reach ${provider} endpoints. Check internet connection, proxy settings, or host permissions. (Details: ${parsedMessage || errText})`;
+  }
+
+  if (status === 401) {
+    return `${prefix} Invalid API Key or Unauthorized (401): Authentication failed. Please verify your ${provider} API key in AutoFlow AI Settings. (Details: ${parsedMessage || 'Unauthorized'})`;
+  }
+
+  if (status === 404) {
+    return `${prefix} Model Not Found (404): The requested model "${model || 'selected'}" does not exist or your API key lacks access. (Details: ${parsedMessage || errText})`;
+  }
+
+  if (status === 429) {
+    return `${prefix} Rate Limit or Quota Exceeded (429): Too many requests or insufficient credit balance on ${provider}. Check your billing plan and account balance. (Details: ${parsedMessage || errText})`;
+  }
+
+  if (status === 400) {
+    if (/context|token|length|maximum/i.test(parsedMessage || errText)) {
+      return `${prefix} Context Window Exceeded (400): The prompt exceeds token limits. Please reduce the page content or prompt length. (Details: ${parsedMessage || errText})`;
     }
-  } catch {}
-  return `${providerName} error (${status}): ${errText.slice(0, 300)}`;
+    return `${prefix} Bad Request (400): Invalid request parameters. (Details: ${parsedMessage || errText})`;
+  }
+
+  if (status >= 500) {
+    return `${prefix} Service Outage / Server Error (${status}): ${provider} servers are temporarily unavailable or experiencing high load. (Details: ${parsedMessage || errText})`;
+  }
+
+  return `${prefix} Error (${status || 'general'}): ${parsedMessage || errText || 'Request failed'}`;
 }
 
 /**
@@ -338,7 +405,14 @@ export async function queryLlm(
     ...config,
   };
 
-  if (currentConfig.provider === 'openai' && currentConfig.apiKey) {
+  const model = currentConfig.model || getDefaultModelForProvider(currentConfig.provider);
+
+  // 1. OpenAI / OpenAI Compatible
+  if (currentConfig.provider === 'openai') {
+    if (!currentConfig.apiKey) {
+      throw new Error(`[OpenAI] API Key missing. Please open AutoFlow Settings / AI Copilot and enter your OpenAI API key.`);
+    }
+
     const baseUrl = getOpenAiBaseUrl(currentConfig);
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -347,7 +421,7 @@ export async function queryLlm(
         Authorization: `Bearer ${currentConfig.apiKey}`,
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'gpt-5.6-sol',
+        model,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: prompt },
@@ -358,13 +432,14 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(parseApiError(err, res.status, 'OpenAI'));
+      throw new Error(parseApiError(err, res.status, 'OpenAI', model));
     }
 
     const json = await res.json();
     return json.choices[0]?.message?.content || '';
   }
 
+  // 2. Mistral AI
   if (currentConfig.provider === 'mistral') {
     const keyToUse = currentConfig.apiKey || DEFAULT_MISTRAL_API_KEY;
     const res = await fetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
@@ -385,16 +460,21 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(parseApiError(err, res.status, 'Mistral'));
+      throw new Error(parseApiError(err, res.status, 'Mistral', currentConfig.model || 'mistral-large-latest'));
     }
 
     const json = await res.json();
     return json.choices[0]?.message?.content || '';
   }
 
-  if (currentConfig.provider === 'gemini' && currentConfig.apiKey) {
-    const model = currentConfig.model || 'gemini-1.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentConfig.apiKey}`;
+  // 3. Google Gemini
+  if (currentConfig.provider === 'gemini') {
+    if (!currentConfig.apiKey) {
+      throw new Error(`[Gemini] API Key missing. Please open AutoFlow Settings and enter your Google Gemini API key.`);
+    }
+
+    const geminiModel = currentConfig.model || 'gemini-1.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${currentConfig.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -412,14 +492,20 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Gemini API error: ${err}`);
+      throw new Error(parseApiError(err, res.status, 'Gemini', geminiModel));
     }
 
     const json = await res.json();
     return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
 
-  if (currentConfig.provider === 'openrouter' && currentConfig.apiKey) {
+  // 4. OpenRouter
+  if (currentConfig.provider === 'openrouter') {
+    if (!currentConfig.apiKey) {
+      throw new Error(`[OpenRouter] API Key missing. Please open AutoFlow Settings and enter your OpenRouter API key.`);
+    }
+
+    const routerModel = currentConfig.model || 'openai/gpt-4o-mini';
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -427,7 +513,7 @@ export async function queryLlm(
         Authorization: `Bearer ${currentConfig.apiKey}`,
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'openai/gpt-4o-mini',
+        model: routerModel,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: prompt },
@@ -437,15 +523,17 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`OpenRouter API error: ${err}`);
+      throw new Error(parseApiError(err, res.status, 'OpenRouter', routerModel));
     }
 
     const json = await res.json();
     return json.choices[0]?.message?.content || '';
   }
 
+  // 5. Custom / Local LLM
   if (currentConfig.provider === 'custom') {
     const endpoint = (currentConfig.customEndpoint || 'http://localhost:11434/v1').replace(/\/$/, '');
+    const customModel = currentConfig.model || 'default';
     const res = await fetch(`${endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -453,7 +541,7 @@ export async function queryLlm(
         ...(currentConfig.apiKey ? { Authorization: `Bearer ${currentConfig.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: currentConfig.model || 'default',
+        model: customModel,
         messages: [
           ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
           { role: 'user', content: prompt },
@@ -464,7 +552,7 @@ export async function queryLlm(
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Custom API error: ${err}`);
+      throw new Error(parseApiError(err, res.status, `Custom LLM (${endpoint})`, customModel));
     }
 
     const json = await res.json();

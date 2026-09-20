@@ -56,6 +56,7 @@ export type AgentActionType =
   | 'hover'
   | 'extract'
   | 'ask_human'
+  | 'remember'
   | 'done';
 
 export interface AgentAction {
@@ -84,6 +85,8 @@ export interface AgentAction {
   question?: string;
   reason?: string;
   suggestedOptions?: string[];
+  memoryNote?: string;
+  updateMemory?: string;
 }
 
 export interface InteractiveElement {
@@ -117,6 +120,7 @@ export interface AgentStep {
   urlAfter?: string;
   success: boolean;
   error?: string;
+  savedMemoryNote?: string;
   isComplete?: boolean;
 }
 

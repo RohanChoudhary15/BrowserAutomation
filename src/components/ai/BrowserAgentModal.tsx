@@ -23,11 +23,13 @@ import {
   ExternalLink,
   HelpCircle,
   Send,
+  Brain,
 } from 'lucide-react';
 import { AgentStep, AiConfig, HumanGuidanceRequest } from '../../ai/types';
 import { runBrowserAgent, convertAgentStepsToWorkflow, AgentPauseController } from '../../ai/browserAgent';
 import { getAiConfig } from '../../ai/aiService';
 import { WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { SiteMemoryManager } from './SiteMemoryManager';
 
 interface BrowserAgentModalProps {
   isOpen: boolean;
@@ -59,6 +61,7 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
   const [aiConfig, setAiConfig] = useState<AiConfig | null>(null);
   const [copiedAnswer, setCopiedAnswer] = useState(false);
   const [showScreenshotModal, setShowScreenshotModal] = useState(false);
+  const [showSiteMemoryModal, setShowSiteMemoryModal] = useState(false);
 
   // Human-in-the-Loop state
   const [humanGuidanceRequest, setHumanGuidanceRequest] = useState<HumanGuidanceRequest | null>(null);
@@ -239,6 +242,8 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
         return <ArrowDown className="w-3.5 h-3.5 text-amber-400" />;
       case 'done':
         return <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />;
+      case 'remember':
+        return <Brain className="w-3.5 h-3.5 text-purple-400" />;
       case 'ask_human':
         return <HelpCircle className="w-3.5 h-3.5 text-amber-400" />;
       default:
@@ -278,6 +283,14 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSiteMemoryModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181f2f] hover:bg-[#20293d] text-purple-300 hover:text-purple-200 rounded-lg text-xs font-semibold border border-purple-500/30 shadow-sm transition-all"
+              title="Inspect, add, and edit permanent site memory notes"
+            >
+              <Brain className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden sm:inline">Site</span> Memory
+            </button>
             {steps.length > 0 && (
               <button
                 onClick={handleConvertToWorkflow}
@@ -665,6 +678,15 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
                               <span className="text-gray-400 font-semibold">Human Command:</span> "{step.humanGuidance}"
                             </div>
                           )}
+                          {step.action.savedMemoryNote && (
+                            <div className="p-2 mt-1 rounded bg-purple-950/40 border border-purple-500/30 text-purple-200 text-xs font-sans flex items-start gap-1.5">
+                              <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-purple-300">Saved to Site Memory:</span>
+                                <p className="text-purple-100 font-mono text-[11px] mt-0.5">{step.action.savedMemoryNote}</p>
+                              </div>
+                            </div>
+                          )}
                           {step.action.answer && (
                             <div className="p-2 mt-1 rounded bg-green-950/40 border border-green-800/40 text-green-300 text-xs font-sans">
                               <strong>Summary:</strong> {step.action.answer}
@@ -693,6 +715,13 @@ export const BrowserAgentModal: React.FC<BrowserAgentModalProps> = ({
             />
           </div>
         )}
+
+        {/* Permanent Site Memory & Notes Manager */}
+        <SiteMemoryManager
+          isOpen={showSiteMemoryModal}
+          onClose={() => setShowSiteMemoryModal(false)}
+          initialDomain={activeTabUrl}
+        />
 
       </div>
     </div>

@@ -240,9 +240,13 @@ function escapePdf(text: string): string {
     .replace(/\)/g, '\\)');
 }
 
-export type AiAgentOutputFormat = 'text' | 'json' | 'csv' | 'xlsx' | 'pdf';
+export type AiAgentOutputFormat = 'normal' | 'text' | 'txt' | 'json' | 'csv' | 'xlsx' | 'pdf';
 
 export interface FormattedDocumentResult {
+  format?: AiAgentOutputFormat;
+  data?: any;
+  filename?: string;
+  sizeBytes?: number;
   parsedOutput: any;
   formattedContent: string;
   dataUrl: string;
@@ -252,13 +256,29 @@ export interface FormattedDocumentResult {
 }
 
 /**
- * Processes AI Agent raw output and transforms it into the requested format (PDF, CSV, JSON, XLSX, Text).
+ * Processes AI Agent raw output and transforms it into the requested format (Normal, PDF, CSV, JSON, XLSX, Text).
  */
 export function formatAiAgentDocument(
   rawResponse: string,
   format: AiAgentOutputFormat = 'text',
   customFilename?: string
 ): FormattedDocumentResult {
+  // If 'normal' is selected, return raw text directly without file wrapping
+  if (format === 'normal') {
+    return {
+      format: 'normal',
+      data: rawResponse,
+      filename: '',
+      sizeBytes: rawResponse.length,
+      parsedOutput: rawResponse,
+      formattedContent: rawResponse,
+      dataUrl: '',
+      mimeType: 'text/plain',
+      fileExtension: '',
+      defaultFilename: '',
+    };
+  }
+
   const baseFilename = (customFilename || 'ai_output').replace(/\.[a-zA-Z0-9]+$/, '');
   let parsedJson: any = null;
 
@@ -277,6 +297,10 @@ export function formatAiAgentDocument(
       const jsonStr = parsedJson !== null ? JSON.stringify(parsedJson, null, 2) : JSON.stringify({ result: rawResponse }, null, 2);
       const dataUrl = `data:application/json;charset=utf-8,${encodeURIComponent(jsonStr)}`;
       return {
+        format: 'json',
+        data: jsonStr,
+        filename: `${baseFilename}.json`,
+        sizeBytes: jsonStr.length,
         parsedOutput: parsedJson !== null ? parsedJson : { result: rawResponse },
         formattedContent: jsonStr,
         dataUrl,
@@ -291,6 +315,10 @@ export function formatAiAgentDocument(
       // Include UTF-8 BOM so Excel opens it with correct encoding
       const dataUrl = `data:text/csv;charset=utf-8,%EF%BB%BF${encodeURIComponent(csvStr)}`;
       return {
+        format: 'csv',
+        data: csvStr,
+        filename: `${baseFilename}.csv`,
+        sizeBytes: csvStr.length,
         parsedOutput: parsedJson !== null ? parsedJson : csvStr,
         formattedContent: csvStr,
         dataUrl,
@@ -304,6 +332,10 @@ export function formatAiAgentDocument(
       const xmlStr = dataToSpreadsheetXml(dataSource, 'AI Analysis');
       const dataUrl = `data:application/vnd.ms-excel;charset=utf-8,${encodeURIComponent(xmlStr)}`;
       return {
+        format: 'xlsx',
+        data: xmlStr,
+        filename: `${baseFilename}.xlsx`,
+        sizeBytes: xmlStr.length,
         parsedOutput: parsedJson !== null ? parsedJson : rawResponse,
         formattedContent: xmlStr,
         dataUrl,
@@ -318,6 +350,10 @@ export function formatAiAgentDocument(
       const base64Pdf = typeof btoa === 'function' ? btoa(pdfBinary) : Buffer.from(pdfBinary).toString('base64');
       const dataUrl = `data:application/pdf;base64,${base64Pdf}`;
       return {
+        format: 'pdf',
+        data: pdfBinary,
+        filename: `${baseFilename}.pdf`,
+        sizeBytes: pdfBinary.length,
         parsedOutput: parsedJson !== null ? parsedJson : rawResponse,
         formattedContent: pdfBinary,
         dataUrl,
@@ -327,10 +363,15 @@ export function formatAiAgentDocument(
       };
     }
 
+    case 'txt':
     case 'text':
     default: {
       const dataUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(rawResponse)}`;
       return {
+        format,
+        data: rawResponse,
+        filename: `${baseFilename}.txt`,
+        sizeBytes: rawResponse.length,
         parsedOutput: rawResponse,
         formattedContent: rawResponse,
         dataUrl,

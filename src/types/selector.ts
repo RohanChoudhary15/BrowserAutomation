@@ -30,4 +30,9 @@ export interface ElementSelectionResult {
     height: number;
   };
   frameHierarchy?: string[];
+  patternMode?: boolean;
+  matchCount?: number;
+  sampleTexts?: string[];
+  item1Selector?: string;
+  item2Selector?: string;
 }

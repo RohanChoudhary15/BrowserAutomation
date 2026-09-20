@@ -9,6 +9,7 @@ import {
 import { queryVisionLlm, getAiConfig, VALID_FALLBACK_IMAGE } from './aiService';
 import { WorkflowNode, WorkflowEdge } from '../types/workflow';
 import { generateId } from '../utils/id';
+import { getSiteNotes, saveSiteNote, normalizeDomain } from '../storage/siteMemoryStore';
 
 /**
  * Controller allowing humans to pause, resume, and inject guidance into running browser agent
@@ -81,7 +82,7 @@ You MUST respond with a single valid JSON object strictly matching this schema:
 {
   "thought": "Your visual observation of the screenshot and plan for this immediate step",
   "action": {
-    "type": "click" | "type" | "press_key" | "shortcut" | "copy_to_clipboard" | "paste" | "navigate" | "scroll" | "wait" | "hover" | "extract" | "ask_human" | "done",
+    "type": "click" | "type" | "press_key" | "shortcut" | "copy_to_clipboard" | "paste" | "navigate" | "scroll" | "wait" | "hover" | "extract" | "ask_human" | "remember" | "done",
     "elementIndex": 1,
     "selector": "button.submit",
     "coordinates": { "x": 100, "y": 200 },
@@ -104,7 +105,9 @@ You MUST respond with a single valid JSON object strictly matching this schema:
     "answer": "Completed task description",
     "question": "Clarification or command request for the human",
     "reason": "Reason why human input is needed (e.g. CAPTCHA, 2FA, ambiguous choices)",
-    "suggestedOptions": ["Option A", "Option B"]
+    "suggestedOptions": ["Option A", "Option B"],
+    "memoryNote": "Important selector, path, or UI quirk to record permanently for this website",
+    "updateMemory": "Note to remember for future visits to this site"
   },
   "isComplete": false
 }
@@ -137,7 +140,14 @@ CRITICAL RULES:
    - Output "type": "ask_human", "question": "Clear question describing what you need the human to do or decide", "reason": "Why human input is needed", "suggestedOptions": ["Choice 1", "Choice 2"].
    - The user will be prompted immediately with your question, and their response will be provided to you in the next step to guide you!
 10. Return ONLY the JSON object. Do not wrap in markdown or any text outside JSON.
-11. For ChatGPT website to type always use #prompt-textarea as the selector for the input field. Also if asked to chat in temporary chat then first click using this selector button[aria-label="Temporary chat"] then have the conversation in #prompt-textarea. Also if you are struck and don't know what to do then ask chatgpt to help you.`;
+11. For ChatGPT website to type always use #prompt-textarea as the selector for the input field. Also if asked to chat in temporary chat then first click using this selector button[aria-label="Temporary chat"] then have the conversation in #prompt-textarea. Also if you are struck and don't know what to do then ask chatgpt to help you.
+12. PERMANENT SITE MEMORY & NOTES:
+    - You possess a permanent memory store across visits to this website.
+    - Carefully read and follow any 'PERMANENT SITE MEMORY & NOTES' provided below for known selectors, quirks, login modals, or navigation paths.
+    - You MUST maintain, edit, and write new notes whenever you discover useful patterns (e.g. valid selectors, cookie consent buttons, search trigger keys, dynamic element behaviors).
+    - To record a new note to remember for future visits:
+      * Use action: { "type": "remember", "memoryNote": "Note describing the selector or behavior to remember" }
+      * OR include "updateMemory": "Note to remember" inside ANY action (so you can click/type AND save a note in the same step).`;
 
 /**
  * Captures screenshot of the target tab or active window
@@ -520,6 +530,7 @@ export async function executeAgentAction(
 
       case 'extract':
       case 'ask_human':
+      case 'remember':
       case 'done':
         return { success: true };
 
@@ -558,6 +569,11 @@ export function parseAgentModelResponse(rawText: string): {
     if (parsed.question && !parsedAction.question) parsedAction.question = parsed.question;
     if (parsed.reason && !parsedAction.reason) parsedAction.reason = parsed.reason;
     if (parsed.suggestedOptions && !parsedAction.suggestedOptions) parsedAction.suggestedOptions = parsed.suggestedOptions;
+    if (parsed.memoryNote && !parsedAction.memoryNote) parsedAction.memoryNote = parsed.memoryNote;
+    if (parsed.updateMemory && !parsedAction.updateMemory) parsedAction.updateMemory = parsed.updateMemory;
+    if (parsedAction.type === 'remember' && !parsedAction.memoryNote && parsed.thought) {
+      parsedAction.memoryNote = parsed.thought;
+    }
 
     // If model thought identifies CAPTCHA or 2FA verification challenge, auto-convert to ask_human
     const thoughtText = (parsed.thought || '').toLowerCase();
@@ -683,7 +699,41 @@ export async function runBrowserAgent(options: BrowserAgentOptions): Promise<Age
       ? humanInstructionsHistory.map((g, i) => `${i + 1}. ${g}`).join('\n')
       : '';
 
+    // Resolve active tab information & domain
+    let activeDomain = 'global';
+    let activeUrl = '';
+    try {
+      if (typeof chrome !== 'undefined' && chrome.tabs) {
+        if (tabId && chrome.tabs.get) {
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          if (tab?.url) {
+            activeUrl = tab.url;
+            activeDomain = normalizeDomain(tab.url);
+          }
+        }
+        if (!activeUrl && chrome.tabs.query) {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+          if (tab?.url) {
+            activeUrl = tab.url;
+            activeDomain = normalizeDomain(tab.url);
+          }
+        }
+      }
+    } catch {}
+
+    // Load domain-specific and global notes from permanent site memory
+    const domainNotes = await getSiteNotes(activeDomain);
+    const siteNotesPromptSnippet = domainNotes.length > 0
+      ? domainNotes
+          .map((n, idx) => `[${idx + 1}] (${n.source.toUpperCase()} NOTE): ${n.content}`)
+          .join('\n')
+      : 'No stored memory notes for this website yet.';
+
     const userPrompt = `GOAL: "${goal}"
+CURRENT WEBSITE DOMAIN: ${activeDomain}${activeUrl ? ` (${activeUrl})` : ''}
+
+PERMANENT SITE MEMORY & NOTES (KNOWLEDGE FROM PAST VISITS):
+${siteNotesPromptSnippet}
 
 ${guidanceSummary ? `HUMAN GUIDANCE & INSTRUCTIONS (MUST PRIORITIZE):\n${guidanceSummary}\n\n` : ''}PREVIOUS ACTIONS TAKEN:
 ${historySummary}
@@ -736,6 +786,21 @@ Analyze the attached live screenshot and output the single next JSON action to a
 
     // 4. Parse action
     const parsed = parseAgentModelResponse(modelResponseText);
+
+    // Check if agent wants to record or update permanent site memory
+    const memoryNoteToRecord = parsed.action.type === 'remember'
+      ? (parsed.action.memoryNote || parsed.thought)
+      : (parsed.action.updateMemory || parsed.action.memoryNote);
+
+    if (memoryNoteToRecord && memoryNoteToRecord.trim()) {
+      try {
+        const saved = await saveSiteNote(activeDomain, memoryNoteToRecord.trim(), 'agent');
+        parsed.action.savedMemoryNote = saved.content;
+        onStatusUpdate?.(`🧠 Saved note to permanent memory for ${activeDomain}: "${saved.content.slice(0, 55)}..."`);
+      } catch (memErr) {
+        console.warn('Failed to save agent site note:', memErr);
+      }
+    }
 
     let execResult: { success: boolean; data?: any; error?: string } = { success: true };
     let humanResponseRecorded = '';
@@ -978,7 +1043,8 @@ export function convertAgentStepsToWorkflow(
         break;
 
       case 'done':
-        continue; // Don't create an execution node for done
+      case 'remember':
+        continue; // Don't create an execution node for done or remember
     }
 
     const newNode: WorkflowNode = {
