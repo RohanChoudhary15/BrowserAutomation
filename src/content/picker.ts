@@ -16,9 +16,23 @@ let onCancelCallback: CancelCallback | null = null;
 function handleMouseMove(e: MouseEvent) {
   if (!isPickerActive) return;
 
-  const target = document.elementFromPoint(e.clientX, e.clientY);
+  let target = document.elementFromPoint(e.clientX, e.clientY);
   if (!target || target === overlayEl || target === badgeEl || target === bannerEl || bannerEl?.contains(target)) {
     return;
+  }
+
+  // Intelligently snap to real input element if target is an input wrapper, icon, or label
+  if (
+    !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+    (target.tagName === 'DIV' || target.tagName === 'SPAN' || target.tagName === 'LABEL' || target.tagName === 'SVG' || target.tagName === 'PATH')
+  ) {
+    const childInput = target.querySelector<HTMLElement>('input:not([type="hidden"]), textarea');
+    const closestInput = target.closest<HTMLElement>('label, form, .relative, div[class*="input"], div[class*="search"]')?.querySelector<HTMLElement>('input:not([type="hidden"]), textarea');
+    if (childInput) {
+      target = childInput;
+    } else if (closestInput) {
+      target = closestInput;
+    }
   }
 
   hoveredElement = target;

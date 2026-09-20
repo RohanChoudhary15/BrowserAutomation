@@ -84,11 +84,53 @@ export function queryElement(selector: string, root: ParentNode = document): Ele
 
   // Standard querySelector
   try {
-    return root.querySelector(trimmed);
+    const el = root.querySelector(trimmed);
+    if (el) return el;
   } catch (err) {
-    // If invalid CSS selector, try text content fallback
-    return null;
+    // If invalid CSS selector syntax, fall through to smart lookups below
   }
+
+  // Smart Fallback 1: ID without #, or name, or data-testid
+  if (/^[a-zA-Z0-9_\-:]+$/.test(trimmed)) {
+    try {
+      const escapeVal = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(trimmed) : trimmed;
+      const byId = root.querySelector(`#${escapeVal}`);
+      if (byId) return byId;
+      const byName = root.querySelector(`[name="${escapeVal}"]`);
+      if (byName) return byName;
+      const byTestId = root.querySelector(`[data-testid="${escapeVal}"]`);
+      if (byTestId) return byTestId;
+    } catch {}
+  }
+
+  // Smart Fallback 2: Placeholder search
+  try {
+    const escaped = trimmed.replace(/"/g, '\\"');
+    const byPlaceholder = root.querySelector(`input[placeholder*="${escaped}" i], textarea[placeholder*="${escaped}" i]`);
+    if (byPlaceholder) return byPlaceholder;
+  } catch {}
+
+  // Smart Fallback 3: Aria-label or associated label text search
+  try {
+    const escaped = trimmed.replace(/"/g, '\\"');
+    const byAria = root.querySelector(`[aria-label*="${escaped}" i], [aria-placeholder*="${escaped}" i]`);
+    if (byAria) return byAria;
+
+    // Search labels whose text matches trimmed
+    const labels = Array.from(root.querySelectorAll('label'));
+    for (const lbl of labels) {
+      if ((lbl.textContent || '').trim().toLowerCase().includes(trimmed.toLowerCase())) {
+        if (lbl.htmlFor) {
+          const target = document.getElementById(lbl.htmlFor);
+          if (target) return target;
+        }
+        const childInput = lbl.querySelector('input, textarea');
+        if (childInput) return childInput;
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 /**

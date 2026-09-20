@@ -82,5 +82,46 @@ describe('Selector Generator', () => {
       const foundPartial = queryElement('button.btn-retry:has-text("Retry")');
       expect(foundPartial).toBe(btn);
     });
+
+    it('matches by raw ID without leading #', async () => {
+      const { queryElement } = await import('../src/selectors/finder');
+      const input = document.createElement('input');
+      input.id = 'search-box';
+      document.body.appendChild(input);
+
+      expect(queryElement('search-box')).toBe(input);
+      expect(queryElement('#search-box')).toBe(input);
+    });
+
+    it('matches by placeholder text', async () => {
+      const { queryElement } = await import('../src/selectors/finder');
+      const input = document.createElement('input');
+      input.placeholder = 'Search Google or type a URL';
+      document.body.appendChild(input);
+
+      expect(queryElement('Search Google')).toBe(input);
+    });
+
+    it('matches by name attribute', async () => {
+      const { queryElement } = await import('../src/selectors/finder');
+      const input = document.createElement('input');
+      input.name = 'user_email';
+      document.body.appendChild(input);
+
+      expect(queryElement('user_email')).toBe(input);
+    });
+
+    it('matches by associated label text', async () => {
+      const { queryElement } = await import('../src/selectors/finder');
+      const label = document.createElement('label');
+      label.textContent = 'Full Name';
+      label.htmlFor = 'name-input';
+      const input = document.createElement('input');
+      input.id = 'name-input';
+      document.body.appendChild(label);
+      document.body.appendChild(input);
+
+      expect(queryElement('Full Name')).toBe(input);
+    });
   });
 });

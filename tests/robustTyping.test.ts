@@ -58,6 +58,18 @@ describe('Robust Typing Engine', () => {
       expect(resolveTargetInputElement(editor)).toBe(editor);
       expect(resolveTargetInputElement(roleBox)).toBe(roleBox);
     });
+
+    it('resolves role="combobox" and role="searchbox"', () => {
+      const combo = document.createElement('div');
+      combo.setAttribute('role', 'combobox');
+      const searchBox = document.createElement('div');
+      searchBox.setAttribute('role', 'searchbox');
+      document.body.appendChild(combo);
+      document.body.appendChild(searchBox);
+
+      expect(resolveTargetInputElement(combo)).toBe(combo);
+      expect(resolveTargetInputElement(searchBox)).toBe(searchBox);
+    });
   });
 
   describe('setNativeInputValue & React _valueTracker', () => {

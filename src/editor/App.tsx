@@ -671,25 +671,43 @@ export const App: React.FC = () => {
   );
 
   // Element Picker Integration
-  const handleStartElementPicker = useCallback(() => {
+  const handleStartElementPicker = useCallback(async () => {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       setIsPickingElement(true);
-      chrome.runtime.sendMessage({ type: 'START_ELEMENT_PICKER' });
+      try {
+        const res = await chrome.runtime.sendMessage({ type: 'START_ELEMENT_PICKER' });
+        if (res && !res.success) {
+          setIsPickingElement(false);
+          alert(res.error || 'Could not start Element Picker. Please ensure a webpage is open in another tab.');
+        }
+      } catch (err: any) {
+        setIsPickingElement(false);
+        alert(`Could not start Element Picker: ${err.message || String(err)}`);
+      }
     } else {
       alert('Element Picker communicates directly with live webpages in Chrome/Edge.');
     }
   }, []);
 
   // Action Recorder Integration
-  const handleToggleRecord = useCallback(() => {
+  const handleToggleRecord = useCallback(async () => {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       if (!isRecording) {
         setIsRecording(true);
         lastRecordedNodeIdRef.current = null;
-        chrome.runtime.sendMessage({ type: 'START_RECORDING' });
+        try {
+          const res = await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
+          if (res && !res.success) {
+            setIsRecording(false);
+            alert(res.error || 'Could not start Recorder on target tab.');
+          }
+        } catch (err: any) {
+          setIsRecording(false);
+          alert(`Could not start Recorder: ${err.message || String(err)}`);
+        }
       } else {
         setIsRecording(false);
-        chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
+        chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }).catch(() => {});
       }
     } else {
       alert('Recorder records real user interactions on open browser tabs.');

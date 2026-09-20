@@ -159,50 +159,66 @@ export function resolveTargetInputElement(initial: Element | null): HTMLElement 
   if (
     initial instanceof HTMLInputElement ||
     initial instanceof HTMLTextAreaElement ||
-    (initial instanceof HTMLElement && (initial.isContentEditable || initial.getAttribute('contenteditable') === 'true' || initial.getAttribute('role') === 'textbox'))
+    (initial instanceof HTMLElement && (
+      initial.isContentEditable ||
+      initial.getAttribute('contenteditable') === 'true' ||
+      initial.getAttribute('role') === 'textbox' ||
+      initial.getAttribute('role') === 'combobox' ||
+      initial.getAttribute('role') === 'searchbox'
+    ))
   ) {
     return initial;
   }
 
-  // 2. If it's a label with htmlFor
-  if (initial instanceof HTMLLabelElement && initial.htmlFor) {
-    const target = document.getElementById(initial.htmlFor);
-    if (target) return target;
+  // 2. Check shadowRoot if present (Web Components / custom inputs)
+  if (initial.shadowRoot) {
+    const shadowInput = initial.shadowRoot.querySelector<HTMLElement>(
+      'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"]'
+    );
+    if (shadowInput) return shadowInput;
   }
 
-  // 3. Search children for the actual input or contenteditable
+  // 3. If it's a label with htmlFor
+  if (initial instanceof HTMLLabelElement && initial.htmlFor) {
+    const target = document.getElementById(initial.htmlFor);
+    if (target) return resolveTargetInputElement(target);
+  }
+
+  // 4. Search children for the actual input or contenteditable
   const childInput = initial.querySelector<HTMLElement>(
-    'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"]'
+    'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [role="textbox"], [role="combobox"], [role="searchbox"]'
   );
   if (childInput) return childInput;
 
-  // 4. Search closest ancestor if clicked inside an icon/span/wrapper
+  // 5. Search closest ancestor if clicked inside an icon/span/wrapper
   const closestInput = initial.closest<HTMLElement>(
-    'input, textarea, [contenteditable="true"], [role="textbox"], label'
+    'input, textarea, [contenteditable="true"], [role="textbox"], [role="combobox"], [role="searchbox"], label, form, .relative, div[class*="input"], div[class*="search"]'
   );
-  if (closestInput) {
-    if (closestInput instanceof HTMLLabelElement && closestInput.htmlFor) {
-      const target = document.getElementById(closestInput.htmlFor);
-      if (target) return target;
-    }
-    return closestInput;
+  if (closestInput && closestInput !== initial) {
+    return resolveTargetInputElement(closestInput);
   }
 
   return initial instanceof HTMLElement ? initial : null;
 }
 
 export function activateElementForTyping(el: HTMLElement): void {
-  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  try {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  } catch {}
   flashHighlight(el);
-  el.focus();
+
+  try {
+    el.focus({ preventScroll: true });
+  } catch {}
 
   const rect = el.getBoundingClientRect();
-  const clientX = rect.left + rect.width / 2;
-  const clientY = rect.top + rect.height / 2;
+  const clientX = Math.max(0, rect.left + rect.width / 2);
+  const clientY = Math.max(0, rect.top + rect.height / 2);
 
   const mouseInit: MouseEventInit = {
     bubbles: true,
     cancelable: true,
+    composed: true,
     view: window,
     clientX,
     clientY,
@@ -221,15 +237,16 @@ export function activateElementForTyping(el: HTMLElement): void {
 }
 
 export function clearElementValue(el: HTMLElement): void {
-  el.focus();
+  activateElementForTyping(el);
 
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     try {
       el.setSelectionRange(0, el.value.length);
     } catch {}
     setNativeInputValue(el, '');
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null }));
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
   } else if (el.isContentEditable || el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox') {
     try {
       const sel = window.getSelection();
@@ -242,7 +259,8 @@ export function clearElementValue(el: HTMLElement): void {
     if (el.textContent) {
       el.textContent = '';
     }
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null }));
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   }
 }
 
@@ -285,6 +303,7 @@ export async function performRobustTyping(
       code,
       bubbles: true,
       cancelable: true,
+      composed: true,
     };
 
     el.dispatchEvent(new KeyboardEvent('keydown', keyInit));
@@ -310,14 +329,15 @@ export async function performRobustTyping(
       try {
         input.setSelectionRange?.(start + 1, start + 1);
       } catch {}
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: false, data: char, inputType: 'insertText' }));
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, cancelable: false, data: char, inputType: 'insertText' }));
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       charInserted = true;
     } else if (isEditable) {
       try {
         charInserted = document.execCommand('insertText', false, char);
       } catch {}
       if (!charInserted) {
-        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: char, inputType: 'insertText' }));
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: char, inputType: 'insertText' }));
         const sel = window.getSelection();
         if (sel && sel.rangeCount > 0) {
           const range = sel.getRangeAt(0);
@@ -331,7 +351,8 @@ export async function performRobustTyping(
         } else {
           el.textContent = (el.textContent || '') + char;
         }
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: false, data: char, inputType: 'insertText' }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, cancelable: false, data: char, inputType: 'insertText' }));
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       }
     }
 
@@ -345,7 +366,8 @@ export async function performRobustTyping(
   }
 
   if (isInput) {
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
   }
 
   // 2. Self-Healing Verification

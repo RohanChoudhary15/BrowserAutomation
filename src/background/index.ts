@@ -9,11 +9,89 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 
 export const REQUIRED_CONTENT_VERSION = '1.3.0-qol-features';
 
+// Tracks the editor tab ID to return focus after element picking
+let lastEditorTabId: number | null = null;
+
 /**
- * Ensures content script is injected into the target tab with the latest version
+ * Checks if a URL is an internal browser or extension page where content scripts cannot run
+ */
+export function isRestrictedUrl(url?: string): boolean {
+  if (!url) return false;
+  return (
+    url.startsWith('chrome://') ||
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('edge://') ||
+    url.startsWith('devtools://') ||
+    url.startsWith('about:') ||
+    url.startsWith('view-source:')
+  );
+}
+
+/**
+ * Retrieves the currently active tab
+ */
+async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+  return tab || null;
+}
+
+/**
+ * Resolves the genuine target webpage tab for automation and element picking,
+ * avoiding extension editor tabs and restricted browser URLs.
+ */
+export async function getTargetTab(preferredTabId?: number): Promise<chrome.tabs.Tab | null> {
+  // 1. If preferred tab ID is specified, verify it is accessible and not restricted
+  if (preferredTabId) {
+    const tab = await chrome.tabs.get(preferredTabId).catch(() => null);
+    if (tab && tab.id && !isRestrictedUrl(tab.url)) {
+      return tab;
+    }
+  }
+
+  // 2. Query all tabs across windows
+  const allTabs = await chrome.tabs.query({}).catch(() => []);
+  const webTabs = allTabs.filter((t) => t.id && !isRestrictedUrl(t.url));
+
+  if (webTabs.length === 0) {
+    return null;
+  }
+
+  // Check if there is an active web tab in any window
+  const activeWebTab = webTabs.find((t) => t.active);
+  if (activeWebTab) return activeWebTab;
+
+  // Fallback: return the most recently accessed web tab
+  webTabs.sort((a, b) => ((b as any).lastAccessed || 0) - ((a as any).lastAccessed || 0));
+  return webTabs[0] || null;
+}
+
+/**
+ * Ensures content script is injected into the target tab with verification
  */
 async function ensureContentScriptInjected(tabId: number, force = false): Promise<boolean> {
   try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || !tab.id || isRestrictedUrl(tab.url)) {
+      return false;
+    }
+
+    // If tab is loading, wait briefly for it to reach interactive state
+    if (tab.status === 'loading') {
+      await new Promise<void>((resolve) => {
+        const listener = (updatedId: number, info: chrome.tabs.TabChangeInfo) => {
+          if (updatedId === tabId && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }, 2500);
+      });
+    }
+
     if (!force) {
       // Ping to check if already listening with up-to-date version
       const response = await chrome.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
@@ -34,8 +112,15 @@ async function ensureContentScriptInjected(tabId: number, force = false): Promis
       files: ['content.js'],
     });
 
-    // Wait a brief moment for script initialization
-    await new Promise(r => setTimeout(r, 150));
+    // Verification polling loop (up to 1.5s) to ensure content script message listener is ready
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      const pingRes = await chrome.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
+      if (pingRes && pingRes.success) {
+        return true;
+      }
+    }
+
     return true;
   } catch (err) {
     console.warn(`Could not inject content script into tab ${tabId}:`, err);
@@ -43,25 +128,22 @@ async function ensureContentScriptInjected(tabId: number, force = false): Promis
   }
 }
 
-/**
- * Retrieves the currently active tab
- */
-async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab || null;
-}
-
 chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, sendResponse) => {
   const handleAsync = async () => {
     try {
+      // If message originates from the AutoFlow Editor or extension view, record its tab ID
+      if (sender.tab?.id && isRestrictedUrl(sender.tab.url)) {
+        lastEditorTabId = sender.tab.id;
+      }
+
       switch (message.type) {
         case 'GET_ACTIVE_TAB': {
-          const tab = await getActiveTab();
+          const tab = await getTargetTab();
           return { success: true, tab };
         }
 
         case 'OPEN_SIDE_PANEL': {
-          const tab = await getActiveTab();
+          const tab = await getTargetTab();
           if (tab?.id && chrome.sidePanel && chrome.sidePanel.open) {
             await chrome.sidePanel.open({ tabId: tab.id });
             return { success: true };
@@ -70,16 +152,29 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
         }
 
         case 'NAVIGATE_TAB': {
-          const tab = message.payload.tabId ? await chrome.tabs.get(message.payload.tabId) : await getActiveTab();
-          if (!tab?.id) throw new Error('No target tab found.');
+          let tab: chrome.tabs.Tab | null = null;
+          if (message.payload?.tabId) {
+            tab = await chrome.tabs.get(message.payload.tabId).catch(() => null);
+          }
+          if (!tab || isRestrictedUrl(tab.url)) {
+            tab = await getTargetTab();
+          }
 
-          await chrome.tabs.update(tab.id, { url: message.payload.url });
+          // If no valid web tab exists, create a new one
+          if (!tab || isRestrictedUrl(tab.url)) {
+            tab = await chrome.tabs.create({ url: message.payload.url, active: true });
+          } else {
+            await chrome.tabs.update(tab.id!, { url: message.payload.url });
+          }
+
+          if (!tab?.id) throw new Error('Failed to create or navigate target tab.');
+          const targetTabId = tab.id;
 
           // Wait for load to complete if requested
           if (message.payload.waitUntil !== 'none') {
             await new Promise<void>((resolve) => {
               const listener = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-                if (tabId === tab.id && changeInfo.status === 'complete') {
+                if (tabId === targetTabId && changeInfo.status === 'complete') {
                   chrome.tabs.onUpdated.removeListener(listener);
                   resolve();
                 }
@@ -99,8 +194,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           // Capture screenshot of the loaded website
           let dataUrl: string | undefined;
           try {
-            const updatedTab = await chrome.tabs.get(tab.id).catch(() => tab);
-            const winId = updatedTab?.windowId || tab.windowId;
+            const updatedTab = await chrome.tabs.get(targetTabId).catch(() => tab);
+            const winId = updatedTab?.windowId || tab?.windowId;
             if (winId) {
               dataUrl = await chrome.tabs.captureVisibleTab(winId, {
                 format: 'jpeg',
@@ -111,11 +206,17 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
             console.warn('Could not capture screenshot after navigation:', err);
           }
 
-          return { success: true, tabId: tab.id, url: message.payload.url, dataUrl, screenshotUrl: dataUrl };
+          return { success: true, tabId: targetTabId, url: message.payload.url, dataUrl, screenshotUrl: dataUrl };
         }
 
         case 'CAPTURE_SCREENSHOT': {
-          const tab = message.payload?.tabId ? await chrome.tabs.get(message.payload.tabId) : await getActiveTab();
+          let tab: chrome.tabs.Tab | null = null;
+          if (message.payload?.tabId) {
+            tab = await chrome.tabs.get(message.payload.tabId).catch(() => null);
+          }
+          if (!tab || isRestrictedUrl(tab.url)) {
+            tab = await getTargetTab();
+          }
           if (!tab?.windowId) throw new Error('No active window for screenshot.');
 
           const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
@@ -126,38 +227,98 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           return { success: true, dataUrl };
         }
 
-        case 'START_ELEMENT_PICKER':
+        case 'START_ELEMENT_PICKER': {
+          let tabId = message.payload?.tabId;
+          const targetTab = await getTargetTab(tabId);
+
+          if (!targetTab || !targetTab.id) {
+            return {
+              success: false,
+              error: 'No open webpage tab found. Please open a website (e.g. https://google.com) in another tab before using Select Element.',
+            };
+          }
+
+          tabId = targetTab.id;
+
+          // Switch to target tab so the user can see the webpage and click an element
+          await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+          if (targetTab.windowId) {
+            await chrome.windows.update(targetTab.windowId, { focused: true }).catch(() => {});
+          }
+
+          const injected = await ensureContentScriptInjected(tabId);
+          if (!injected) {
+            return {
+              success: false,
+              error: `Could not inject Element Picker into "${targetTab.title || targetTab.url}". Internal browser pages cannot be inspected.`,
+            };
+          }
+
+          try {
+            const res = await chrome.tabs.sendMessage(tabId, message);
+            return res || { success: true, tabId };
+          } catch (err: any) {
+            await ensureContentScriptInjected(tabId, true);
+            const res = await chrome.tabs.sendMessage(tabId, message);
+            return res || { success: true, tabId };
+          }
+        }
+
         case 'STOP_ELEMENT_PICKER':
         case 'START_RECORDING':
         case 'STOP_RECORDING':
         case 'EXECUTE_DOM_ACTION': {
-          // Route message to content script in the target tab
+          // Route message to content script in the genuine target tab
           let tabId = message.payload?.tabId;
-          if (!tabId) {
-            const activeTab = await getActiveTab();
-            tabId = activeTab?.id;
+          const targetTab = await getTargetTab(tabId);
+
+          if (!targetTab || !targetTab.id) {
+            throw new Error(
+              'No active webpage tab found. Please navigate to a website first using a "Navigate" node, or open a webpage in another tab.'
+            );
           }
 
-          if (!tabId) {
-            throw new Error('No active tab available to communicate with.');
+          tabId = targetTab.id;
+
+          const injected = await ensureContentScriptInjected(tabId);
+          if (!injected) {
+            throw new Error(
+              `Cannot access tab "${targetTab.title || targetTab.url}". Content scripts cannot run on internal browser pages (chrome://, about:blank, extension pages).`
+            );
           }
 
-          await ensureContentScriptInjected(tabId);
           try {
             const res = await chrome.tabs.sendMessage(tabId, message);
             // If outdated content script threw Unsupported DOM action, force re-inject latest content script and retry once
             if (res && !res.success && typeof res.error === 'string' && res.error.includes('Unsupported DOM action')) {
               console.warn('[AutoFlow] Tab has outdated content script, re-injecting latest version and retrying...', res.error);
               await ensureContentScriptInjected(tabId, true);
-              return await chrome.tabs.sendMessage(tabId, message);
+              const retryRes = await chrome.tabs.sendMessage(tabId, message);
+              return { ...retryRes, tabId };
             }
-            return res;
+            return { ...res, tabId };
           } catch (err: any) {
             // Connection to tab content script failed or port closed; re-inject and retry
             console.warn('[AutoFlow] Content script connection error, re-injecting...', err);
             await ensureContentScriptInjected(tabId, true);
-            return await chrome.tabs.sendMessage(tabId, message);
+            const retryRes = await chrome.tabs.sendMessage(tabId, message);
+            return { ...retryRes, tabId };
           }
+        }
+
+        case 'ELEMENT_PICKED':
+        case 'PICKER_CANCELLED': {
+          // Return focus to the editor tab if known
+          if (lastEditorTabId) {
+            await chrome.tabs.update(lastEditorTabId, { active: true }).catch(() => {});
+            const editorTab = await chrome.tabs.get(lastEditorTabId).catch(() => null);
+            if (editorTab?.windowId) {
+              await chrome.windows.update(editorTab.windowId, { focused: true }).catch(() => {});
+            }
+          }
+          // Broadcast to all extension views
+          chrome.runtime.sendMessage(message).catch(() => {});
+          return { success: true };
         }
 
         default:

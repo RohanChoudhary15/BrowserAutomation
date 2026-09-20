@@ -35,6 +35,10 @@ async function sendDomAction(
     if (!response || response.error) {
       throw new Error(response?.error || `Failed to execute DOM action: ${action}`);
     }
+
+    if (response.tabId && !ctx.currentTabId) {
+      ctx.currentTabId = response.tabId;
+    }
     return response;
   } else {
     console.warn(`[AutoFlow Mock] Simulating DOM action: ${action}`, params);
@@ -79,6 +83,9 @@ export const executeNavigate: NodeExecutor = async (node, ctx) => {
     });
     if (!response?.success) throw new Error(response?.error || 'Navigation failed.');
     ctx.currentUrl = url;
+    if (response.tabId) {
+      ctx.currentTabId = response.tabId;
+    }
 
     screenshotUrl = response.dataUrl || response.screenshotUrl;
     if (!screenshotUrl) {
