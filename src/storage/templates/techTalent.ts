@@ -1,4 +1,4 @@
-﻿import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { autoLayoutNodes } from '../../utils/autoLayout';
 
 const techRawNodes: WorkflowNode[] = [
@@ -7,11 +7,11 @@ const techRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Open Tech Community',
+      label: 'Open GitHub Trending Radar',
       category: 'browser',
       type: 'navigate',
       properties: {
-        url: 'https://news.ycombinator.com',
+        url: 'https://github.com/trending',
         waitUntil: 'load',
         timeout: 20000,
       },
@@ -22,7 +22,7 @@ const techRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Smart Scroll Stories',
+      label: 'Smart Scroll Repositories',
       category: 'interaction',
       type: 'smart_scroll',
       properties: {
@@ -38,11 +38,11 @@ const techRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Extract Front Page Titles',
+      label: 'Extract Trending Repositories',
       category: 'extraction',
       type: 'extract_multiple',
       properties: {
-        selector: '.titleline > a',
+        selector: 'article.Box-row h2 a',
         outputVariable: 'techHeadlines',
         timeout: 10000,
       },
@@ -53,11 +53,11 @@ const techRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Extract Upvote Points',
+      label: 'Extract Repository Stars',
       category: 'extraction',
       type: 'extract_multiple',
       properties: {
-        selector: '.subtext .score',
+        selector: 'article.Box-row .f6 a:first-of-type',
         outputVariable: 'headlinePoints',
         timeout: 10000,
       },
@@ -76,11 +76,39 @@ const techRawNodes: WorkflowNode[] = [
 const scores = variables.headlinePoints || [];
 return titles.map((t, idx) => ({
   rank: idx + 1,
-  headline: String(t),
+  headline: String(t).replace(/\\s+/g, ' ').trim(),
   upvotes: parseInt(String(scores[idx] || '0').replace(/\\D/g, ''), 10) || 0,
-  hasAiTag: /ai|llm|gpt|agent|model|vision|code/i.test(String(t))
+  hasAiTag: /ai|llm|gpt|agent|model|vision|code|python|rust/i.test(String(t))
 }));`,
         outputVariable: 'curatedTechStories',
+      },
+    },
+  },
+  {
+    id: 'tech_cond_active',
+    type: 'conditionNode',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Signals Found & Non-Empty (AND)',
+      category: 'logic',
+      type: 'condition',
+      properties: {
+        gate: 'AND',
+        conditions: [
+          {
+            leftValue: '{{curatedTechStories}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+          {
+            leftValue: '{{techHeadlines}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+        ],
+        leftValue: '{{curatedTechStories}}',
+        operator: 'is_not_empty',
+        rightValue: '',
       },
     },
   },
@@ -170,11 +198,12 @@ const techEdges: WorkflowEdge[] = [
   { id: 'e_tech_2', source: 'tech_scroll', target: 'tech_ext_titles', animated: true },
   { id: 'e_tech_3', source: 'tech_ext_titles', target: 'tech_ext_scores', animated: true },
   { id: 'e_tech_4', source: 'tech_ext_scores', target: 'tech_js_filter', animated: true },
-  { id: 'e_tech_5', source: 'tech_js_filter', target: 'tech_ai_xlsx', animated: true },
-  { id: 'e_tech_6', source: 'tech_ai_xlsx', target: 'tech_ai_pdf', animated: true },
-  { id: 'e_tech_7', source: 'tech_ai_pdf', target: 'tech_snap', animated: true },
-  { id: 'e_tech_8', source: 'tech_snap', target: 'tech_discord', animated: true },
-  { id: 'e_tech_9', source: 'tech_discord', target: 'tech_notify', animated: true },
+  { id: 'e_tech_5', source: 'tech_js_filter', target: 'tech_cond_active', animated: true },
+  { id: 'e_tech_6', source: 'tech_cond_active', target: 'tech_ai_xlsx', animated: true },
+  { id: 'e_tech_7', source: 'tech_ai_xlsx', target: 'tech_ai_pdf', animated: true },
+  { id: 'e_tech_8', source: 'tech_ai_pdf', target: 'tech_snap', animated: true },
+  { id: 'e_tech_9', source: 'tech_snap', target: 'tech_discord', animated: true },
+  { id: 'e_tech_10', source: 'tech_discord', target: 'tech_notify', animated: true },
 ];
 
 export const TECH_TALENT_ANALYZER_WORKFLOW: Workflow = {

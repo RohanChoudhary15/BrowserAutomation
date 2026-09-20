@@ -1,4 +1,4 @@
-﻿import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { autoLayoutNodes } from '../../utils/autoLayout';
 
 const reRawNodes: WorkflowNode[] = [
@@ -7,11 +7,11 @@ const reRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Open Property Listings',
+      label: 'Open Commercial Real Estate Index',
       category: 'browser',
       type: 'navigate',
       properties: {
-        url: 'https://quotes.toscrape.com',
+        url: 'https://en.wikipedia.org/wiki/List_of_most_expensive_buildings',
         waitUntil: 'load',
         timeout: 20000,
       },
@@ -22,11 +22,11 @@ const reRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Wait For Listings Grid',
+      label: 'Wait For Building Table',
       category: 'wait',
       type: 'wait_for_element',
       properties: {
-        selector: '.quote',
+        selector: 'table.wikitable',
         timeout: 10000,
         visible: true,
       },
@@ -37,11 +37,11 @@ const reRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Extract Property Addresses',
+      label: 'Extract Commercial Assets',
       category: 'extraction',
       type: 'extract_multiple',
       properties: {
-        selector: '.quote .text',
+        selector: 'table.wikitable tbody tr td:first-child',
         outputVariable: 'rawListingAddresses',
         timeout: 10000,
       },
@@ -52,11 +52,11 @@ const reRawNodes: WorkflowNode[] = [
     type: 'customNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Extract Listing Brokers',
+      label: 'Extract City / Location',
       category: 'extraction',
       type: 'extract_multiple',
       properties: {
-        selector: '.quote .author',
+        selector: 'table.wikitable tbody tr td:nth-child(2)',
         outputVariable: 'listingBrokers',
         timeout: 10000,
       },
@@ -83,8 +83,9 @@ return addresses.slice(0, 5).map((addr, i) => {
   const capRate = parseFloat(((noi / purchasePrice) * 100).toFixed(2));
   return {
     propertyId: 'ASSET-' + (200 + i),
-    address: 'Suite ' + (i + 1) + ', ' + String(addr).slice(1, 30) + ' Blvd',
-    broker: String(brokers[i] || 'Commercial Realty'),
+    address: String(addr || 'Prime Asset ' + (i+1)).replace(/\\[.*\\]/g, '').trim(),
+    city: String(brokers[i] || 'Commercial Hub').replace(/\\[.*\\]/g, '').trim(),
+    broker: 'Prime Properties Inc.',
     purchasePrice,
     monthlyRent,
     annualGross,
@@ -116,10 +117,23 @@ return addresses.slice(0, 5).map((addr, i) => {
     type: 'conditionNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Cap Rate > 5.0% Hurdle',
+      label: 'Cap Rate > 5% & Active Deals (AND)',
       category: 'logic',
       type: 'condition',
       properties: {
+        gate: 'AND',
+        conditions: [
+          {
+            leftValue: '{{topCapRate}}',
+            operator: 'greater_than',
+            rightValue: '5.0',
+          },
+          {
+            leftValue: '{{topCapRate}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+        ],
         leftValue: '{{topCapRate}}',
         operator: 'greater_than',
         rightValue: '5.0',

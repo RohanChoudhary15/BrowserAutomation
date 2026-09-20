@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AutoFlow Execution Sandbox</title>
+</head>
+<body>
+  <script>
+    // Manifest V3 Sandboxed Execution Environment
+    // This sandbox page runs in a unique, isolated origin without access to Chrome extension APIs,
+    // which allows 'unsafe-eval' under relaxed sandboxed Content Security Policy.
+    window.addEventListener('message', async (event) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object' || !data.id) return;
+
+      const { id, code, variables } = data;
+
+      try {
+        // Evaluate user function safely with access to provided workflow variables
+        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+        const fn = new AsyncFunction('variables', 'context', `
+          try {
+            ${code}
+          } catch (execErr) {
+            throw execErr;
+          }
+        `);
+
+        const result = await fn(variables || {}, {});
+        
+        event.source.postMessage(
+          { id, success: true, result },
+          event.origin || '*'
+        );
+      } catch (err) {
+        event.source.postMessage(
+          {
+            id,
+            success: false,
+            error: err && err.message ? err.message : String(err)
+          },
+          event.origin || '*'
+        );
+      }
+    });
+  </script>
+</body>
+</html>

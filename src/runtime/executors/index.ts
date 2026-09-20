@@ -1,11 +1,12 @@
 import { ExecutionContext, NodeResult } from '../../types/execution';
 import { WorkflowNode } from '../../types/workflow';
 import { interpolateVariables } from '../interpolator';
-import { evaluateCondition } from '../evaluator';
+import { evaluateCondition, evaluateCompoundCondition, LogicalGate } from '../evaluator';
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
 import { formatAiAgentDocument, AiAgentOutputFormat } from '../../utils/documentExporter';
+import { runInSandbox, safeEvaluateMath } from '../sandboxEvaluator';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -448,16 +449,28 @@ export const executeExtractTable: NodeExecutor = async (node, ctx) => {
 // ----------------- LOGIC EXECUTORS -----------------
 
 export const executeCondition: NodeExecutor = async (node, ctx) => {
-  const leftValue = node.data.properties.leftValue;
-  const operator = node.data.properties.operator || 'equals';
-  const rightValue = node.data.properties.rightValue;
+  const conditions = node.data.properties.conditions;
+  const logicalGate = (node.data.properties.logicalGate || 'AND') as LogicalGate;
 
-  const result = evaluateCondition({ leftValue, operator, rightValue }, ctx.variables);
+  let result = false;
+  let summary = '';
+
+  if (Array.isArray(conditions) && conditions.length > 0) {
+    result = evaluateCompoundCondition(conditions, logicalGate, ctx.variables);
+    summary = `[${logicalGate}] ${conditions.length} rule${conditions.length > 1 ? 's' : ''}`;
+  } else {
+    const leftValue = node.data.properties.leftValue;
+    const operator = node.data.properties.operator || 'equals';
+    const rightValue = node.data.properties.rightValue;
+    result = evaluateCondition({ leftValue, operator, rightValue }, ctx.variables);
+    summary = `${leftValue} ${operator} ${rightValue}`;
+  }
+
   const branch = result ? 'true' : 'false';
 
   ctx.log({
     level: 'info',
-    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} (${leftValue} ${operator} ${rightValue})`,
+    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} (${summary})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -684,11 +697,9 @@ export const executeJavaScript: NodeExecutor = async (node, ctx) => {
   const code = interpolateVariables(rawCode, ctx.variables);
   const outputVariable = node.data.properties.outputVariable || 'scriptResult';
 
-  ctx.log({ level: 'info', message: 'Executing custom JavaScript in page context', nodeId: node.id, nodeName: node.data.label });
+  ctx.log({ level: 'info', message: 'Executing custom JavaScript in safe sandbox', nodeId: node.id, nodeName: node.data.label });
 
-  // Safe execution with wrapped AsyncFunction
-  const func = new Function('variables', 'context', `return (async () => { ${code} })();`);
-  const result = await func(ctx.variables, ctx);
+  const result = await runInSandbox(code, ctx.variables);
 
   return {
     success: true,
@@ -1741,8 +1752,7 @@ export const executeMathCalculate: NodeExecutor = async (node, ctx) => {
       const formulaRaw = String(node.data.properties.formula || '');
       const formula = interpolateVariables(formulaRaw, ctx.variables);
       try {
-        const mathFunc = new Function(`return (${formula});`);
-        result = Number(mathFunc()) || 0;
+        result = safeEvaluateMath(formula, ctx.variables);
       } catch (e) {
         result = 0;
       }

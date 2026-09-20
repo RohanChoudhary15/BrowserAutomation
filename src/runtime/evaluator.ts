@@ -15,10 +15,17 @@ export type ConditionOperator =
   | 'is_not_empty'
   | 'regex_matches';
 
+export type LogicalGate = 'AND' | 'OR' | 'NAND' | 'NOR';
+
 export interface ConditionRule {
   leftValue: any;
   operator: ConditionOperator;
   rightValue?: any;
+}
+
+export interface ConditionItem extends ConditionRule {
+  id?: string;
+  gate?: LogicalGate;
 }
 
 /**
@@ -120,5 +127,39 @@ export function evaluateCondition(
 
     default:
       return false;
+  }
+}
+
+/**
+ * Evaluates multiple condition rules combined with AND, OR, NAND, or NOR logic
+ */
+export function evaluateCompoundCondition(
+  conditions: ConditionItem[],
+  logicalGate: LogicalGate = 'AND',
+  variables: Record<string, any> = {}
+): boolean {
+  if (!conditions || conditions.length === 0) return true;
+
+  const results = conditions.map((rule) => evaluateCondition(rule, variables));
+
+  switch (logicalGate) {
+    case 'AND':
+      // True only if ALL rules are true
+      return results.every(Boolean);
+
+    case 'OR':
+      // True if AT LEAST ONE rule is true
+      return results.some(Boolean);
+
+    case 'NAND':
+      // Negated AND: True unless ALL are true (!all)
+      return !results.every(Boolean);
+
+    case 'NOR':
+      // Negated OR: True ONLY if ALL are false (!any)
+      return !results.some(Boolean);
+
+    default:
+      return results.every(Boolean);
   }
 }

@@ -40,6 +40,9 @@
       "run_at": "document_idle"
     }
   ],
+  "sandbox": {
+    "pages": ["sandbox.html"]
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

@@ -17,10 +17,33 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
   const runtime = data.runtimeState;
   const status = runtime?.status || (data.disabled ? 'disabled' : 'idle');
 
-  const left = data.properties?.leftValue || 'val';
-  const op = data.properties?.operator || 'equals';
-  const right = data.properties?.rightValue || '';
-  const summary = `${left} ${op} ${right}`.trim();
+  const conditions = data.properties?.conditions;
+  const logicalGate = String(data.properties?.logicalGate || 'AND').toUpperCase();
+
+  let gateBadgeColor = 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+  if (logicalGate === 'OR') {
+    gateBadgeColor = 'bg-purple-500/20 text-purple-300 border-purple-500/40';
+  } else if (logicalGate === 'NAND') {
+    gateBadgeColor = 'bg-rose-500/20 text-rose-300 border-rose-500/40';
+  } else if (logicalGate === 'NOR') {
+    gateBadgeColor = 'bg-amber-500/20 text-amber-300 border-amber-500/40';
+  }
+
+  let summary = '';
+  if (Array.isArray(conditions) && conditions.length > 0) {
+    if (conditions.length === 1) {
+      const c = conditions[0];
+      summary = `${c.leftValue || 'val'} ${c.operator || '=='} ${c.rightValue || ''}`.trim();
+    } else {
+      const first = conditions[0];
+      summary = `${first.leftValue || 'val'} ${first.operator} ... (${conditions.length} rules)`;
+    }
+  } else {
+    const left = data.properties?.leftValue || 'val';
+    const op = data.properties?.operator || 'equals';
+    const right = data.properties?.rightValue || '';
+    summary = `${left} ${op} ${right}`.trim();
+  }
 
   let borderClass = 'border-[#232a3b] hover:border-purple-500/60';
   let glowClass = '';
@@ -39,7 +62,7 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
 
   return (
     <div
-      className={`group relative min-w-[220px] max-w-[270px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
+      className={`group relative min-w-[220px] max-w-[280px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
     >
@@ -52,11 +75,14 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
 
       {/* Header */}
       <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 overflow-hidden">
+        <div className="flex items-center gap-1.5 overflow-hidden">
           <div className="w-6 h-6 rounded-lg bg-purple-600 flex items-center justify-center text-white shrink-0 shadow-sm">
             <Icon name="GitBranch" className="w-3.5 h-3.5" />
           </div>
           <div className="truncate font-semibold text-gray-100">{data.label || 'Condition'}</div>
+          <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border font-bold shrink-0 ${gateBadgeColor}`}>
+            {logicalGate}
+          </span>
         </div>
 
         <div className="shrink-0 flex items-center gap-1">
@@ -89,8 +115,11 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
       </div>
 
       {/* Expression Summary */}
-      <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3">
-        {summary || 'Configure condition...'}
+      <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3 flex items-center justify-between gap-1">
+        <span className="truncate">{summary || 'Configure condition...'}</span>
+        {Array.isArray(conditions) && conditions.length > 1 && (
+          <span className="text-[9px] text-gray-500 shrink-0 font-sans">({conditions.length})</span>
+        )}
       </div>
 
       {/* Branch Labels and Handles */}

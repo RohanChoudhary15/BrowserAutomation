@@ -26,6 +26,7 @@ async function runBuild() {
           index: path.resolve(rootDir, 'index.html'),
           sidepanel: path.resolve(rootDir, 'sidepanel.html'),
           popup: path.resolve(rootDir, 'popup.html'),
+          sandbox: path.resolve(rootDir, 'sandbox.html'),
         },
       },
     },
@@ -95,8 +96,9 @@ async function runBuild() {
   });
 
   // 4. Copy Manifest and Icons
-  console.log('📋 Copying manifest.json and icons...');
+  console.log('📋 Copying manifest.json, sandbox.html and icons...');
   fs.copyFileSync(path.resolve(rootDir, 'manifest.json'), path.resolve(distDir, 'manifest.json'));
+  fs.copyFileSync(path.resolve(rootDir, 'sandbox.html'), path.resolve(distDir, 'sandbox.html'));
 
   const iconsSrcDir = path.resolve(rootDir, 'public/icons');
   const iconsDistDir = path.resolve(distDir, 'icons');

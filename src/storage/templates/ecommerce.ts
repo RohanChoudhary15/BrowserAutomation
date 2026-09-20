@@ -1,4 +1,4 @@
-﻿import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { autoLayoutNodes } from '../../utils/autoLayout';
 
 const ecommerceRawNodes: WorkflowNode[] = [
@@ -157,10 +157,23 @@ return titles.map((title, i) => {
     type: 'conditionNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Verify Products Found',
+      label: 'Products > 0 & Non-Empty (AND)',
       category: 'logic',
       type: 'condition',
       properties: {
+        gate: 'AND',
+        conditions: [
+          {
+            leftValue: '{{itemCount}}',
+            operator: 'greater_than',
+            rightValue: '0',
+          },
+          {
+            leftValue: '{{catalogDataset}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+        ],
         leftValue: '{{itemCount}}',
         operator: 'greater_than',
         rightValue: '0',

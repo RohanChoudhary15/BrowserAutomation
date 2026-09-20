@@ -112,6 +112,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [savedSlackCreds, setSavedSlackCreds] = useState<BotCredential[]>([]);
   const [isCredModalOpen, setIsCredModalOpen] = useState(false);
   const [credModalPlatform, setCredModalPlatform] = useState<MessagingPlatform>('telegram');
+  const [copiedNodeError, setCopiedNodeError] = useState(false);
 
   const loadBotCredentials = async () => {
     try {
@@ -1386,55 +1387,229 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Condition Node Rules */}
-        {selectedNode.data.type === 'condition' && (
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Left Value / Variable</label>
-              <input
-                type="text"
-                value={props.leftValue || ''}
-                onChange={(e) => handlePropChange('leftValue', e.target.value)}
-                placeholder="&#123;&#123;price&#125;&#125; or static value"
-                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-              />
-            </div>
+        {selectedNode.data.type === 'condition' && (() => {
+          const logicalGate = (props.logicalGate || 'AND').toUpperCase();
+          const conditions: Array<{ id: string; leftValue: string; operator: string; rightValue: string }> =
+            Array.isArray(props.conditions) && props.conditions.length > 0
+              ? props.conditions
+              : [
+                  {
+                    id: 'rule_1',
+                    leftValue: props.leftValue || '',
+                    operator: props.operator || 'equals',
+                    rightValue: props.rightValue || '',
+                  },
+                ];
 
-            <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Operator</label>
-              <select
-                value={props.operator || 'equals'}
-                onChange={(e) => handlePropChange('operator', e.target.value)}
-                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-              >
-                <option value="equals">equals</option>
-                <option value="not_equals">not equals</option>
-                <option value="contains">contains</option>
-                <option value="does_not_contain">does not contain</option>
-                <option value="greater_than">greater than (&gt;)</option>
-                <option value="less_than">less than (&lt;)</option>
-                <option value="greater_equal">greater or equal (&gt;=)</option>
-                <option value="less_equal">less or equal (&lt;=)</option>
-                <option value="exists">exists (not null/empty)</option>
-                <option value="does_not_exist">does not exist</option>
-                <option value="is_empty">is empty</option>
-                <option value="is_not_empty">is not empty</option>
-              </select>
-            </div>
+          const updateConditions = (newConditions: typeof conditions) => {
+            handlePropChange('conditions', newConditions);
+            if (newConditions[0]) {
+              handlePropChange('leftValue', newConditions[0].leftValue);
+              handlePropChange('operator', newConditions[0].operator);
+              handlePropChange('rightValue', newConditions[0].rightValue);
+            }
+          };
 
-            {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(props.operator) && (
+          const handleRuleChange = (index: number, field: string, value: string) => {
+            const updated = [...conditions];
+            updated[index] = { ...updated[index], [field]: value };
+            updateConditions(updated);
+          };
+
+          const handleAddRule = () => {
+            const updated = [
+              ...conditions,
+              {
+                id: `rule_${Date.now()}_${conditions.length + 1}`,
+                leftValue: '',
+                operator: 'equals',
+                rightValue: '',
+              },
+            ];
+            updateConditions(updated);
+          };
+
+          const handleRemoveRule = (index: number) => {
+            if (conditions.length <= 1) return;
+            const updated = conditions.filter((_, idx) => idx !== index);
+            updateConditions(updated);
+          };
+
+          const gateColors: Record<string, { active: string; border: string; desc: string }> = {
+            AND: {
+              active: 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60 shadow-sm',
+              border: 'border-emerald-500/30',
+              desc: 'All conditions must evaluate to TRUE.',
+            },
+            OR: {
+              active: 'bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm',
+              border: 'border-purple-500/30',
+              desc: 'At least ONE condition must evaluate to TRUE.',
+            },
+            NAND: {
+              active: 'bg-rose-600/30 text-rose-300 border-rose-500/60 shadow-sm',
+              border: 'border-rose-500/30',
+              desc: 'Negated AND: Evaluates to TRUE unless ALL conditions are met.',
+            },
+            NOR: {
+              active: 'bg-amber-600/30 text-amber-300 border-amber-500/60 shadow-sm',
+              border: 'border-amber-500/30',
+              desc: 'Negated OR: Evaluates to TRUE only when ALL conditions are false.',
+            },
+          };
+
+          return (
+            <div className="space-y-3.5">
+              {/* Logic Gate Segmented Selector */}
               <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Right Value</label>
-                <input
-                  type="text"
-                  value={props.rightValue || ''}
-                  onChange={(e) => handlePropChange('rightValue', e.target.value)}
-                  placeholder="100, Example, true..."
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider">
+                    Logic Gate Mode
+                  </label>
+                  <span className="text-[10px] text-gray-500 font-mono">
+                    {conditions.length} {conditions.length === 1 ? 'Rule' : 'Rules'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
+                  {(['AND', 'OR', 'NAND', 'NOR'] as const).map((gate) => {
+                    const isSelected = logicalGate === gate;
+                    return (
+                      <button
+                        key={gate}
+                        type="button"
+                        onClick={() => handlePropChange('logicalGate', gate)}
+                        className={`py-1.5 text-center rounded-lg text-xs font-mono font-bold transition-all border ${
+                          isSelected
+                            ? gateColors[gate].active
+                            : 'text-gray-400 border-transparent hover:text-gray-200 hover:bg-[#151a26]'
+                        }`}
+                      >
+                        {gate}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p className="mt-1.5 text-[10px] text-gray-400 bg-[#121622] px-2.5 py-1.5 rounded-lg border border-[#1a202c]">
+                  <span className="text-gray-200 font-semibold">{logicalGate}:</span> {gateColors[logicalGate]?.desc}
+                </p>
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Condition Rules List */}
+              <div className="space-y-2.5">
+                <label className="text-[11px] font-semibold text-gray-300 block">Condition Rules</label>
+
+                {conditions.map((rule, idx) => (
+                  <div key={rule.id || idx}>
+                    <div className="bg-[#0e1118] p-2.5 rounded-xl border border-[#1c2230] space-y-2 relative group">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#161a24] text-indigo-300 border border-indigo-500/20">
+                          #{idx + 1}
+                        </span>
+
+                        {conditions.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveRule(idx)}
+                            className="text-gray-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/20 transition-colors"
+                            title="Remove condition rule"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Left Value */}
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-0.5">Left Value / Variable</label>
+                        <input
+                          type="text"
+                          value={rule.leftValue || ''}
+                          onChange={(e) => handleRuleChange(idx, 'leftValue', e.target.value)}
+                          placeholder="&#123;&#123;price&#125;&#125;, &#123;&#123;status&#125;&#125;, or value"
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                        />
+                      </div>
+
+                      {/* Operator */}
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-0.5">Operator</label>
+                        <select
+                          value={rule.operator || 'equals'}
+                          onChange={(e) => handleRuleChange(idx, 'operator', e.target.value)}
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                        >
+                          <option value="equals">equals (==)</option>
+                          <option value="not_equals">not equals (!=)</option>
+                          <option value="contains">contains</option>
+                          <option value="does_not_contain">does not contain</option>
+                          <option value="greater_than">greater than (&gt;)</option>
+                          <option value="less_than">less than (&lt;)</option>
+                          <option value="greater_equal">greater or equal (&gt;=)</option>
+                          <option value="less_equal">less or equal (&lt;=)</option>
+                          <option value="exists">exists (not null/empty)</option>
+                          <option value="does_not_exist">does not exist</option>
+                          <option value="is_empty">is empty</option>
+                          <option value="is_not_empty">is not empty</option>
+                          <option value="regex_matches">regex matches</option>
+                        </select>
+                      </div>
+
+                      {/* Right Value (if non-unary) */}
+                      {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(rule.operator) && (
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-0.5">Right Value</label>
+                          <input
+                            type="text"
+                            value={rule.rightValue || ''}
+                            onChange={(e) => handleRuleChange(idx, 'rightValue', e.target.value)}
+                            placeholder="100, true, in stock..."
+                            className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Connector Badge between items */}
+                    {idx < conditions.length - 1 && (
+                      <div className="flex items-center justify-center my-1.5">
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#151924] text-gray-300 border border-[#222a3d] font-bold">
+                          — {logicalGate} —
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Add Rule Button */}
+                <button
+                  type="button"
+                  onClick={handleAddRule}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 bg-[#121622] hover:bg-[#192030] text-indigo-300 rounded-xl border border-indigo-500/30 text-xs font-semibold transition-all hover:border-indigo-400"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Condition Rule</span>
+                </button>
+              </div>
+
+              {/* Live Boolean Expression Preview */}
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Live Expression Formula</label>
+                <div className="bg-[#0b0e14] p-2 rounded-lg border border-[#1c2230] font-mono text-[11px] text-gray-300 overflow-x-auto">
+                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? `NOT ( ` : ''}
+                  {conditions.map((c, i) => (
+                    <span key={i}>
+                      {i > 0 && <span className="text-purple-400 font-bold"> {logicalGate === 'NAND' ? 'AND' : (logicalGate === 'NOR' ? 'OR' : logicalGate)} </span>}
+                      <span className="text-indigo-300">({c.leftValue || 'val'} {c.operator || '=='}{!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(c.operator) ? ` ${c.rightValue || "''"}` : ''})</span>
+                    </span>
+                  ))}
+                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? ` )` : ''}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Loop Node */}
         {selectedNode.data.type === 'loop' && (
@@ -2423,7 +2598,21 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
             {runtimeState.error && (
               <div className="mt-1">
-                <span className="text-[10px] text-rose-400 block mb-0.5">Error:</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-rose-400 font-semibold">Error:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(runtimeState.error || '');
+                      setCopiedNodeError(true);
+                      setTimeout(() => setCopiedNodeError(false), 2000);
+                    }}
+                    className="flex items-center gap-1 text-[10px] text-rose-300 hover:text-rose-100 bg-rose-950/40 hover:bg-rose-900/50 px-1.5 py-0.5 rounded border border-rose-800/40 transition-colors"
+                  >
+                    {copiedNodeError ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedNodeError ? 'Copied!' : 'Copy Error'}</span>
+                  </button>
+                </div>
                 <p className="bg-[#161a24] text-rose-400 p-2 rounded text-[10px] font-mono">
                   {runtimeState.error}
                 </p>

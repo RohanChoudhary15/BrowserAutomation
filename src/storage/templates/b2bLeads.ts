@@ -1,4 +1,4 @@
-﻿import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { autoLayoutNodes } from '../../utils/autoLayout';
 
 const b2bRawNodes: WorkflowNode[] = [
@@ -128,10 +128,23 @@ return listings.slice(0, 15).map((text, i) => {
     type: 'conditionNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Validate Export Ready',
+      label: 'Export Ready & Leads Present (AND)',
       category: 'logic',
       type: 'condition',
       properties: {
+        gate: 'AND',
+        conditions: [
+          {
+            leftValue: '{{leadsCsv_filename}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+          {
+            leftValue: '{{prospectsList}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+        ],
         leftValue: '{{leadsCsv_filename}}',
         operator: 'is_not_empty',
         rightValue: '',

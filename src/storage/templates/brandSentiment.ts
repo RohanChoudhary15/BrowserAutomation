@@ -1,4 +1,4 @@
-﻿import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { autoLayoutNodes } from '../../utils/autoLayout';
 
 const crisisRawNodes: WorkflowNode[] = [
@@ -104,10 +104,23 @@ return posts.slice(0, 8).map((p, i) => ({
     type: 'conditionNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'Threat Audit Present',
+      label: 'Threat Audit or Batch (OR)',
       category: 'logic',
       type: 'condition',
       properties: {
+        gate: 'OR',
+        conditions: [
+          {
+            leftValue: '{{sentimentAudit}}',
+            operator: 'exists',
+            rightValue: '',
+          },
+          {
+            leftValue: '{{feedbackBatch}}',
+            operator: 'is_not_empty',
+            rightValue: '',
+          },
+        ],
         leftValue: '{{sentimentAudit}}',
         operator: 'exists',
         rightValue: '',

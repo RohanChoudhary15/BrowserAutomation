@@ -13,6 +13,8 @@ import {
   Clock,
   Info,
   ExternalLink,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface ExecutionPanelProps {
@@ -33,9 +35,22 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
   onSelectNode,
 }) => {
   const [activeTab, setActiveTab] = useState<'logs' | 'variables' | 'output'>('logs');
+  const [copiedErrors, setCopiedErrors] = useState(false);
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
 
   // Filter logs with screenshot preview
   const screenshotLogs = logs.filter((l) => l.screenshotUrl);
+  const errorLogs = logs.filter((l) => l.level === 'error');
+
+  const copyAllErrors = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const errorText = errorLogs
+      .map((l) => `[${formatTimestamp(l.timestamp)}] [${l.nodeName || 'Unknown Node'}]: ${l.message}`)
+      .join('\n');
+    navigator.clipboard.writeText(errorText);
+    setCopiedErrors(true);
+    setTimeout(() => setCopiedErrors(false), 2000);
+  };
 
   return (
     <div className="border-t border-[#1c2230] bg-[#0c0e14] flex flex-col select-none z-20">
@@ -93,6 +108,16 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
         {!isCollapsed && (
           <div className="flex items-center gap-2">
+            {errorLogs.length > 0 && (
+              <button
+                onClick={copyAllErrors}
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/40 border border-rose-800/50 text-rose-300 hover:text-rose-100 hover:bg-rose-900/60 transition-colors text-[11px] font-sans"
+                title="Copy all error messages"
+              >
+                {copiedErrors ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedErrors ? 'Copied' : `Copy Error (${errorLogs.length})`}</span>
+              </button>
+            )}
             <button
               onClick={onClearLogs}
               className="p-1 rounded text-gray-500 hover:text-white hover:bg-[#1c2230] transition-colors"
@@ -139,6 +164,25 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                         <span className="text-[10px] text-gray-500 font-mono shrink-0">
                           {formatDuration(log.durationMs)}
                         </span>
+                      )}
+                      {log.level === 'error' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const textToCopy = `[${log.nodeName || 'Error'}]: ${log.message}`;
+                            navigator.clipboard.writeText(textToCopy);
+                            setCopiedLogId(log.id);
+                            setTimeout(() => setCopiedLogId(null), 2000);
+                          }}
+                          className="p-1 rounded text-rose-400 hover:text-rose-100 hover:bg-rose-900/40 transition-colors shrink-0"
+                          title="Copy error message"
+                        >
+                          {copiedLogId === log.id ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
                       )}
                     </div>
                   );
