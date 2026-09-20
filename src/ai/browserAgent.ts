@@ -136,7 +136,8 @@ CRITICAL RULES:
    - If you encounter a CAPTCHA, Cloudflare verification, 2FA/SMS code prompt, login credentials gate, unexpected blocker, or are unsure which option the user intends, do NOT guess blindly or loop repeatedly.
    - Output "type": "ask_human", "question": "Clear question describing what you need the human to do or decide", "reason": "Why human input is needed", "suggestedOptions": ["Choice 1", "Choice 2"].
    - The user will be prompted immediately with your question, and their response will be provided to you in the next step to guide you!
-10. Return ONLY the JSON object. Do not wrap in markdown or any text outside JSON.`;
+10. Return ONLY the JSON object. Do not wrap in markdown or any text outside JSON.
+11. For ChatGPT website to type always use #prompt-textarea as the selector for the input field. Also if asked to chat in temporary chat then first click using this selector button[aria-label="Temporary chat"] then have the conversation in #prompt-textarea. Also if you are struck and don't know what to do then ask chatgpt to help you.`;
 
 /**
  * Captures screenshot of the target tab or active window
