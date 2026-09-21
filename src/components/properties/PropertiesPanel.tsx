@@ -327,11 +327,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Element Selector with Picker Button (Click, Type, Extract, Hover, etc.) */}
-        {['click', 'type_text', 'clear_input', 'hover', 'wait_for_element', 'extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'contains'].includes(selectedNode.data.type) && (
+        {['click', 'type_text', 'clear_input', 'hover', 'wait_for_element', 'wait_for_text', 'extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'contains', 'contains_text'].includes(selectedNode.data.type) && (
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-[11px] font-medium text-gray-400">
-                {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) ? 'Repeating List / Items Selector' : 'Element Selector'}
+                {['contains_text', 'wait_for_text'].includes(selectedNode.data.type)
+                  ? 'Container Element (optional)'
+                  : ['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type)
+                  ? 'Repeating List / Items Selector'
+                  : 'Element Selector'}
               </label>
 
               {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) ? (
@@ -385,7 +389,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   handlePropChange('itemSelector', e.target.value);
                 }
               }}
-              placeholder="#button, [data-testid='...'], //button"
+              placeholder={
+                ['contains_text', 'wait_for_text'].includes(selectedNode.data.type)
+                  ? 'Leave empty to search entire page, or #container'
+                  : "#button, [data-testid='...'], //button"
+              }
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
             />
 
@@ -477,20 +485,57 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
 
             {props.matchMode === 'text' && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-medium text-gray-400">Text to look for</label>
-                  {availableVars.length > 0 && (
-                    <span className="text-[10px] text-gray-500">Supports &#123;&#123;var&#125;&#125;</span>
-                  )}
+              <div className="space-y-2">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-medium text-gray-400">Text to look for</label>
+                    {availableVars.length > 0 && (
+                      <span className="text-[10px] text-gray-500">Supports &#123;&#123;var&#125;&#125;</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={props.text || ''}
+                    onChange={(e) => handlePropChange('text', e.target.value)}
+                    placeholder="e.g. Welcome back"
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
+                  />
                 </div>
-                <input
-                  type="text"
-                  value={props.text || ''}
-                  onChange={(e) => handlePropChange('text', e.target.value)}
-                  placeholder="e.g. Welcome back"
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
-                />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePropChange('textMatchMode', 'partial')}
+                    className={`py-1 px-2 rounded-md text-[11px] font-medium border transition-colors ${
+                      (props.textMatchMode || 'partial') === 'partial'
+                        ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                        : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                    }`}
+                  >
+                    Partial Match
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePropChange('textMatchMode', 'exact')}
+                    className={`py-1 px-2 rounded-md text-[11px] font-medium border transition-colors ${
+                      props.textMatchMode === 'exact'
+                        ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                        : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                    }`}
+                  >
+                    Exact Match
+                  </button>
+                </div>
+
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={props.caseSensitive === true}
+                    onChange={(e) => handlePropChange('caseSensitive', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px]">Respect Casing (Case-sensitive)</span>
+                </label>
               </div>
             )}
 
@@ -522,11 +567,111 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
+        {/* Contains Text Node (dedicated text presence check) */}
+        {selectedNode.data.type === 'contains_text' && (
+          <div className="space-y-3 pt-2">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Text to Search For</label>
+                {availableVars.length > 0 && (
+                  <span className="text-[10px] text-gray-500">Supports &#123;&#123;var&#125;&#125;</span>
+                )}
+              </div>
+              <textarea
+                rows={2}
+                value={props.text || ''}
+                onChange={(e) => handlePropChange('text', e.target.value)}
+                placeholder="e.g. Order Placed, Submit Successful..."
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Match Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('matchMode', 'partial')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    (props.matchMode || 'partial') === 'partial'
+                      ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Partial Match
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('matchMode', 'exact')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    props.matchMode === 'exact'
+                      ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Exact Match
+                </button>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={props.caseSensitive === true}
+                onChange={(e) => handlePropChange('caseSensitive', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Respect Casing (Case-sensitive)</span>
+            </label>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Variable (boolean)</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'containsText'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="containsText"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
+              />
+            </div>
+
+            <p className="text-[10px] text-gray-500 leading-relaxed bg-[#161a24] p-2 rounded-lg border border-[#1c2230]">
+              Branches to <span className="text-emerald-400 font-semibold">TRUE</span> if text appears anywhere on the page (or container), otherwise branches to <span className="text-rose-400 font-semibold">FALSE</span> without failing or stopping the workflow.
+            </p>
+          </div>
+        )}
+
+        {/* Wait For Element Options */}
+        {selectedNode.data.type === 'wait_for_element' && (
+          <div className="space-y-2 pt-2 border-t border-[#1c2230]">
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.visible !== false}
+                onChange={(e) => handlePropChange('visible', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Require element to be visible</span>
+            </label>
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.enabled === true}
+                onChange={(e) => handlePropChange('enabled', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Wait until element is enabled (not disabled)</span>
+            </label>
+          </div>
+        )}
+
         {/* Text Field (Type Text, Wait For Text) */}
         {['type_text', 'wait_for_text'].includes(selectedNode.data.type) && (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-medium text-gray-400">Text</label>
+              <label className="text-[11px] font-medium text-gray-400">
+                {selectedNode.data.type === 'wait_for_text' ? 'Text to Wait For' : 'Text'}
+              </label>
               {availableVars.length > 0 && (
                 <span className="text-[10px] text-gray-500">Supports &#123;&#123;var&#125;&#125;</span>
               )}
@@ -535,9 +680,52 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               rows={3}
               value={props.text || ''}
               onChange={(e) => handlePropChange('text', e.target.value)}
-              placeholder="Text to type or wait for..."
+              placeholder={selectedNode.data.type === 'wait_for_text' ? 'Wait for this text to appear...' : 'Text to type...'}
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
             />
+          </div>
+        )}
+
+        {/* Wait For Text Options */}
+        {selectedNode.data.type === 'wait_for_text' && (
+          <div className="space-y-2.5 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Match Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('matchMode', 'partial')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    (props.matchMode || 'partial') === 'partial'
+                      ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Partial Match
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('matchMode', 'exact')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    props.matchMode === 'exact'
+                      ? 'bg-purple-600/25 text-purple-300 border-purple-500/60 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Exact Match
+                </button>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={props.caseSensitive === true}
+                onChange={(e) => handlePropChange('caseSensitive', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Respect Casing (Case-sensitive)</span>
+            </label>
           </div>
         )}
 
@@ -666,15 +854,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {/* Duration (Wait) */}
         {selectedNode.data.type === 'wait' && (
           <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">Duration (ms)</label>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">Wait Duration / Timeout (ms)</label>
             <input
               type="number"
-              value={props.duration || 1000}
-              onChange={(e) => handlePropChange('duration', Number(e.target.value))}
+              value={props.duration || props.timeout || 1000}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                handlePropChange('duration', val);
+                handlePropChange('timeout', val);
+              }}
               min={50}
               step={100}
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
             />
+            <div className="flex items-center gap-1.5 mt-2">
+              {[500, 1000, 2000, 5000, 10000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => {
+                    handlePropChange('duration', preset);
+                    handlePropChange('timeout', preset);
+                  }}
+                  className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                    (props.duration || props.timeout || 1000) === preset
+                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  {preset >= 1000 ? `${preset / 1000}s` : `${preset}ms`}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1653,6 +1864,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
                 />
               </div>
+            )}
+
+            {['equals', 'not_equals', 'contains', 'does_not_contain'].includes(props.operator || 'equals') && (
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={props.caseSensitive === true}
+                  onChange={(e) => handlePropChange('caseSensitive', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Respect Casing (Case-sensitive)</span>
+              </label>
             )}
 
             <div>
@@ -2686,17 +2909,36 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* General Timeout Property */}
-        {['navigate', 'click', 'type_text', 'wait_for_element', 'extract_text', 'contains'].includes(selectedNode.data.type) && (
+        {['navigate', 'click', 'type_text', 'wait_for_element', 'wait_for_text', 'wait_for_navigation', 'extract_text', 'contains', 'contains_text'].includes(selectedNode.data.type) && (
           <div className="pt-2 border-t border-[#1c2230]">
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">Timeout (ms)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-medium text-gray-400">Timeout (ms)</label>
+              <span className="text-[10px] text-gray-500">Max wait limit</span>
+            </div>
             <input
               type="number"
-              value={props.timeout || 10000}
+              value={props.timeout ?? (selectedNode.data.type === 'contains_text' ? 3000 : 10000)}
               onChange={(e) => handlePropChange('timeout', Number(e.target.value))}
-              min={1000}
+              min={500}
               step={1000}
               className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
             />
+            <div className="flex items-center gap-1.5 mt-2">
+              {[2000, 5000, 10000, 15000, 30000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handlePropChange('timeout', preset)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                    (props.timeout ?? (selectedNode.data.type === 'contains_text' ? 3000 : 10000)) === preset
+                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  {preset / 1000}s
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

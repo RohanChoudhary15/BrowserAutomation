@@ -201,16 +201,28 @@ async function executeAction(
       return { success: true };
 
     case 'wait_for_text':
-      return await domActions.waitForText(params.text, params.selector, params.timeout || timeout);
+      return await domActions.waitForText(
+        params.text,
+        params.selector,
+        params.timeout || timeout,
+        undefined,
+        {
+          matchMode: params.matchMode,
+          caseSensitive: params.caseSensitive,
+        }
+      );
 
     case 'check_element_presence':
     case 'contains':
+    case 'contains_text':
       return await domActions.checkElementPresence(
         params.selector,
         {
           timeout: params.timeout ?? timeout,
           visibleOnly: params.visibleOnly !== false,
           text: params.text,
+          matchMode: params.matchMode,
+          caseSensitive: params.caseSensitive,
         },
         undefined
       );

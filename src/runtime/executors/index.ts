@@ -364,8 +364,15 @@ export const executeWaitForText: NodeExecutor = async (node, ctx) => {
   const text = String(interpolateVariables(rawText, ctx.variables));
   const selector = node.data.properties.selector ? interpolateVariables(node.data.properties.selector, ctx.variables) : undefined;
   const timeout = Number(node.data.properties.timeout) || 10000;
+  const matchMode = node.data.properties.matchMode || 'partial';
+  const caseSensitive = !!node.data.properties.caseSensitive;
 
-  ctx.log({ level: 'info', message: `Waiting for text: "${text}"`, nodeId: node.id, nodeName: node.data.label });
+  ctx.log({
+    level: 'info',
+    message: `Waiting for text: "${text}" (${matchMode === 'exact' ? 'Exact Match' : 'Partial Match'}, ${caseSensitive ? 'case-sensitive' : 'case-insensitive'}, timeout ${timeout}ms)`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
   ctx.updateNodeState(node.id, {
     status: 'running',
     dynamicState: {
@@ -374,7 +381,12 @@ export const executeWaitForText: NodeExecutor = async (node, ctx) => {
     },
   });
 
-  const res = await sendDomAction('wait_for_text', { text, selector, timeout }, ctx, timeout);
+  const res = await sendDomAction(
+    'wait_for_text',
+    { text, selector, timeout, matchMode, caseSensitive },
+    ctx,
+    timeout + 1500
+  );
 
   ctx.updateNodeState(node.id, {
     status: 'success',
@@ -456,12 +468,14 @@ export const executeCondition: NodeExecutor = async (node, ctx) => {
   const leftValue = interpolateVariables(node.data.properties.leftValue || '', ctx.variables);
   const operator = node.data.properties.operator || 'equals';
   const rightValue = interpolateVariables(node.data.properties.rightValue || '', ctx.variables);
+  const caseSensitive = !!node.data.properties.caseSensitive;
 
   const rule: ConditionRule = {
     type: 'variable',
     leftValue,
     operator,
     rightValue,
+    caseSensitive,
   };
 
   const result = evaluateCondition(rule, ctx.variables);
@@ -561,22 +575,31 @@ export const executeContains: NodeExecutor = async (node, ctx) => {
   const matchMode = node.data.properties.matchMode || 'element';
   const rawText = node.data.properties.text || '';
   const text = rawText ? String(interpolateVariables(rawText, ctx.variables)) : '';
+  const textMatchMode = (node.data.properties.textMatchMode as 'exact' | 'partial') || 'partial';
+  const caseSensitive = !!node.data.properties.caseSensitive;
   const visibleOnly = node.data.properties.visibleOnly !== false;
   const timeout = Number(node.data.properties.timeout) || 5000;
   const outputVariable = node.data.properties.outputVariable || 'elementPresent';
 
   ctx.log({
     level: 'info',
-    message: `Checking if page contains element: ${selector}${text ? ` (text "${text}")` : ''}`,
+    message: `Checking if page contains element: ${selector}${text ? ` (text "${text}", mode: ${textMatchMode}, case: ${caseSensitive ? 'sensitive' : 'insensitive'})` : ''}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
 
   const res = await sendDomAction(
     'check_element_presence',
-    { selector, timeout, visibleOnly, text: matchMode === 'text' ? text : '' },
+    {
+      selector,
+      timeout,
+      visibleOnly,
+      text: matchMode === 'text' ? text : '',
+      matchMode: textMatchMode,
+      caseSensitive,
+    },
     ctx,
-    timeout
+    timeout + 1500
   );
 
   const present = res?.present === true;
@@ -594,6 +617,72 @@ export const executeContains: NodeExecutor = async (node, ctx) => {
   return {
     success: true,
     output: { present, branch, matchedText: res?.matchedText },
+    nextBranch: branch,
+    variables: { [outputVariable]: present },
+  };
+};
+
+/**
+ * "Contains Text" node: checks whether a particular text exists on the page (or within a container).
+ * Non-throwing condition node: branches to TRUE when the text is found, FALSE otherwise.
+ */
+export const executeContainsText: NodeExecutor = async (node, ctx) => {
+  const rawText = node.data.properties.text || '';
+  const text = rawText ? String(interpolateVariables(rawText, ctx.variables)) : '';
+  if (!text) {
+    throw new Error('Contains Text node requires text to search for.');
+  }
+
+  const rawSelector = node.data.properties.selector || '';
+  const selector = rawSelector ? String(interpolateVariables(rawSelector, ctx.variables)) : '';
+  const matchMode = (node.data.properties.matchMode as 'exact' | 'partial') || 'partial';
+  const caseSensitive = Boolean(node.data.properties.caseSensitive);
+  const timeout = Math.max(0, Number(node.data.properties.timeout) || 3000);
+  const outputVariable = node.data.properties.outputVariable || 'containsText';
+
+  ctx.log({
+    level: 'info',
+    message: `Checking if page contains text "${text}" (match: ${matchMode}, case: ${caseSensitive ? 'sensitive' : 'insensitive'}, timeout: ${timeout}ms${selector ? `, container: ${selector}` : ''})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const res = await sendDomAction(
+    'check_element_presence',
+    {
+      selector: selector || 'body',
+      timeout,
+      visibleOnly: false,
+      text,
+      matchMode,
+      caseSensitive,
+    },
+    ctx,
+    timeout + 1500
+  );
+
+  const present = res?.present === true;
+  const branch = present ? 'true' : 'false';
+
+  ctx.log({
+    level: present ? 'success' : 'warn',
+    message: present
+      ? `Text "${text}" FOUND - taking TRUE branch`
+      : `Text "${text}" NOT FOUND - taking FALSE branch`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: {
+      present,
+      text,
+      matchMode,
+      caseSensitive,
+      branch,
+      matchedText: res?.matchedText,
+    },
     nextBranch: branch,
     variables: { [outputVariable]: present },
   };
@@ -2230,6 +2319,7 @@ export const executors: Record<string, NodeExecutor> = {
   extract_all_images: executeExtractAllImages,
   condition: executeCondition,
   contains: executeContains,
+  contains_text: executeContainsText,
   and: executeLogicGate,
   or: executeLogicGate,
   nand: executeLogicGate,

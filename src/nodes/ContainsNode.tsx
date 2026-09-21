@@ -21,13 +21,24 @@ export const ContainsNode: React.FC<ContainsNodeProps> = memo(({ id, data, selec
   const runtime = data.runtimeState;
   const status = runtime?.status || (data.disabled ? 'disabled' : 'idle');
 
+  const isContainsText = data.type === 'contains_text';
   const selector = data.properties?.selector || '';
-  const matchMode = data.properties?.matchMode || 'element';
+  const matchMode = data.properties?.matchMode || (isContainsText ? 'partial' : 'element');
+  const textMatchMode = data.properties?.textMatchMode || 'partial';
+  const caseSensitive = Boolean(data.properties?.caseSensitive);
   const text = data.properties?.text || '';
 
   let summary = '';
-  if (selector) {
+  if (isContainsText) {
+    if (text) {
+      summary = selector ? `"${text}" in ${selector}` : `"${text}"`;
+    } else {
+      summary = 'Enter text to search...';
+    }
+  } else if (selector) {
     summary = matchMode === 'text' && text ? `${selector} contains "${text}"` : selector;
+  } else {
+    summary = 'Select an element...';
   }
 
   // Live TRUE/FALSE result badge after a run
@@ -65,10 +76,10 @@ export const ContainsNode: React.FC<ContainsNodeProps> = memo(({ id, data, selec
       {/* Header */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 overflow-hidden">
-          <div className="w-6 h-6 rounded-lg bg-purple-600 flex items-center justify-center text-white shrink-0 shadow-sm">
-            <Icon name="SearchCheck" className="w-3.5 h-3.5" />
+          <div className={`w-6 h-6 rounded-lg ${isContainsText ? 'bg-indigo-600' : 'bg-purple-600'} flex items-center justify-center text-white shrink-0 shadow-sm`}>
+            <Icon name={isContainsText ? 'FileText' : 'SearchCheck'} className="w-3.5 h-3.5" />
           </div>
-          <div className="truncate font-semibold text-gray-100">{data.label || 'Contains'}</div>
+          <div className="truncate font-semibold text-gray-100">{data.label || (isContainsText ? 'Contains Text' : 'Contains')}</div>
         </div>
 
         <div className="shrink-0 flex items-center gap-1">
@@ -102,11 +113,25 @@ export const ContainsNode: React.FC<ContainsNodeProps> = memo(({ id, data, selec
 
       {/* Selector Summary */}
       <div
-        className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3"
-        title={selector}
+        className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-2"
+        title={isContainsText ? text : selector}
       >
-        {summary || 'Select an element...'}
+        {summary}
       </div>
+
+      {/* Mode & Case Badges */}
+      {(isContainsText || (matchMode === 'text' && text)) && (
+        <div className="flex items-center gap-1.5 mb-2.5 px-0.5">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">
+            {(isContainsText ? matchMode : textMatchMode) === 'exact' ? 'Exact' : 'Partial'}
+          </span>
+          {caseSensitive && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium" title="Case Sensitive">
+              Aa Match Case
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Branch Labels and Handles */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">

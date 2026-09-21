@@ -9,6 +9,7 @@ import {
   markCursorClick,
   moveCursorTo,
 } from './humanizer';
+import { matchesText, findMatchingElement, TextMatchOptions } from '../utils/textMatcher';
 export { waitForElement, queryElement };
 
 export async function clickElement(
@@ -758,24 +759,22 @@ export async function selectDropdown(
  */
 export async function checkElementPresence(
   selector: string,
-  params: { timeout?: number; visibleOnly?: boolean; text?: string } = {},
+  params: {
+    timeout?: number;
+    visibleOnly?: boolean;
+    text?: string;
+    matchMode?: 'exact' | 'partial';
+    caseSensitive?: boolean;
+  } = {},
   signal?: AbortSignal
 ): Promise<{ present: boolean; matchedText?: string; reason?: string }> {
   const timeout = Math.max(0, params.timeout ?? 5000);
   const visibleOnly = params.visibleOnly !== false;
   const expectedText = params.text ? String(params.text) : '';
+  const matchMode = params.matchMode || 'partial';
+  const caseSensitive = params.caseSensitive === true;
   const pollInterval = 100;
   const startTime = Date.now();
-
-  const matches = (el: Element | null): boolean => {
-    if (!el) return false;
-    if (visibleOnly && !isElementVisible(el)) return false;
-    if (expectedText) {
-      const content = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      if (!content.includes(expectedText.replace(/\s+/g, ' ').trim().toLowerCase())) return false;
-    }
-    return true;
-  };
 
   return new Promise((resolve) => {
     const check = () => {
@@ -784,17 +783,41 @@ export async function checkElementPresence(
         return;
       }
 
-      let el: Element | null = null;
-      try {
-        el = queryElement(selector);
-      } catch {
-        el = null;
-      }
+      // If selector is empty or 'body', perform whole-page text search
+      const isWholePage = !selector || selector.trim() === '' || selector.trim().toLowerCase() === 'body';
 
-      if (matches(el)) {
-        if (el) flashHighlight(el);
-        resolve({ present: true, matchedText: (el?.textContent || '').trim().slice(0, 200) });
-        return;
+      if (isWholePage && expectedText) {
+        const root = document.body || document.documentElement;
+        if (root) {
+          const matchedEl = findMatchingElement(root, expectedText, { matchMode, caseSensitive });
+          if (matchedEl) {
+            if (matchedEl instanceof Element) flashHighlight(matchedEl);
+            resolve({ present: true, matchedText: (matchedEl.textContent || '').trim().slice(0, 200) });
+            return;
+          }
+        }
+      } else {
+        let el: Element | null = null;
+        try {
+          el = queryElement(selector);
+        } catch {
+          el = null;
+        }
+
+        if (el && (!visibleOnly || isElementVisible(el))) {
+          if (expectedText) {
+            const matchedEl = findMatchingElement(el, expectedText, { matchMode, caseSensitive });
+            if (matchedEl) {
+              if (matchedEl instanceof Element) flashHighlight(matchedEl);
+              resolve({ present: true, matchedText: (matchedEl.textContent || '').trim().slice(0, 200) });
+              return;
+            }
+          } else {
+            flashHighlight(el);
+            resolve({ present: true, matchedText: (el.textContent || '').trim().slice(0, 200) });
+            return;
+          }
+        }
       }
 
       if (Date.now() - startTime >= timeout) {
@@ -869,20 +892,49 @@ function parseTableElement(table: HTMLTableElement): { rows: Record<string, stri
   return { rows: dataRows };
 }
 
-export async function waitForText(text: string, selector?: string, timeout = 10000, signal?: AbortSignal): Promise<{ success: boolean }> {
+export async function waitForText(
+  text: string,
+  selector?: string,
+  timeout = 10000,
+  signal?: AbortSignal,
+  options: { matchMode?: 'exact' | 'partial'; caseSensitive?: boolean } = {}
+): Promise<{ success: boolean; matchedText?: string }> {
   const startTime = Date.now();
   const pollInterval = 100;
+  const matchMode = options.matchMode || 'partial';
+  const caseSensitive = options.caseSensitive === true;
 
   return new Promise((resolve, reject) => {
     const check = () => {
       if (signal?.aborted) return reject(new Error('Wait for text aborted.'));
-      const root = selector ? queryElement(selector) : document.body;
-      if (root && root.textContent?.includes(text)) {
-        if (root instanceof Element) flashHighlight(root);
-        return resolve({ success: true });
+
+      let root: Element | null = null;
+      if (selector) {
+        try {
+          root = queryElement(selector);
+        } catch {
+          root = null;
+        }
+      } else {
+        root = document.body || document.documentElement;
       }
+
+      if (root) {
+        const matchedEl = findMatchingElement(root, text, { matchMode, caseSensitive });
+        if (matchedEl) {
+          if (matchedEl instanceof Element) flashHighlight(matchedEl);
+          return resolve({ success: true, matchedText: (matchedEl.textContent || '').trim().slice(0, 200) });
+        }
+      }
+
       if (Date.now() - startTime >= timeout) {
-        return reject(new Error(`Timed out after ${timeout}ms waiting for text: "${text}"`));
+        return reject(
+          new Error(
+            `Timed out after ${timeout}ms waiting for text: "${text}" (${matchMode === 'exact' ? 'Exact Match' : 'Partial Match'}, ${
+              caseSensitive ? 'Case Sensitive' : 'Case Insensitive'
+            }${selector ? ` within "${selector}"` : ''})`
+          )
+        );
       }
       setTimeout(check, pollInterval);
     };

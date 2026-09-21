@@ -195,6 +195,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     icon: 'Clock',
     defaultProperties: {
       duration: 2000,
+      timeout: 2000,
       unit: 'ms',
     },
   },
@@ -219,7 +220,10 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     icon: 'FileText',
     defaultProperties: {
       text: '',
+      selector: '',
       timeout: 10000,
+      matchMode: 'partial',
+      caseSensitive: false,
     },
   },
   wait_for_navigation: {
@@ -380,6 +384,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       leftValue: '',
       operator: 'equals',
       rightValue: '',
+      caseSensitive: false,
     },
   },
   contains: {
@@ -393,9 +398,27 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       selector: '',
       matchMode: 'element',
       text: '',
+      textMatchMode: 'partial',
+      caseSensitive: false,
       visibleOnly: true,
       timeout: 5000,
       outputVariable: 'elementPresent',
+    },
+  },
+  contains_text: {
+    type: 'contains_text',
+    label: 'Contains Text',
+    category: 'logic',
+    description: 'Check whether a particular text exists on the page (TRUE / FALSE branches)',
+    icon: 'FileText',
+    reactFlowType: 'containsNode',
+    defaultProperties: {
+      text: '',
+      selector: '',
+      matchMode: 'partial',
+      caseSensitive: false,
+      timeout: 3000,
+      outputVariable: 'containsText',
     },
   },
   and: {

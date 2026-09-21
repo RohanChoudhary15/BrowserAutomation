@@ -119,16 +119,24 @@ export function evaluateCondition(
 
   switch (rule.operator) {
     case 'equals':
-      return String(left).trim().toLowerCase() === String(right).trim().toLowerCase();
+      return rule.caseSensitive
+        ? String(left).trim() === String(right).trim()
+        : String(left).trim().toLowerCase() === String(right).trim().toLowerCase();
 
     case 'not_equals':
-      return String(left).trim().toLowerCase() !== String(right).trim().toLowerCase();
+      return rule.caseSensitive
+        ? String(left).trim() !== String(right).trim()
+        : String(left).trim().toLowerCase() !== String(right).trim().toLowerCase();
 
     case 'contains':
-      return String(left).toLowerCase().includes(String(right).toLowerCase());
+      return rule.caseSensitive
+        ? String(left).includes(String(right))
+        : String(left).toLowerCase().includes(String(right).toLowerCase());
 
     case 'does_not_contain':
-      return !String(left).toLowerCase().includes(String(right).toLowerCase());
+      return rule.caseSensitive
+        ? !String(left).includes(String(right))
+        : !String(left).toLowerCase().includes(String(right).toLowerCase());
 
     case 'greater_than': {
       const numL = parsePossibleNumber(left);

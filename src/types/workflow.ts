@@ -45,6 +45,7 @@ export type NodeType =
   // Logic
   | 'condition'
   | 'contains'
+  | 'contains_text'
   | 'and'
   | 'or'
   | 'nand'
