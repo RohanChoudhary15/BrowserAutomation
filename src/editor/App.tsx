@@ -600,6 +600,15 @@ export const App: React.FC = () => {
 
   // Execution: Run Workflow
   const handleRunWorkflow = useCallback(() => {
+    // If a previous engine run is still active or paused, abort it cleanly before starting new run
+    if (engineRef.current && (executionStatus === 'running' || executionStatus === 'paused')) {
+      try {
+        engineRef.current.stop();
+      } catch (e) {
+        console.warn('Error stopping previous engine run:', e);
+      }
+    }
+
     setIsExecutionCollapsed(false);
     setExecutionLogs([]);
     setNodeStates({});
@@ -624,7 +633,7 @@ export const App: React.FC = () => {
 
     engineRef.current = engine;
     engine.run();
-  }, [activeWorkflow, edges, nodes]);
+  }, [activeWorkflow, edges, executionStatus, nodes]);
 
   const handlePauseWorkflow = () => engineRef.current?.pause();
   const handleResumeWorkflow = () => engineRef.current?.resume();
@@ -633,6 +642,11 @@ export const App: React.FC = () => {
     if (executionStatus === 'paused') {
       engineRef.current?.resume();
     } else {
+      if (engineRef.current && executionStatus === 'running') {
+        try {
+          engineRef.current.stop();
+        } catch {}
+      }
       setIsExecutionCollapsed(false);
       const currentWorkflow: Workflow = { ...activeWorkflow, nodes, edges };
       const engine = new WorkflowEngine(currentWorkflow, {
@@ -662,6 +676,7 @@ export const App: React.FC = () => {
           onVariablesChange: (vars) => setLiveVariables(vars),
         }
       );
+      engineRef.current = engine;
       try {
         await engine.runSingleNode(node, liveVariables);
       } catch (err) {

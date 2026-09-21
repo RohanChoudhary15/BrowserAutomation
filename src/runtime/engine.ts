@@ -1,6 +1,6 @@
 import { Workflow, WorkflowNode, WorkflowEdge } from '../types/workflow';
 import { ExecutionContext, NodeRuntimeState, ExecutionLog, WorkflowExecutionStatus, ActiveTimer } from '../types/execution';
-import { executors } from './executors';
+import { executors, globalActiveTimers, globalPendingStopTimers } from './executors';
 import { generateId } from '../utils/id';
 import { createFriendlyError } from '../utils/formatters';
 import { interpolateVariables } from './interpolator';
@@ -29,6 +29,8 @@ export class WorkflowEngine {
   private triggeredGates = new Set<string>();
   /** Active wait timers registry for stopping/resetting timers across branches */
   private activeTimers = new Map<string, ActiveTimer>();
+  /** Pending stop timers registry for race conditions */
+  private pendingStopTimers = new Map<string, { action: 'complete_early' | 'cancel'; reason?: string; timestamp: number }>();
 
   constructor(workflow: Workflow, events: EngineEvents = {}) {
     this.workflow = workflow;
@@ -107,6 +109,9 @@ export class WorkflowEngine {
       } catch {}
     }
     this.activeTimers.clear();
+    this.pendingStopTimers.clear();
+    globalActiveTimers.clear();
+    globalPendingStopTimers.clear();
     this.setStatus('stopped');
     this.log({ level: 'warn', message: 'Workflow stopped by user.' });
   }
@@ -127,6 +132,7 @@ export class WorkflowEngine {
       log: (l) => this.log(l),
       updateNodeState: (id, s) => this.updateNodeState(id, s),
       _activeTimers: this.activeTimers,
+      _pendingStopTimers: this.pendingStopTimers,
       _pauseTrigger: () => this.pause(),
     };
 
@@ -158,6 +164,9 @@ export class WorkflowEngine {
     this.gateInputsState.clear();
     this.triggeredGates.clear();
     this.activeTimers.clear();
+    this.pendingStopTimers.clear();
+    globalActiveTimers.clear();
+    globalPendingStopTimers.clear();
 
     this.log({
       level: 'info',
@@ -183,6 +192,7 @@ export class WorkflowEngine {
       log: (l) => this.log(l),
       updateNodeState: (id, s) => this.updateNodeState(id, s),
       _activeTimers: this.activeTimers,
+      _pendingStopTimers: this.pendingStopTimers,
       _pauseTrigger: () => this.pause(),
     };
 
@@ -407,10 +417,11 @@ export class WorkflowEngine {
             },
           });
 
-          for (const bNode of bodyNodes) {
-            if (ctx.signal.aborted) break;
-            await this.traverseAndExecute(bNode, ctx);
-          }
+          // Reset logic gate states for fresh evaluation in each iteration
+          this.triggeredGates.clear();
+          this.gateInputsState.clear();
+
+          await Promise.all(bodyNodes.map((bNode) => this.traverseAndExecute(bNode, ctx)));
         }
 
         this.updateNodeState(node.id, {
@@ -523,10 +534,11 @@ export class WorkflowEngine {
       });
 
       let shouldBreak = false;
-      for (const bNode of bodyNodes) {
-        if (ctx.signal.aborted) break;
-        await this.traverseAndExecute(bNode, ctx);
-      }
+      // Reset logic gate states for fresh evaluation in each iteration
+      this.triggeredGates.clear();
+      this.gateInputsState.clear();
+
+      await Promise.all(bodyNodes.map((bNode) => this.traverseAndExecute(bNode, ctx)));
 
       if (shouldBreak) break;
     }
@@ -622,6 +634,12 @@ export class WorkflowEngine {
       }
       const arrivals = this.gateInputsState.get(next.id)!;
 
+      // If this source node has already arrived in this cycle, a new cycle/iteration has begun
+      if (arrivals.has(sourceNode.id)) {
+        this.triggeredGates.delete(next.id);
+        arrivals.clear();
+      }
+
       const isBranchTrue =
         sourceResult.nextBranch === 'true' ||
         sourceResult.output?.result === true ||
@@ -689,6 +707,16 @@ export class WorkflowEngine {
         });
 
         await this.traverseAndExecute(next, ctx);
+
+        // Reset gate if all incoming branches arrived so loops/cycles can re-trigger cleanly
+        if (arrivals.size >= totalExpected) {
+          this.triggeredGates.delete(next.id);
+          this.gateInputsState.delete(next.id);
+        }
+      } else if (arrivals.size >= totalExpected) {
+        // All branches arrived, clear state for future cycles
+        this.triggeredGates.delete(next.id);
+        this.gateInputsState.delete(next.id);
       }
     };
 

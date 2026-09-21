@@ -104,6 +104,8 @@ export interface ExecutionContext {
   _gateInputs?: Record<string, any[]>;
   /** Registry of currently running wait timers accessible by command nodes */
   _activeTimers?: Map<string, ActiveTimer>;
+  /** Pending stop/cancel signals to handle race conditions where a timer starts slightly after stop_timer */
+  _pendingStopTimers?: Map<string, { action: 'complete_early' | 'cancel'; reason?: string; timestamp: number }>;
   /** Engine-level pause trigger hook */
   _pauseTrigger?: (message?: string) => void;
 }

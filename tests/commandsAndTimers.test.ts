@@ -8,6 +8,8 @@ import {
   executeStopWorkflow,
   executePauseWorkflow,
   executeSkipTo,
+  globalActiveTimers,
+  globalPendingStopTimers,
 } from '../src/runtime/executors';
 import { ExecutionContext, ActiveTimer } from '../src/types/execution';
 
@@ -20,6 +22,7 @@ function createMockContext(partial: Partial<ExecutionContext> = {}): ExecutionCo
     log: vi.fn(),
     updateNodeState: vi.fn(),
     _activeTimers: new Map(),
+    _pendingStopTimers: new Map(),
     ...partial,
   };
 }
@@ -41,6 +44,8 @@ function createMockNode(id: string, type: string, properties: Record<string, any
 describe('Workflow Commands & Breakable Timers', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    globalActiveTimers.clear();
+    globalPendingStopTimers.clear();
     vi.restoreAllMocks();
   });
 
@@ -368,6 +373,229 @@ describe('Workflow Commands & Breakable Timers', () => {
 
       // The 5000ms wait should have been stopped early by branch 2, completing in under 1500ms
       expect(totalElapsed).toBeLessThan(2000);
+    });
+
+    it('reliably stops wait timer when the workflow is started again (run twice in succession)', async () => {
+      const executedRun1: string[] = [];
+      const executedRun2: string[] = [];
+
+      const wf: Workflow = {
+        id: 'wf_rerun_timer',
+        name: 'Rerun Timer Test',
+        version: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        variables: {},
+        settings: { timeout: 10000, retryCount: 0, retryDelay: 100, stopOnError: true, highlightElements: false },
+        nodes: [
+          {
+            id: 'start_node',
+            type: 'customNode',
+            position: { x: 0, y: 0 },
+            data: { label: 'Start', category: 'data', type: 'set_variable', properties: { name: 'init', value: true } },
+          },
+          {
+            id: 'long_wait',
+            type: 'customNode',
+            position: { x: -100, y: 100 },
+            data: {
+              label: 'Wait 5s',
+              category: 'navigation',
+              type: 'wait',
+              properties: { duration: 5000, unit: 'ms', timerName: 'test_repeat_timer' },
+            },
+          },
+          {
+            id: 'stop_cmd',
+            type: 'customNode',
+            position: { x: 100, y: 100 },
+            data: {
+              label: 'Stop Timer',
+              category: 'command',
+              type: 'stop_timer',
+              properties: { targetTimer: 'test_repeat_timer', action: 'complete_early' },
+            },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'start_node', target: 'long_wait' },
+          { id: 'e2', source: 'start_node', target: 'stop_cmd' },
+        ],
+      };
+
+      let currentRunExecuted = executedRun1;
+      const engine = new WorkflowEngine(wf, {
+        onNodeStateChange: (id, state) => {
+          if (state.status === 'success') currentRunExecuted.push(id);
+        },
+      });
+
+      // Run 1: Should stop promptly
+      const t1 = Date.now();
+      await engine.run();
+      const elapsed1 = Date.now() - t1;
+      expect(engine.getStatus()).toBe('completed');
+      expect(executedRun1).toContain('long_wait');
+      expect(executedRun1).toContain('stop_cmd');
+      expect(elapsed1).toBeLessThan(2000);
+
+      // Run 2: Timer starts AGAIN. Must also stop promptly without hanging!
+      currentRunExecuted = executedRun2;
+      const t2 = Date.now();
+      await engine.run();
+      const elapsed2 = Date.now() - t2;
+      expect(engine.getStatus()).toBe('completed');
+      expect(executedRun2).toContain('long_wait');
+      expect(executedRun2).toContain('stop_cmd');
+      expect(elapsed2).toBeLessThan(2000);
+    });
+
+    it('reliably stops wait timer when timer is started again in a loop with logic gates', async () => {
+      const waitExecutions: number[] = [];
+
+      const wf: Workflow = {
+        id: 'wf_loop_repeat_timer',
+        name: 'Loop Repeat Timer Test',
+        version: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        variables: { counter: 0 },
+        settings: { timeout: 10000, retryCount: 0, retryDelay: 100, stopOnError: true, highlightElements: false },
+        nodes: [
+          {
+            id: 'loop_node',
+            type: 'customNode',
+            position: { x: 0, y: 0 },
+            data: {
+              label: 'Loop 2x',
+              category: 'control',
+              type: 'loop',
+              properties: { count: 2, itemVariable: 'loopIdx' },
+            },
+          },
+          {
+            id: 'wait_node',
+            type: 'customNode',
+            position: { x: -100, y: 100 },
+            data: {
+              label: 'Wait 5s',
+              category: 'navigation',
+              type: 'wait',
+              properties: { duration: 5000, unit: 'ms', timerName: 'loop_timer' },
+            },
+          },
+          {
+            id: 'stop_node',
+            type: 'customNode',
+            position: { x: 100, y: 100 },
+            data: {
+              label: 'Stop Timer Node',
+              category: 'command',
+              type: 'stop_timer',
+              properties: { targetTimer: 'loop_timer', action: 'complete_early' },
+            },
+          },
+          {
+            id: 'merge_gate',
+            type: 'logicGateNode',
+            position: { x: 0, y: 200 },
+            data: {
+              label: 'OR Gate',
+              category: 'control',
+              type: 'or',
+              properties: { gate: 'OR' },
+            },
+          },
+        ],
+        edges: [
+          { id: 'e_body1', source: 'loop_node', sourceHandle: 'loop_body', target: 'wait_node' },
+          { id: 'e_body2', source: 'loop_node', sourceHandle: 'loop_body', target: 'stop_node' },
+          { id: 'e_m1', source: 'wait_node', target: 'merge_gate' },
+          { id: 'e_m2', source: 'stop_node', target: 'merge_gate' },
+        ],
+      };
+
+      const startTime = Date.now();
+      const engine = new WorkflowEngine(wf, {
+        onNodeStateChange: (id, state) => {
+          if (id === 'wait_node' && state.status === 'success' && state.endTime) {
+            waitExecutions.push(Date.now());
+          }
+        },
+      });
+
+      await engine.run();
+      const elapsed = Date.now() - startTime;
+
+      expect(engine.getStatus()).toBe('completed');
+      // Wait node ran in both iterations and was stopped promptly in both
+      expect(waitExecutions.length).toBe(2);
+      expect(elapsed).toBeLessThan(3500);
+    });
+
+    it('handles race conditions where stop_timer executes immediately before wait node starts', async () => {
+      const ctx = createMockContext();
+
+      // Step 1: stop_timer runs first (before wait timer has started)
+      const stopNode = createMockNode('stop_cmd', 'stop_timer', {
+        targetTimer: 'late_timer',
+        action: 'complete_early',
+        reason: 'Condition matched early',
+      });
+      const stopResult = await executeStopTimer(stopNode, ctx);
+      expect(stopResult.success).toBe(true);
+
+      // Step 2: wait node starts shortly after
+      const waitNode = createMockNode('wait_cmd', 'wait', {
+        duration: 5000,
+        unit: 'ms',
+        timerName: 'late_timer',
+      });
+
+      const startTime = Date.now();
+      const waitResult = await executeWait(waitNode, ctx);
+      const elapsed = Date.now() - startTime;
+
+      // The wait node should immediately consume the pending stop signal and finish in 0ms!
+      expect(waitResult.success).toBe(true);
+      expect(waitResult.output?.stoppedEarly).toBe(true);
+      expect(waitResult.output?.reason).toContain('Condition matched early');
+      expect(elapsed).toBeLessThan(200);
+    });
+
+    it('stops timer after it was restarted via reset_timer', async () => {
+      const ctx = createMockContext();
+
+      const waitNode = createMockNode('wait_restart', 'wait', {
+        duration: 5000,
+        unit: 'ms',
+        timerName: 'restartable_timer',
+      });
+
+      // Start wait promise in background
+      const waitPromise = executeWait(waitNode, ctx);
+
+      // Wait 150ms, then restart the timer
+      await new Promise((r) => setTimeout(r, 150));
+      const resetNode = createMockNode('reset_cmd', 'reset_timer', {
+        targetTimer: 'restartable_timer',
+        mode: 'restart',
+      });
+      await executeResetTimer(resetNode, ctx);
+
+      // Wait another 150ms, then stop the restarted timer
+      await new Promise((r) => setTimeout(r, 150));
+      const stopNode = createMockNode('stop_cmd', 'stop_timer', {
+        targetTimer: 'restartable_timer',
+        action: 'complete_early',
+        reason: 'Stopped after restart',
+      });
+      await executeStopTimer(stopNode, ctx);
+
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+      expect(waitResult.output?.stoppedEarly).toBe(true);
+      expect(waitResult.output?.reason).toBe('Stopped after restart');
     });
 
     it('stop_workflow node halts entire workflow immediately', async () => {

@@ -15,6 +15,18 @@ import { runInSandbox, safeEvaluateMath } from '../sandboxEvaluator';
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
 /**
+ * Global active timers registry across engine instances and single-node debug runs.
+ * Keyed by nodeId.
+ */
+export const globalActiveTimers = new Map<string, ActiveTimer>();
+
+/**
+ * Global pending stop signals queue to resolve race conditions between parallel branches.
+ * Keyed by targetTimer (normalized lowercase or nodeId).
+ */
+export const globalPendingStopTimers = new Map<string, { action: 'complete_early' | 'cancel'; reason?: string; timestamp: number }>();
+
+/**
  * Sends DOM action request to content script via background or directly
  */
 async function sendDomAction(
@@ -292,9 +304,55 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
   let totalSeconds = Number((duration / 1000).toFixed(1));
   let startTime = Date.now();
 
-  const timerName = node.data.properties.timerName ? String(interpolateVariables(node.data.properties.timerName, ctx.variables)) : '';
+  const timerName = node.data.properties.timerName ? String(interpolateVariables(node.data.properties.timerName, ctx.variables)).trim() : '';
+  const normalizedTimerName = timerName ? timerName.toLowerCase() : '';
   const stopCondition = node.data.properties.stopCondition;
   const hasStopCondition = stopCondition && stopCondition.enabled === true;
+
+  // 1. Race condition protection: Check if a pending stop was already issued for this specific timer
+  const pendingStop =
+    ctx._pendingStopTimers?.get(node.id) ||
+    (normalizedTimerName ? ctx._pendingStopTimers?.get(normalizedTimerName) : undefined) ||
+    globalPendingStopTimers.get(node.id) ||
+    (normalizedTimerName ? globalPendingStopTimers.get(normalizedTimerName) : undefined);
+
+  if (pendingStop && Date.now() - pendingStop.timestamp < 5000) {
+    // Consume pending stop
+    ctx._pendingStopTimers?.delete(node.id);
+    if (normalizedTimerName) ctx._pendingStopTimers?.delete(normalizedTimerName);
+    globalPendingStopTimers.delete(node.id);
+    if (normalizedTimerName) globalPendingStopTimers.delete(normalizedTimerName);
+
+    ctx.log({
+      level: 'success',
+      message: `Wait timer "${timerName || node.id}" immediately stopped early by pending stop command (${pendingStop.reason || 'Condition matched'})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        remainingSeconds: 0,
+        totalSeconds,
+        elapsedSeconds: 0,
+        progress: 100,
+        message: 'Stopped early (0s)',
+        detail: pendingStop.reason,
+      },
+    });
+
+    return {
+      success: true,
+      cancelBranch: pendingStop.action === 'cancel',
+      output: {
+        durationMs: 0,
+        seconds: 0,
+        stoppedEarly: true,
+        reason: pendingStop.reason,
+      },
+    };
+  }
 
   ctx.log({
     level: 'info',
@@ -326,7 +384,9 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
     rejectWait = reject;
   });
 
-  // Register in active timers map
+  let intervalTimer: any = null;
+
+  // Register in active timers maps (context-level and global)
   const timerHandle: ActiveTimer = {
     nodeId: node.id,
     timerName: timerName || undefined,
@@ -338,11 +398,18 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
       if (action === 'cancel') {
         cancelBranch = true;
       }
+      if (intervalTimer) {
+        clearInterval(intervalTimer);
+        intervalTimer = null;
+      }
       resolveWait();
     },
     reset: (mode: 'restart' | 'extend', extendMs?: number) => {
       if (mode === 'restart') {
         startTime = Date.now();
+        stoppedEarly = false;
+        cancelBranch = false;
+        stopReason = undefined;
         ctx.log({ level: 'info', message: `Timer "${timerName || node.id}" restarted to 0s`, nodeId: node.id, nodeName: node.data.label });
       } else if (mode === 'extend') {
         const extra = Number(extendMs) || 5000;
@@ -356,99 +423,122 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
   if (ctx._activeTimers) {
     ctx._activeTimers.set(node.id, timerHandle);
   }
+  globalActiveTimers.set(node.id, timerHandle);
+
+  // Condition evaluation helper with guard against overlapping async calls
+  let isCheckingCondition = false;
+  const checkEarlyStopCondition = async (): Promise<{ matched: boolean; detail: string }> => {
+    if (!hasStopCondition || stoppedEarly || isCheckingCondition) return { matched: false, detail: '' };
+    isCheckingCondition = true;
+    try {
+      if (stopCondition.type === 'text') {
+        const text = String(interpolateVariables(stopCondition.text || '', ctx.variables));
+        if (text) {
+          const selector = stopCondition.selector ? String(interpolateVariables(stopCondition.selector, ctx.variables)) : '';
+          const matchMode = stopCondition.matchMode || 'partial';
+          const caseSensitive = Boolean(stopCondition.caseSensitive);
+          const res = await sendDomAction('check_element_presence', {
+            selector: selector || 'body',
+            text,
+            matchMode,
+            caseSensitive,
+            timeout: 100,
+            visibleOnly: false,
+          }, ctx, 1500);
+          if (res?.present) {
+            return { matched: true, detail: `Found text "${text}"` };
+          }
+        }
+      } else if (stopCondition.type === 'element') {
+        const selector = String(interpolateVariables(stopCondition.selector || '', ctx.variables));
+        if (selector) {
+          const res = await sendDomAction('check_element_presence', {
+            selector,
+            timeout: 100,
+            visibleOnly: false,
+          }, ctx, 1500);
+          if (res?.present) {
+            return { matched: true, detail: `Element "${selector}" appeared` };
+          }
+        }
+      } else if (stopCondition.type === 'variable') {
+        const matched = evaluateCondition({
+          type: 'variable',
+          leftValue: stopCondition.leftValue,
+          operator: stopCondition.operator || 'equals',
+          rightValue: stopCondition.rightValue,
+          caseSensitive: stopCondition.caseSensitive,
+        }, ctx.variables);
+        if (matched) {
+          return { matched: true, detail: `Variable condition matched (${stopCondition.leftValue} ${stopCondition.operator} ${stopCondition.rightValue})` };
+        }
+      }
+    } catch {
+      // Ignore polling errors
+    } finally {
+      isCheckingCondition = false;
+    }
+    return { matched: false, detail: '' };
+  };
+
+  // Immediate t=0ms check if condition is already satisfied at startup
+  if (hasStopCondition) {
+    const initialCheck = await checkEarlyStopCondition();
+    if (initialCheck.matched) {
+      timerHandle.stop('complete_early', initialCheck.detail);
+    }
+  }
 
   const updateInterval = 100;
   let conditionCheckCounter = 0;
 
-  const intervalTimer = setInterval(async () => {
-    const elapsed = Date.now() - startTime;
-    const remainingMs = Math.max(0, duration - elapsed);
-    const remainingSec = Number((remainingMs / 1000).toFixed(1));
-    const elapsedSec = Number((elapsed / 1000).toFixed(1));
-    const progress = Math.min(100, Math.round((elapsed / duration) * 100));
-
-    ctx.updateNodeState(node.id, {
-      status: 'running',
-      dynamicState: {
-        remainingSeconds: remainingSec,
-        totalSeconds,
-        elapsedSeconds: elapsedSec,
-        progress,
-        message: `${remainingSec}s remaining`,
-      },
-    });
-
-    // Check early stop condition periodically (every ~200ms)
-    conditionCheckCounter++;
-    if (hasStopCondition && conditionCheckCounter % 2 === 0 && !stoppedEarly) {
-      try {
-        let conditionMatched = false;
-        let matchDetail = '';
-
-        if (stopCondition.type === 'text') {
-          const text = String(interpolateVariables(stopCondition.text || '', ctx.variables));
-          if (text) {
-            const selector = stopCondition.selector ? String(interpolateVariables(stopCondition.selector, ctx.variables)) : '';
-            const matchMode = stopCondition.matchMode || 'partial';
-            const caseSensitive = Boolean(stopCondition.caseSensitive);
-            const res = await sendDomAction('check_element_presence', {
-              selector: selector || 'body',
-              text,
-              matchMode,
-              caseSensitive,
-              timeout: 100,
-              visibleOnly: false,
-            }, ctx, 1500);
-            if (res?.present) {
-              conditionMatched = true;
-              matchDetail = `Found text "${text}"`;
-            }
-          }
-        } else if (stopCondition.type === 'element') {
-          const selector = String(interpolateVariables(stopCondition.selector || '', ctx.variables));
-          if (selector) {
-            const res = await sendDomAction('check_element_presence', {
-              selector,
-              timeout: 100,
-              visibleOnly: false,
-            }, ctx, 1500);
-            if (res?.present) {
-              conditionMatched = true;
-              matchDetail = `Element "${selector}" appeared`;
-            }
-          }
-        } else if (stopCondition.type === 'variable') {
-          const matched = evaluateCondition({
-            type: 'variable',
-            leftValue: stopCondition.leftValue,
-            operator: stopCondition.operator || 'equals',
-            rightValue: stopCondition.rightValue,
-            caseSensitive: stopCondition.caseSensitive,
-          }, ctx.variables);
-          if (matched) {
-            conditionMatched = true;
-            matchDetail = `Variable condition matched (${stopCondition.leftValue} ${stopCondition.operator} ${stopCondition.rightValue})`;
-          }
-        }
-
-        if (conditionMatched && !stoppedEarly) {
-          timerHandle.stop('complete_early', matchDetail);
-        }
-      } catch {
-        // Ignore polling errors
+  if (!stoppedEarly) {
+    intervalTimer = setInterval(async () => {
+      if (stoppedEarly) {
+        if (intervalTimer) clearInterval(intervalTimer);
+        return;
       }
-    }
 
-    if (remainingMs <= 0) {
-      clearInterval(intervalTimer);
-      resolveWait();
-    }
-  }, updateInterval);
+      const elapsed = Date.now() - startTime;
+      const remainingMs = Math.max(0, duration - elapsed);
+      const remainingSec = Number((remainingMs / 1000).toFixed(1));
+      const elapsedSec = Number((elapsed / 1000).toFixed(1));
+      const progress = Math.min(100, Math.round((elapsed / duration) * 100));
+
+      if (!stoppedEarly) {
+        ctx.updateNodeState(node.id, {
+          status: 'running',
+          dynamicState: {
+            remainingSeconds: remainingSec,
+            totalSeconds,
+            elapsedSeconds: elapsedSec,
+            progress,
+            message: `${remainingSec}s remaining`,
+          },
+        });
+      }
+
+      // Check early stop condition periodically (every ~200ms)
+      conditionCheckCounter++;
+      if (hasStopCondition && conditionCheckCounter % 2 === 0 && !stoppedEarly) {
+        const checkRes = await checkEarlyStopCondition();
+        if (checkRes.matched && !stoppedEarly) {
+          timerHandle.stop('complete_early', checkRes.detail);
+          return;
+        }
+      }
+
+      if (remainingMs <= 0 && !stoppedEarly) {
+        if (intervalTimer) clearInterval(intervalTimer);
+        resolveWait();
+      }
+    }, updateInterval);
+  }
 
   let onAbort: () => void;
   if (ctx.signal) {
     onAbort = () => {
-      clearInterval(intervalTimer);
+      if (intervalTimer) clearInterval(intervalTimer);
       rejectWait(new Error('Wait aborted by user.'));
     };
     ctx.signal.addEventListener('abort', onAbort);
@@ -457,13 +547,16 @@ export const executeWait: NodeExecutor = async (node, ctx) => {
   try {
     await waitPromise;
   } finally {
-    clearInterval(intervalTimer);
+    if (intervalTimer) {
+      clearInterval(intervalTimer);
+    }
     if (ctx.signal && onAbort!) {
       ctx.signal.removeEventListener('abort', onAbort!);
     }
     if (ctx._activeTimers) {
       ctx._activeTimers.delete(node.id);
     }
+    globalActiveTimers.delete(node.id);
   }
 
   const finalElapsed = Date.now() - startTime;
@@ -531,6 +624,7 @@ export const executeWaitForElement: NodeExecutor = async (node, ctx) => {
   const timeout = Number(node.data.properties.timeout) || 10000;
   const visible = node.data.properties.visible !== false;
   const enabled = !!node.data.properties.enabled;
+  const timerName = node.data.properties.timerName ? String(interpolateVariables(node.data.properties.timerName, ctx.variables)).trim() : '';
 
   if (!selector) throw new Error('Wait For Element node requires a selector.');
 
@@ -543,17 +637,63 @@ export const executeWaitForElement: NodeExecutor = async (node, ctx) => {
     },
   });
 
-  const res = await sendDomAction('wait_for_element', { selector, timeout, visible, enabled }, ctx, timeout);
+  let stoppedEarly = false;
+  let stopReason: string | undefined;
+  const abortCtrl = new AbortController();
+  const onParentAbort = () => abortCtrl.abort();
+  ctx.signal?.addEventListener('abort', onParentAbort);
 
-  ctx.updateNodeState(node.id, {
-    status: 'success',
-    dynamicState: {
-      message: 'Found element',
-      detail: selector,
+  const timerHandle: ActiveTimer = {
+    nodeId: node.id,
+    timerName: timerName || undefined,
+    totalDurationMs: timeout,
+    startTime: Date.now(),
+    stop: (_action, reason) => {
+      stoppedEarly = true;
+      stopReason = reason;
+      abortCtrl.abort();
     },
-  });
+    reset: () => {},
+  };
 
-  return { success: true, output: res };
+  if (ctx._activeTimers) ctx._activeTimers.set(node.id, timerHandle);
+  globalActiveTimers.set(node.id, timerHandle);
+
+  try {
+    const res = await sendDomAction('wait_for_element', { selector, timeout, visible, enabled }, { ...ctx, signal: abortCtrl.signal }, timeout);
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: 'Found element',
+        detail: selector,
+      },
+    });
+
+    return { success: true, output: res };
+  } catch (err: any) {
+    if (stoppedEarly) {
+      ctx.log({
+        level: 'info',
+        message: `Wait For Element stopped early (${stopReason || 'Stopped by command'})`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      ctx.updateNodeState(node.id, {
+        status: 'success',
+        dynamicState: {
+          message: 'Stopped early',
+          detail: stopReason,
+        },
+      });
+      return { success: true, output: { stoppedEarly: true, reason: stopReason } };
+    }
+    throw err;
+  } finally {
+    if (ctx.signal) ctx.signal.removeEventListener('abort', onParentAbort);
+    if (ctx._activeTimers) ctx._activeTimers.delete(node.id);
+    globalActiveTimers.delete(node.id);
+  }
 };
 
 export const executeWaitForText: NodeExecutor = async (node, ctx) => {
@@ -563,6 +703,7 @@ export const executeWaitForText: NodeExecutor = async (node, ctx) => {
   const timeout = Number(node.data.properties.timeout) || 10000;
   const matchMode = node.data.properties.matchMode || 'partial';
   const caseSensitive = !!node.data.properties.caseSensitive;
+  const timerName = node.data.properties.timerName ? String(interpolateVariables(node.data.properties.timerName, ctx.variables)).trim() : '';
 
   ctx.log({
     level: 'info',
@@ -578,23 +719,70 @@ export const executeWaitForText: NodeExecutor = async (node, ctx) => {
     },
   });
 
-  const res = await sendDomAction(
-    'wait_for_text',
-    { text, selector, timeout, matchMode, caseSensitive },
-    ctx,
-    timeout + 1500
-  );
+  let stoppedEarly = false;
+  let stopReason: string | undefined;
+  const abortCtrl = new AbortController();
+  const onParentAbort = () => abortCtrl.abort();
+  ctx.signal?.addEventListener('abort', onParentAbort);
 
-  ctx.updateNodeState(node.id, {
-    status: 'success',
-    dynamicState: {
-      message: `Found "${text.slice(0, 18)}"`,
-      detail: text,
+  const timerHandle: ActiveTimer = {
+    nodeId: node.id,
+    timerName: timerName || undefined,
+    totalDurationMs: timeout,
+    startTime: Date.now(),
+    stop: (_action, reason) => {
+      stoppedEarly = true;
+      stopReason = reason;
+      abortCtrl.abort();
     },
-  });
+    reset: () => {},
+  };
 
-  return { success: true, output: res };
+  if (ctx._activeTimers) ctx._activeTimers.set(node.id, timerHandle);
+  globalActiveTimers.set(node.id, timerHandle);
+
+  try {
+    const res = await sendDomAction(
+      'wait_for_text',
+      { text, selector, timeout, matchMode, caseSensitive },
+      { ...ctx, signal: abortCtrl.signal },
+      timeout + 1500
+    );
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: `Found "${text.slice(0, 18)}"`,
+        detail: text,
+      },
+    });
+
+    return { success: true, output: res };
+  } catch (err: any) {
+    if (stoppedEarly) {
+      ctx.log({
+        level: 'info',
+        message: `Wait For Text stopped early (${stopReason || 'Stopped by command'})`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      ctx.updateNodeState(node.id, {
+        status: 'success',
+        dynamicState: {
+          message: 'Stopped early',
+          detail: stopReason,
+        },
+      });
+      return { success: true, output: { stoppedEarly: true, reason: stopReason } };
+    }
+    throw err;
+  } finally {
+    if (ctx.signal) ctx.signal.removeEventListener('abort', onParentAbort);
+    if (ctx._activeTimers) ctx._activeTimers.delete(node.id);
+    globalActiveTimers.delete(node.id);
+  }
 };
+
 
 // ----------------- EXTRACTION EXECUTORS -----------------
 
@@ -2493,30 +2681,60 @@ export const executeStopTimer: NodeExecutor = async (node, ctx) => {
   const reason = String(interpolateVariables(rawReason, ctx.variables));
   const outputVariable = node.data.properties.outputVariable || 'timerStopped';
 
+  const normalizedTarget = String(targetTimer).trim().toLowerCase();
   const activeTimers = ctx._activeTimers;
   let stoppedCount = 0;
 
+  const matchesTimer = (timer: ActiveTimer, id: string): boolean => {
+    if (!normalizedTarget || normalizedTarget === 'all') return true;
+    if (id.toLowerCase() === normalizedTarget) return true;
+    if (timer.nodeId && timer.nodeId.toLowerCase() === normalizedTarget) return true;
+    if (timer.timerName && timer.timerName.trim().toLowerCase() === normalizedTarget) return true;
+    return false;
+  };
+
+  const stoppedIds = new Set<string>();
+
+  // Check context active timers
   if (activeTimers && activeTimers.size > 0) {
     for (const [id, timer] of activeTimers.entries()) {
-      const match =
-        targetTimer === 'all' ||
-        targetTimer === id ||
-        (timer.timerName && timer.timerName.toLowerCase() === targetTimer.toLowerCase());
-
-      if (match) {
+      if (matchesTimer(timer, id)) {
         timer.stop(action, reason);
+        stoppedIds.add(id);
         stoppedCount++;
       }
     }
   }
 
+  // Check global active timers (handles single-node runs and cross-engine instances)
+  for (const [id, timer] of globalActiveTimers.entries()) {
+    if (!stoppedIds.has(id) && matchesTimer(timer, id)) {
+      timer.stop(action, reason);
+      stoppedIds.add(id);
+      stoppedCount++;
+    }
+  }
+
+  // Record pending stop signal to handle race conditions where wait timer starts immediately after (specific target only)
+  if (normalizedTarget && normalizedTarget !== 'all') {
+    const pendingRecord = {
+      action,
+      reason,
+      timestamp: Date.now(),
+    };
+    if (ctx._pendingStopTimers) {
+      ctx._pendingStopTimers.set(normalizedTarget, pendingRecord);
+    }
+    globalPendingStopTimers.set(normalizedTarget, pendingRecord);
+  }
+
   const successMessage =
     stoppedCount > 0
       ? `Stopped ${stoppedCount} wait timer(s) (${action === 'complete_early' ? 'Completed early' : 'Cancelled'}): "${reason}"`
-      : `No active timers found matching "${targetTimer}"`;
+      : `Stop signal queued for "${targetTimer}" (no active timers currently running)`;
 
   ctx.log({
-    level: stoppedCount > 0 ? 'success' : 'warn',
+    level: stoppedCount > 0 ? 'success' : 'info',
     message: successMessage,
     nodeId: node.id,
     nodeName: node.data.label,
@@ -2525,7 +2743,7 @@ export const executeStopTimer: NodeExecutor = async (node, ctx) => {
   ctx.updateNodeState(node.id, {
     status: 'success',
     dynamicState: {
-      message: stoppedCount > 0 ? `Stopped ${stoppedCount} timer(s)` : '0 timers found',
+      message: stoppedCount > 0 ? `Stopped ${stoppedCount} timer(s)` : 'Stop signal queued',
       detail: reason,
     },
   });
@@ -2550,20 +2768,35 @@ export const executeResetTimer: NodeExecutor = async (node, ctx) => {
   const extendMs = Number(node.data.properties.extendMs) || 5000;
   const outputVariable = node.data.properties.outputVariable || 'timerReset';
 
+  const normalizedTarget = String(targetTimer).trim().toLowerCase();
   const activeTimers = ctx._activeTimers;
   let resetCount = 0;
 
+  const matchesTimer = (timer: ActiveTimer, id: string): boolean => {
+    if (!normalizedTarget || normalizedTarget === 'all') return true;
+    if (id.toLowerCase() === normalizedTarget) return true;
+    if (timer.nodeId && timer.nodeId.toLowerCase() === normalizedTarget) return true;
+    if (timer.timerName && timer.timerName.trim().toLowerCase() === normalizedTarget) return true;
+    return false;
+  };
+
+  const resetIds = new Set<string>();
+
   if (activeTimers && activeTimers.size > 0) {
     for (const [id, timer] of activeTimers.entries()) {
-      const match =
-        targetTimer === 'all' ||
-        targetTimer === id ||
-        (timer.timerName && timer.timerName.toLowerCase() === targetTimer.toLowerCase());
-
-      if (match) {
+      if (matchesTimer(timer, id)) {
         timer.reset(mode, extendMs);
+        resetIds.add(id);
         resetCount++;
       }
+    }
+  }
+
+  for (const [id, timer] of globalActiveTimers.entries()) {
+    if (!resetIds.has(id) && matchesTimer(timer, id)) {
+      timer.reset(mode, extendMs);
+      resetIds.add(id);
+      resetCount++;
     }
   }
 
