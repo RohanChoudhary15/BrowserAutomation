@@ -7,7 +7,7 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 }
 
-export const REQUIRED_CONTENT_VERSION = '1.3.0-qol-features';
+export const REQUIRED_CONTENT_VERSION = '1.4.0-card-scraper';
 
 // Tracks the editor tab ID to return focus after element picking
 let lastEditorTabId: number | null = null;
@@ -287,23 +287,31 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
             );
           }
 
+          let res: any = null;
           try {
-            const res = await chrome.tabs.sendMessage(tabId, message);
-            // If outdated content script threw Unsupported DOM action, force re-inject latest content script and retry once
-            if (res && !res.success && typeof res.error === 'string' && res.error.includes('Unsupported DOM action')) {
-              console.warn('[AutoFlow] Tab has outdated content script, re-injecting latest version and retrying...', res.error);
-              await ensureContentScriptInjected(tabId, true);
-              const retryRes = await chrome.tabs.sendMessage(tabId, message);
-              return { ...retryRes, tabId };
-            }
-            return { ...res, tabId };
+            res = await chrome.tabs.sendMessage(tabId, message);
           } catch (err: any) {
             // Connection to tab content script failed or port closed; re-inject and retry
             console.warn('[AutoFlow] Content script connection error, re-injecting...', err);
             await ensureContentScriptInjected(tabId, true);
-            const retryRes = await chrome.tabs.sendMessage(tabId, message);
+            res = await chrome.tabs.sendMessage(tabId, message).catch((e) => ({ success: false, error: e?.message }));
+          }
+
+          // If content script in tab was outdated and threw Unsupported DOM action,
+          // execute direct DOM script fallback so execution never fails
+          if (!res || (!res.success && typeof res.error === 'string' && res.error.includes('Unsupported DOM action'))) {
+            console.warn('[AutoFlow] Outdated content script in tab, executing direct DOM action fallback...', res?.error);
+            const fallbackRes = await executeDirectDomAction(tabId, message.payload);
+            if (fallbackRes) {
+              return { ...fallbackRes, tabId };
+            }
+            // Try force re-injecting and retrying once
+            await ensureContentScriptInjected(tabId, true);
+            const retryRes = await chrome.tabs.sendMessage(tabId, message).catch((e) => ({ success: false, error: e?.message }));
             return { ...retryRes, tabId };
           }
+
+          return { ...res, tabId };
         }
 
         case 'ELEMENT_PICKED':
@@ -398,3 +406,168 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
   handleAsync().then(sendResponse);
   return true;
 });
+
+/**
+ * Direct DOM execution fallback for environments where the active tab has an outdated content script in memory
+ * and cannot process newly added actions like extract_dataset.
+ */
+async function executeDirectDomAction(tabId: number, payload: any): Promise<any> {
+  const normAction = (payload?.action || '').toLowerCase().trim().replace(/[\s\-]+/g, '_');
+  const params = payload?.params || {};
+
+  if (
+    normAction === 'extract_dataset' ||
+    normAction === 'scrape_elements' ||
+    normAction === 'scrapeelements' ||
+    normAction === 'extract_cards' ||
+    normAction === 'extractdataset' ||
+    normAction === 'extract_fields'
+  ) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (containerSelector: string, fields: any[]) => {
+          function toAbsoluteUrl(raw: string): string {
+            if (!raw || typeof raw !== 'string') return '';
+            const trimmed = raw.trim();
+            if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
+            try {
+              return new URL(trimmed, window.location.href).href;
+            } catch {
+              return trimmed;
+            }
+          }
+
+          function resolveAttr(el: Element, attrType?: string): string {
+            if (!el) return '';
+            const attr = (attrType || 'text').trim().toLowerCase();
+            if (attr === 'text' || attr === 'innertext' || attr === 'textcontent' || !attrType) {
+              return (el.textContent || '').trim();
+            }
+            if (attr === 'paragraphs' || attr === 'all_paragraphs' || attr === 'all_text') {
+              const pEls = Array.from(el.querySelectorAll('p'));
+              if (pEls.length > 0) {
+                return pEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+              }
+              const liEls = Array.from(el.querySelectorAll('li'));
+              if (liEls.length > 0) {
+                return liEls.map(li => `• ${(li.textContent || '').trim()}`).filter(Boolean).join('\n');
+              }
+              return (el.textContent || '').trim();
+            }
+            if (attr === 'src' || attr === 'image' || attr === 'image_url') {
+              let imgEl = (el instanceof HTMLImageElement || el.tagName.toLowerCase() === 'img')
+                ? (el as HTMLImageElement)
+                : el.querySelector('img');
+              if (imgEl) {
+                const dataSrc = imgEl.getAttribute('data-src') ||
+                  imgEl.getAttribute('data-original') ||
+                  imgEl.getAttribute('data-lazy-src') ||
+                  imgEl.getAttribute('data-url');
+                if (dataSrc && !dataSrc.startsWith('data:image')) return toAbsoluteUrl(dataSrc);
+                const srcset = imgEl.getAttribute('srcset');
+                if (srcset) {
+                  const candidates = srcset.split(',').map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
+                  if (candidates.length > 0) return toAbsoluteUrl(candidates[candidates.length - 1]);
+                }
+                const directSrc = imgEl.currentSrc || imgEl.src || imgEl.getAttribute('src');
+                if (directSrc && !directSrc.startsWith('data:image/svg') && !directSrc.startsWith('data:image/gif')) {
+                  return toAbsoluteUrl(directSrc);
+                }
+                if (dataSrc) return toAbsoluteUrl(dataSrc);
+              }
+              const inlineBg = (el as HTMLElement).style?.backgroundImage;
+              let computedBg = '';
+              if (window.getComputedStyle) {
+                try {
+                  computedBg = window.getComputedStyle(el).backgroundImage;
+                } catch {}
+              }
+              const bg = inlineBg || computedBg;
+              if (bg && bg !== 'none') {
+                const match = bg.match(/url\(['"]?(.*?)['"]?\)/i);
+                if (match && match[1]) return toAbsoluteUrl(match[1]);
+              }
+              const rawSrc = el.getAttribute('src');
+              if (rawSrc) return toAbsoluteUrl(rawSrc);
+              return '';
+            }
+            if (attr === 'href' || attr === 'link' || attr === 'url') {
+              const anchor = (el instanceof HTMLAnchorElement || el.tagName.toLowerCase() === 'a')
+                ? (el as HTMLAnchorElement)
+                : el.querySelector('a[href]');
+              if (anchor && anchor.href) return anchor.href;
+              const rawHref = el.getAttribute('href');
+              if (rawHref) return toAbsoluteUrl(rawHref);
+              return '';
+            }
+            if (attr === 'value') {
+              if ('value' in el) return String((el as HTMLInputElement).value ?? '');
+              return el.getAttribute('value') || '';
+            }
+            if (attr === 'html' || attr === 'outerhtml') return el.outerHTML;
+            if (attr === 'innerhtml') return el.innerHTML;
+            return el.getAttribute(attrType || '') || (el as any)[attrType || ''] || '';
+          }
+
+          const safeFields = Array.isArray(fields) && fields.length > 0
+            ? fields
+            : [{ name: 'value', selector: '', attribute: 'text' }];
+
+          if (containerSelector) {
+            const containers = Array.from(document.querySelectorAll(containerSelector));
+            const items = containers.map((container) => {
+              const row: Record<string, any> = {};
+              for (const field of safeFields) {
+                const attrType = field.attribute || 'text';
+                if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
+                  const subEls = Array.from(container.querySelectorAll(field.selector || 'p'));
+                  if (subEls.length > 0) {
+                    row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+                    continue;
+                  }
+                }
+                const targetEl = field.selector ? container.querySelector(field.selector) : container;
+                row[field.name] = targetEl ? resolveAttr(targetEl, attrType) : '';
+              }
+              return row;
+            });
+            return { success: true, items, rowCount: items.length };
+          } else {
+            const fieldValues: Record<string, string[]> = {};
+            let maxLen = 0;
+            for (const field of safeFields) {
+              if (!field.selector) {
+                fieldValues[field.name] = [];
+                continue;
+              }
+              const els = Array.from(document.querySelectorAll(field.selector));
+              const vals = els.map((el) => resolveAttr(el, field.attribute || 'text'));
+              fieldValues[field.name] = vals;
+              if (vals.length > maxLen) maxLen = vals.length;
+            }
+            const items: Record<string, any>[] = [];
+            for (let i = 0; i < maxLen; i++) {
+              const row: Record<string, any> = {};
+              for (const field of safeFields) {
+                row[field.name] = fieldValues[field.name]?.[i] ?? '';
+              }
+              items.push(row);
+            }
+            return { success: true, items, rowCount: items.length };
+          }
+        },
+        args: [params.containerSelector || '', params.fields || []],
+      });
+
+      if (results && results[0] && results[0].result) {
+        return results[0].result;
+      }
+    } catch (directErr) {
+      console.error('[AutoFlow] Direct DOM execution fallback failed:', directErr);
+    }
+  }
+
+  return null;
+}
+

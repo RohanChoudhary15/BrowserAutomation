@@ -5,83 +5,96 @@ import * as domActions from './domActions';
 import { ExtensionMessage } from '../types/messages';
 import { HumanConfig } from '../utils/human';
 
-export const CONTENT_SCRIPT_VERSION = '1.3.0-qol-features';
+export const CONTENT_SCRIPT_VERSION = '1.4.0-card-scraper';
 console.log('🤖 AutoFlow Content Script loaded on', window.location.href, `(v${CONTENT_SCRIPT_VERSION})`);
 
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
-  // Return true if async response is required
-  const handleAsync = async () => {
-    try {
-      switch (message.type) {
-        case 'PING':
-          return { success: true, url: window.location.href, version: CONTENT_SCRIPT_VERSION };
+// Expose latest version and action executor on window so re-injected scripts or existing listeners use latest logic
+(window as any).__autoflow_version__ = CONTENT_SCRIPT_VERSION;
+(window as any).__autoflow_execute_action__ = executeAction;
 
-        case 'START_ELEMENT_PICKER': {
-          const pickerMode = (message as any).payload?.mode || 'single';
-          startElementPicker(
-            (result) => {
-              chrome.runtime.sendMessage({
-                type: 'ELEMENT_PICKED',
-                payload: result,
-              });
-            },
-            () => {
-              chrome.runtime.sendMessage({
-                type: 'PICKER_CANCELLED',
-              });
-            },
-            pickerMode
-          );
-          return { success: true };
-        }
+if (!(window as any).__autoflow_listener_registered__) {
+  (window as any).__autoflow_listener_registered__ = true;
 
-        case 'STOP_ELEMENT_PICKER':
-          stopElementPicker();
-          return { success: true };
+  chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+    // Return true if async response is required
+    const handleAsync = async () => {
+      try {
+        switch (message.type) {
+          case 'PING':
+            return {
+              success: true,
+              url: window.location.href,
+              version: (window as any).__autoflow_version__ || CONTENT_SCRIPT_VERSION,
+            };
 
-        case 'START_RECORDING':
-          startActionRecorder((action) => {
-            chrome.runtime.sendMessage({
-              type: 'RECORDED_ACTION',
-              payload: {
-                ...action,
-                url: window.location.href,
+          case 'START_ELEMENT_PICKER': {
+            const pickerMode = (message as any).payload?.mode || 'single';
+            startElementPicker(
+              (result) => {
+                chrome.runtime.sendMessage({
+                  type: 'ELEMENT_PICKED',
+                  payload: result,
+                });
               },
-            });
-          });
-          return { success: true };
-
-        case 'STOP_RECORDING':
-          stopActionRecorder();
-          return { success: true };
-
-        case 'EXECUTE_DOM_ACTION': {
-          const { action, params, timeout, human } = message.payload;
-          return await executeAction(action, params, timeout, human);
-        }
-
-        case 'HIGHLIGHT_ELEMENT': {
-          const el = document.querySelector(message.payload.selector);
-          if (el instanceof HTMLElement) {
-            el.style.outline = '3px solid #6366f1';
-            setTimeout(() => {
-              el.style.outline = '';
-            }, message.payload.durationMs || 1000);
+              () => {
+                chrome.runtime.sendMessage({
+                  type: 'PICKER_CANCELLED',
+                });
+              },
+              pickerMode
+            );
+            return { success: true };
           }
-          return { success: true };
+
+          case 'STOP_ELEMENT_PICKER':
+            stopElementPicker();
+            return { success: true };
+
+          case 'START_RECORDING':
+            startActionRecorder((action) => {
+              chrome.runtime.sendMessage({
+                type: 'RECORDED_ACTION',
+                payload: {
+                  ...action,
+                  url: window.location.href,
+                },
+              });
+            });
+            return { success: true };
+
+          case 'STOP_RECORDING':
+            stopActionRecorder();
+            return { success: true };
+
+          case 'EXECUTE_DOM_ACTION': {
+            const { action, params, timeout, human } = message.payload;
+            const executor = (window as any).__autoflow_execute_action__ || executeAction;
+            return await executor(action, params, timeout, human);
+          }
+
+          case 'HIGHLIGHT_ELEMENT': {
+            const el = document.querySelector(message.payload.selector);
+            if (el instanceof HTMLElement) {
+              el.style.outline = '3px solid #6366f1';
+              setTimeout(() => {
+                el.style.outline = '';
+              }, message.payload.durationMs || 1000);
+            }
+            return { success: true };
+          }
+
+          default:
+            return { success: false, error: 'Unknown message type in content script' };
         }
-
-        default:
-          return { success: false, error: 'Unknown message type in content script' };
+      } catch (err: any) {
+        return { success: false, error: err.message || String(err) };
       }
-    } catch (err: any) {
-      return { success: false, error: err.message || String(err) };
-    }
-  };
+    };
 
-  handleAsync().then(sendResponse);
-  return true; // Keep message channel open for async response
-});
+    handleAsync().then(sendResponse);
+    return true; // Keep message channel open for async response
+  });
+}
 
 async function executeAction(
   action: string,
@@ -235,6 +248,10 @@ async function executeAction(
         timeout: params.timeout || timeout,
       });
 
+    case 'scrape_elements':
+    case 'scrapeelements':
+    case 'extract_cards':
+    case 'extract_card':
     case 'extract_dataset':
     case 'extractdataset':
     case 'extract_fields':
