@@ -68,6 +68,7 @@ export type NodeType =
   | 'json_parse'
   | 'generate_data'
   | 'math_calculate'
+  | 'export_data'
   // Utility
   | 'screenshot'
   | 'execute_javascript'

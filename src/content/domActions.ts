@@ -975,6 +975,115 @@ export async function extractMultipleElements(
   });
 }
 
+export interface ExtractDatasetField {
+  name: string;
+  selector?: string;
+  attribute?: string;
+}
+
+export async function extractDataset(
+  params: {
+    containerSelector?: string;
+    fields: ExtractDatasetField[];
+    timeout?: number;
+  },
+  signal?: AbortSignal
+): Promise<{ items: Record<string, any>[]; rowCount: number; headers: string[] }> {
+  const timeout = params.timeout || 10000;
+  const startTime = Date.now();
+  const pollInterval = 100;
+  const fields = params.fields && params.fields.length > 0 ? params.fields : [{ name: 'value', selector: '' }];
+  const headers = fields.map((f) => f.name || 'field');
+
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (signal?.aborted) return reject(new Error('Extract dataset aborted.'));
+
+      if (params.containerSelector) {
+        // Mode 1: Extract from container elements (e.g. .product-card, tr)
+        const containers = Array.from(document.querySelectorAll(params.containerSelector));
+        if (containers.length > 0) {
+          containers.slice(0, 3).forEach((el) => flashHighlight(el));
+          const items: Record<string, any>[] = containers.map((container) => {
+            const row: Record<string, any> = {};
+            for (const field of fields) {
+              const targetEl = field.selector ? container.querySelector(field.selector) : container;
+              if (targetEl) {
+                if (field.attribute) {
+                  if (field.attribute === 'href' && 'href' in targetEl) {
+                    row[field.name] = (targetEl as HTMLAnchorElement).href;
+                  } else if (field.attribute === 'src' && 'src' in targetEl) {
+                    row[field.name] = (targetEl as HTMLImageElement).src;
+                  } else if (field.attribute === 'value' && 'value' in targetEl) {
+                    row[field.name] = (targetEl as HTMLInputElement).value;
+                  } else {
+                    row[field.name] = targetEl.getAttribute(field.attribute) || '';
+                  }
+                } else {
+                  row[field.name] = (targetEl.textContent || '').trim();
+                }
+              } else {
+                row[field.name] = '';
+              }
+            }
+            return row;
+          });
+          return resolve({ items, rowCount: items.length, headers });
+        }
+      } else {
+        // Mode 2: Extract globally per field and zip
+        const fieldValues: Record<string, string[]> = {};
+        let maxLen = 0;
+        let anyFound = false;
+
+        for (const field of fields) {
+          if (!field.selector) {
+            fieldValues[field.name] = [];
+            continue;
+          }
+          const els = Array.from(document.querySelectorAll(field.selector));
+          if (els.length > 0) {
+            anyFound = true;
+            els.slice(0, 3).forEach((el) => flashHighlight(el));
+            const vals = els.map((el) => {
+              if (field.attribute) {
+                if (field.attribute === 'href' && 'href' in el) return (el as HTMLAnchorElement).href;
+                if (field.attribute === 'src' && 'src' in el) return (el as HTMLImageElement).src;
+                if (field.attribute === 'value' && 'value' in el) return (el as HTMLInputElement).value;
+                return el.getAttribute(field.attribute) || '';
+              }
+              return (el.textContent || '').trim();
+            });
+            fieldValues[field.name] = vals;
+            if (vals.length > maxLen) maxLen = vals.length;
+          } else {
+            fieldValues[field.name] = [];
+          }
+        }
+
+        if (anyFound) {
+          const items: Record<string, any>[] = [];
+          for (let i = 0; i < maxLen; i++) {
+            const row: Record<string, any> = {};
+            for (const field of fields) {
+              const vals = fieldValues[field.name] || [];
+              row[field.name] = i < vals.length ? vals[i] : '';
+            }
+            items.push(row);
+          }
+          return resolve({ items, rowCount: items.length, headers });
+        }
+      }
+
+      if (Date.now() - startTime >= timeout) {
+        return resolve({ items: [], rowCount: 0, headers });
+      }
+      setTimeout(check, pollInterval);
+    };
+    check();
+  });
+}
+
 export async function extractLinks(
   selector?: string,
   timeout = 10000,

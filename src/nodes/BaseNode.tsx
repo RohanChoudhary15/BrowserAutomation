@@ -32,6 +32,7 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
   else if (data.type === 'math_calculate') summary = `${data.properties?.outputVariable || 'counter'} (${data.properties?.operation || 'add'})`;
+  else if (data.type === 'export_data') summary = `${(data.properties?.format || 'csv').toUpperCase()}: ${data.properties?.filename || 'dataset'}`;
   else if (data.type === 'stop_timer') summary = `Stop: ${data.properties?.targetTimer === 'all' ? 'All Timers' : data.properties?.targetTimer || 'All'} (${data.properties?.action === 'cancel' ? 'Cancel' : 'Finish Early'})`;
   else if (data.type === 'reset_timer') summary = `Reset: ${data.properties?.targetTimer === 'all' ? 'All Timers' : data.properties?.targetTimer || 'All'} (${data.properties?.mode === 'extend' ? `+${data.properties?.extendMs || 5000}ms` : 'Restart'})`;
   else if (data.type === 'stop_workflow') summary = `Exit Workflow (${data.properties?.exitStatus || 'completed'})`;

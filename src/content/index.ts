@@ -235,6 +235,15 @@ async function executeAction(
         timeout: params.timeout || timeout,
       });
 
+    case 'extract_dataset':
+    case 'extractdataset':
+    case 'extract_fields':
+      return await domActions.extractDataset({
+        containerSelector: params.containerSelector,
+        fields: params.fields || [],
+        timeout: params.timeout || timeout,
+      });
+
     case 'extract_links':
     case 'extractlinks':
     case 'extract_urls':

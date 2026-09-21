@@ -27,6 +27,9 @@ import {
   Bell,
   Calculator,
   FileText,
+  FileSpreadsheet,
+  Table,
+  FileDown,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
@@ -1126,7 +1129,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -1292,6 +1295,100 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span className="text-[11px] text-gray-300">Stop crawling when no new items appear</span>
               </label>
             </div>
+          </div>
+        )}
+
+        {/* Extract Multiple Direct File Export */}
+        {selectedNode.data.type === 'extract_multiple' && (
+          <div className="space-y-2.5 pt-2 border-t border-[#1c2230]">
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!props.exportToFile}
+                onChange={(e) => handlePropChange('exportToFile', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px] font-medium text-indigo-300">
+                💾 Direct Export Items to File (CSV / XLSX / JSON)
+              </span>
+            </label>
+
+            {props.exportToFile && (
+              <div className="space-y-2 p-2 rounded-lg bg-[#0e121a] border border-[#1e2433]">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Format</label>
+                    <select
+                      value={props.exportFormat || 'csv'}
+                      onChange={(e) => handlePropChange('exportFormat', e.target.value)}
+                      className="w-full bg-[#11141c] text-white p-1 rounded border border-[#1c2230] text-xs"
+                    >
+                      <option value="csv">CSV Spreadsheet (.csv)</option>
+                      <option value="xlsx">Excel (.xlsx)</option>
+                      <option value="json">JSON (.json)</option>
+                      <option value="tsv">TSV (.tsv)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Filename</label>
+                    <input
+                      type="text"
+                      value={props.exportFilename || 'extracted_items'}
+                      onChange={(e) => handlePropChange('exportFilename', e.target.value)}
+                      placeholder="extracted_items"
+                      className="w-full bg-[#11141c] text-white p-1 rounded border border-[#1c2230] text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Crawl Pagination Direct File Export */}
+        {selectedNode.data.type === 'crawl_pagination' && (
+          <div className="space-y-2.5 pt-2 border-t border-[#1c2230]">
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!props.exportToFile}
+                onChange={(e) => handlePropChange('exportToFile', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px] font-medium text-indigo-300">
+                💾 Direct Export Crawled Dataset (CSV / XLSX / JSON)
+              </span>
+            </label>
+
+            {props.exportToFile && (
+              <div className="space-y-2 p-2 rounded-lg bg-[#0e121a] border border-[#1e2433]">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Format</label>
+                    <select
+                      value={props.exportFormat || 'csv'}
+                      onChange={(e) => handlePropChange('exportFormat', e.target.value)}
+                      className="w-full bg-[#11141c] text-white p-1 rounded border border-[#1c2230] text-xs"
+                    >
+                      <option value="csv">CSV Spreadsheet (.csv)</option>
+                      <option value="xlsx">Excel (.xlsx)</option>
+                      <option value="json">JSON (.json)</option>
+                      <option value="tsv">TSV (.tsv)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Filename</label>
+                    <input
+                      type="text"
+                      value={props.exportFilename || 'crawled_dataset'}
+                      onChange={(e) => handlePropChange('exportFilename', e.target.value)}
+                      placeholder="crawled_dataset"
+                      className="w-full bg-[#11141c] text-white p-1 rounded border border-[#1c2230] text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1781,6 +1878,336 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
               <span className="text-[11px]">Prompt user with "Save As" file dialog</span>
             </label>
+          </div>
+        )}
+
+        {/* Export Data Node (CSV, XLSX, JSON, TSV, HTML) */}
+        {selectedNode.data.type === 'export_data' && (
+          <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+            {/* Format Picker */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                Export File Format
+              </label>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
+                {[
+                  { id: 'csv', label: 'CSV', ext: '.csv', icon: '📄' },
+                  { id: 'xlsx', label: 'Excel', ext: '.xlsx', icon: '📊' },
+                  { id: 'json', label: 'JSON', ext: '.json', icon: '🗄️' },
+                  { id: 'tsv', label: 'TSV', ext: '.tsv', icon: '📑' },
+                  { id: 'html_table', label: 'HTML', ext: '.html', icon: '🌐' },
+                ].map((fmt) => (
+                  <button
+                    key={fmt.id}
+                    type="button"
+                    onClick={() => handlePropChange('format', fmt.id)}
+                    className={`py-2 px-2 text-center rounded-lg text-[11px] font-medium transition-all flex flex-col items-center gap-0.5 ${
+                      (props.format || 'csv') === fmt.id
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                    }`}
+                  >
+                    <span>{fmt.icon} {fmt.label}</span>
+                    <span className="text-[9px] opacity-75 font-mono">{fmt.ext}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Source Mode Segmented Tabs */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Data Source Mode
+              </label>
+              <div className="grid grid-cols-3 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('sourceMode', 'variable')}
+                  className={`py-1.5 px-1.5 text-center rounded-lg font-medium transition-all ${
+                    (props.sourceMode || 'variable') === 'variable'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  From Variable
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('sourceMode', 'multiple_variables')}
+                  className={`py-1.5 px-1.5 text-center rounded-lg font-medium transition-all ${
+                    props.sourceMode === 'multiple_variables'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  Zip Columns
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('sourceMode', 'dom_elements')}
+                  className={`py-1.5 px-1.5 text-center rounded-lg font-medium transition-all ${
+                    props.sourceMode === 'dom_elements'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  DOM Elements
+                </button>
+              </div>
+            </div>
+
+            {/* Mode 1: Single Variable / Dataset */}
+            {(props.sourceMode || 'variable') === 'variable' && (
+              <div className="space-y-2 p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433]">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-300">Dataset Variable Name</label>
+                  <span className="text-[10px] text-purple-400 font-mono">&#123;&#123;var&#125;&#125;</span>
+                </div>
+                <input
+                  type="text"
+                  value={props.datasetVariable || 'extractedList'}
+                  onChange={(e) => handlePropChange('datasetVariable', e.target.value)}
+                  placeholder="e.g. extractedList, crawledDataset, tableData"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+                <p className="text-[10px] text-gray-400">
+                  Export from any array or object variable collected by previous nodes (e.g. Extract Multiple, Auto-Crawler, Extract Table).
+                </p>
+              </div>
+            )}
+
+            {/* Mode 2: Multiple Variables as Zipped Columns */}
+            {props.sourceMode === 'multiple_variables' && (
+              <div className="space-y-2.5 p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433]">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-gray-300">Columns Mapping (Zipped by Row)</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const current = Array.isArray(props.columns) ? props.columns : [];
+                      handlePropChange('columns', [...current, { header: `Column ${current.length + 1}`, value: '' }]);
+                    }}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                  >
+                    <Plus className="w-3 h-3" /> Add Column
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {(Array.isArray(props.columns) && props.columns.length > 0 ? props.columns : [
+                    { header: 'Title', value: '{{titles}}' },
+                    { header: 'Price', value: '{{prices}}' },
+                  ]).map((col: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-1.5 bg-[#141924] p-2 rounded-lg border border-[#202738]">
+                      <input
+                        type="text"
+                        value={col.header}
+                        onChange={(e) => {
+                          const updated = [...(props.columns || [])];
+                          updated[idx] = { ...updated[idx], header: e.target.value };
+                          handlePropChange('columns', updated);
+                        }}
+                        placeholder="Header"
+                        className="w-1/3 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        value={col.value}
+                        onChange={(e) => {
+                          const updated = [...(props.columns || [])];
+                          updated[idx] = { ...updated[idx], value: e.target.value };
+                          handlePropChange('columns', updated);
+                        }}
+                        placeholder="{{variableList}}"
+                        className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono text-purple-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (props.columns || []).filter((_: any, i: number) => i !== idx);
+                          handlePropChange('columns', updated);
+                        }}
+                        className="text-gray-500 hover:text-red-400 p-1"
+                        title="Delete column"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  Multiple array variables are aligned into rows automatically by row index.
+                </p>
+              </div>
+            )}
+
+            {/* Mode 3: Direct from Webpage DOM Elements */}
+            {props.sourceMode === 'dom_elements' && (
+              <div className="space-y-2.5 p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-medium text-gray-300">Container Selector (Optional)</label>
+                    <span className="text-[10px] text-gray-500">e.g. .card, tr</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={props.domContainerSelector || ''}
+                    onChange={(e) => handlePropChange('domContainerSelector', e.target.value)}
+                    placeholder="e.g. .product-item, .card, tr.row"
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] font-medium text-gray-300">Fields to Extract</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const current = Array.isArray(props.domFields) ? props.domFields : [];
+                      handlePropChange('domFields', [...current, { name: `field_${current.length + 1}`, selector: '', attribute: '' }]);
+                    }}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                  >
+                    <Plus className="w-3 h-3" /> Add Field
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {(Array.isArray(props.domFields) && props.domFields.length > 0 ? props.domFields : [
+                    { name: 'title', selector: '.title', attribute: '' },
+                    { name: 'url', selector: 'a', attribute: 'href' },
+                  ]).map((field: any, idx: number) => (
+                    <div key={idx} className="bg-[#141924] p-2 rounded-lg border border-[#202738] space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={field.name}
+                          onChange={(e) => {
+                            const updated = [...(props.domFields || [])];
+                            updated[idx] = { ...updated[idx], name: e.target.value };
+                            handlePropChange('domFields', updated);
+                          }}
+                          placeholder="Field name"
+                          className="w-1/3 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px]"
+                        />
+                        <input
+                          type="text"
+                          value={field.selector}
+                          onChange={(e) => {
+                            const updated = [...(props.domFields || [])];
+                            updated[idx] = { ...updated[idx], selector: e.target.value };
+                            handlePropChange('domFields', updated);
+                          }}
+                          placeholder="CSS selector"
+                          className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = (props.domFields || []).filter((_: any, i: number) => i !== idx);
+                            handlePropChange('domFields', updated);
+                          }}
+                          className="text-gray-500 hover:text-red-400 p-1"
+                          title="Delete field"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-gray-500">Attribute:</span>
+                        <select
+                          value={field.attribute || ''}
+                          onChange={(e) => {
+                            const updated = [...(props.domFields || [])];
+                            updated[idx] = { ...updated[idx], attribute: e.target.value };
+                            handlePropChange('domFields', updated);
+                          }}
+                          className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[10px]"
+                        >
+                          <option value="">Text Content (inner text)</option>
+                          <option value="href">href (Link URL)</option>
+                          <option value="src">src (Image/Media)</option>
+                          <option value="value">value (Form input)</option>
+                          <option value="title">title</option>
+                          <option value="alt">alt</option>
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Filename & Output Settings */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">Save Filename</label>
+                  <span className="text-[10px] text-indigo-400 font-mono">
+                    {(props.filename || 'collected_data').replace(/\.[a-zA-Z0-9]+$/, '')}.{props.format === 'xlsx' ? 'xlsx' : props.format === 'json' ? 'json' : props.format === 'tsv' ? 'tsv' : props.format === 'html_table' ? 'html' : 'csv'}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={props.filename || 'collected_data'}
+                  onChange={(e) => handlePropChange('filename', e.target.value)}
+                  placeholder="e.g. scraped_leads_{{date}}"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+
+              {/* CSV Delimiter (only for CSV) */}
+              {(props.format === 'csv' || !props.format) && (
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">CSV Delimiter</label>
+                  <select
+                    value={props.csvDelimiter || ','}
+                    onChange={(e) => handlePropChange('csvDelimiter', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value=",">Comma (,) - Standard</option>
+                    <option value=";">Semicolon (;) - European Excel</option>
+                    <option value="&#9;">Tab (\t) - TSV</option>
+                    <option value="|">Pipe (|)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Toggles */}
+              <div className="space-y-2 pt-1 border-t border-[#1c2230]">
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={props.autoDownload !== false}
+                    onChange={(e) => handlePropChange('autoDownload', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px]">Auto-download file to computer</span>
+                </label>
+
+                {props.autoDownload !== false && (
+                  <label className="flex items-center gap-2 text-gray-400 cursor-pointer pl-5 text-[10px]">
+                    <input
+                      type="checkbox"
+                      checked={!!props.saveAs}
+                      onChange={(e) => handlePropChange('saveAs', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span>Prompt for download location (Save As)</span>
+                  </label>
+                )}
+
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.copyToClipboard}
+                    onChange={(e) => handlePropChange('copyToClipboard', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px]">Copy exported content to system clipboard</span>
+                </label>
+              </div>
+            </div>
           </div>
         )}
 

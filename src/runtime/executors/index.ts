@@ -9,7 +9,13 @@ import {
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
-import { formatAiAgentDocument, AiAgentOutputFormat } from '../../utils/documentExporter';
+import {
+  formatAiAgentDocument,
+  AiAgentOutputFormat,
+  createExportDocument,
+  zipVariablesToDataset,
+  ExportDataFormat,
+} from '../../utils/documentExporter';
 import { runInSandbox, safeEvaluateMath } from '../sandboxEvaluator';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
@@ -1308,16 +1314,42 @@ export const executeExtractMultiple: NodeExecutor = async (node, ctx) => {
   const attribute = node.data.properties.attribute ? interpolateVariables(node.data.properties.attribute, ctx.variables) : undefined;
   const outputVariable = node.data.properties.outputVariable || 'extractedList';
   const timeout = Number(node.data.properties.timeout) || 10000;
+  const exportToFile = !!node.data.properties.exportToFile;
+  const exportFormat = (node.data.properties.exportFormat || 'csv') as ExportDataFormat;
+  const rawExportFilename = node.data.properties.exportFilename || `${outputVariable}_export`;
+  const exportFilename = interpolateVariables(rawExportFilename, ctx.variables);
 
   if (!selector) throw new Error('Extract Multiple requires a selector.');
 
   ctx.log({ level: 'info', message: `Extracting elements matching ${selector}`, nodeId: node.id, nodeName: node.data.label });
   const res = await sendDomAction('extract_multiple', { selector, attribute, timeout }, ctx, timeout);
+  const items = res?.items || res?.result?.items || [];
+
+  let exportResult: any = undefined;
+  if (exportToFile && items.length > 0) {
+    const doc = createExportDocument(items, exportFormat, { filename: exportFilename });
+    await triggerFileDownload(doc.dataUrl, doc.filename);
+    exportResult = doc;
+    ctx.log({
+      level: 'info',
+      message: `Direct export: saved ${doc.rowCount} items to ${doc.filename}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  }
 
   return {
     success: true,
-    output: res.items,
-    variables: { [outputVariable]: res.items },
+    output: items,
+    variables: {
+      [outputVariable]: items,
+      ...(exportResult
+        ? {
+            [`${outputVariable}_dataUrl`]: exportResult.dataUrl,
+            [`${outputVariable}_filename`]: exportResult.filename,
+          }
+        : {}),
+    },
   };
 };
 
@@ -1532,6 +1564,24 @@ export const executeCrawlPagination: NodeExecutor = async (node, ctx) => {
     totalCount: aggregatedList.length,
   });
 
+  const exportToFile = !!node.data.properties.exportToFile;
+  const exportFormat = (node.data.properties.exportFormat || 'csv') as ExportDataFormat;
+  const rawExportFilename = node.data.properties.exportFilename || `${outputVariable}_export`;
+  const exportFilename = interpolateVariables(rawExportFilename, ctx.variables);
+
+  let exportResult: any = undefined;
+  if (exportToFile && aggregatedList.length > 0) {
+    const doc = createExportDocument(aggregatedList, exportFormat, { filename: exportFilename });
+    await triggerFileDownload(doc.dataUrl, doc.filename);
+    exportResult = doc;
+    ctx.log({
+      level: 'info',
+      message: `Direct export: saved ${doc.rowCount} crawled items to ${doc.filename}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  }
+
   return {
     success: true,
     output,
@@ -1542,6 +1592,12 @@ export const executeCrawlPagination: NodeExecutor = async (node, ctx) => {
       crawlTotalCount: aggregatedList.length,
       crawlPageCount: pagesCrawled,
       totalPagesCrawled: pagesCrawled,
+      ...(exportResult
+        ? {
+            [`${outputVariable}_dataUrl`]: exportResult.dataUrl,
+            [`${outputVariable}_filename`]: exportResult.filename,
+          }
+        : {}),
     },
   };
 };
@@ -2622,6 +2678,190 @@ export const executeDownloadFile: NodeExecutor = async (node, ctx) => {
   };
 };
 
+/**
+ * Universal file download trigger (Chrome downloads API with DOM anchor fallback)
+ */
+async function triggerFileDownload(dataUrl: string, filename: string, saveAs = false): Promise<any> {
+  if (typeof chrome !== 'undefined' && chrome.downloads && chrome.downloads.download) {
+    try {
+      return await chrome.downloads.download({
+        url: dataUrl,
+        filename,
+        saveAs,
+      });
+    } catch (e) {
+      console.warn('[AutoFlow] Chrome download API failed, falling back to DOM anchor:', e);
+    }
+  }
+
+  if (typeof document !== 'undefined') {
+    try {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 200);
+      return 'dom_fallback';
+    } catch (domErr) {
+      console.warn('[AutoFlow] DOM download fallback failed:', domErr);
+    }
+  }
+
+  return 'download_unsupported';
+}
+
+export const executeExportData: NodeExecutor = async (node, ctx) => {
+  const format = (node.data.properties.format || 'csv') as ExportDataFormat;
+  const sourceMode = node.data.properties.sourceMode || 'variable';
+  const rawFilename = node.data.properties.filename || 'collected_data';
+  const filename = String(interpolateVariables(rawFilename, ctx.variables));
+  const autoDownload = node.data.properties.autoDownload !== false;
+  const saveAs = !!node.data.properties.saveAs;
+  const copyToClipboard = !!node.data.properties.copyToClipboard;
+  const csvDelimiter = node.data.properties.csvDelimiter || (format === 'tsv' ? '\t' : ',');
+  const includeHeaders = node.data.properties.includeHeaders !== false;
+  const sheetName = node.data.properties.sheetName || 'Data';
+  const outputVariable = node.data.properties.outputVariable || 'exportedData';
+
+  ctx.log({
+    level: 'info',
+    message: `Exporting dataset (${format.toUpperCase()} mode: ${sourceMode}) to ${filename}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Preparing ${format.toUpperCase()} export...`,
+      progress: 25,
+    },
+  });
+
+  let rawDataset: any = null;
+
+  // 1. Resolve source data according to sourceMode
+  if (sourceMode === 'dom_elements') {
+    const containerSelector = node.data.properties.domContainerSelector
+      ? interpolateVariables(node.data.properties.domContainerSelector, ctx.variables)
+      : undefined;
+    const domFields = Array.isArray(node.data.properties.domFields) ? node.data.properties.domFields : [];
+    const fields = domFields.map((f: any) => ({
+      name: interpolateVariables(f.name || 'field', ctx.variables),
+      selector: f.selector ? interpolateVariables(f.selector, ctx.variables) : undefined,
+      attribute: f.attribute ? interpolateVariables(f.attribute, ctx.variables) : undefined,
+    }));
+
+    const res = await sendDomAction('extract_dataset', { containerSelector, fields }, ctx, 15000);
+    rawDataset = res?.items || [];
+  } else if (sourceMode === 'multiple_variables') {
+    const columns = Array.isArray(node.data.properties.columns) ? node.data.properties.columns : [];
+    const resolvedColumns = columns.map((col: any) => {
+      const header = String(interpolateVariables(col.header || 'Column', ctx.variables));
+      let val: any = undefined;
+      const rawVal = col.value || '';
+      const varMatch = String(rawVal).trim().match(/^\{\{([a-zA-Z0-9_.-]+)\}\}$/);
+      if (varMatch && ctx.variables[varMatch[1]] !== undefined) {
+        val = ctx.variables[varMatch[1]];
+      } else {
+        val = interpolateVariables(rawVal, ctx.variables);
+      }
+      return { header, value: val };
+    });
+
+    rawDataset = zipVariablesToDataset(resolvedColumns);
+  } else if (sourceMode === 'custom_json') {
+    const rawJson = node.data.properties.customJson || '[]';
+    const interpolated = interpolateVariables(rawJson, ctx.variables);
+    try {
+      rawDataset = JSON.parse(interpolated);
+    } catch {
+      rawDataset = [{ value: interpolated }];
+    }
+  } else {
+    // Default: 'variable' mode
+    const varNameRaw = node.data.properties.datasetVariable || 'extractedList';
+    const varMatch = String(varNameRaw).trim().match(/^\{\{([a-zA-Z0-9_.-]+)\}\}$/);
+    const cleanVarName = varMatch ? varMatch[1] : varNameRaw.trim();
+
+    if (ctx.variables[cleanVarName] !== undefined) {
+      rawDataset = ctx.variables[cleanVarName];
+    } else {
+      const interpolated = interpolateVariables(varNameRaw, ctx.variables);
+      if (typeof interpolated === 'string' && (interpolated.startsWith('[') || interpolated.startsWith('{'))) {
+        try {
+          rawDataset = JSON.parse(interpolated);
+        } catch {
+          rawDataset = interpolated;
+        }
+      } else {
+        rawDataset = interpolated;
+      }
+    }
+  }
+
+  // 2. Format dataset into document
+  const doc = createExportDocument(rawDataset, format, {
+    filename,
+    delimiter: csvDelimiter,
+    includeHeaders,
+    sheetName,
+  });
+
+  // 3. Auto-download if enabled
+  let downloadId: any = undefined;
+  if (autoDownload && doc.dataUrl) {
+    downloadId = await triggerFileDownload(doc.dataUrl, doc.filename, saveAs);
+  }
+
+  // 4. Copy to clipboard if enabled
+  if (copyToClipboard && doc.content) {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(doc.content);
+      } else {
+        await sendDomAction('copy_to_clipboard', { text: doc.content }, ctx, 3000);
+      }
+    } catch (clipErr) {
+      console.warn('[AutoFlow] Copy to clipboard warning:', clipErr);
+    }
+  }
+
+  ctx.log({
+    level: 'success',
+    message: `Exported ${doc.rowCount} rows (${doc.columnCount} columns) to ${doc.filename}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `${doc.filename} (${doc.rowCount} rows)`,
+      detail: `${doc.rowCount} rows × ${doc.columnCount} cols [${format.toUpperCase()}]`,
+      progress: 100,
+    },
+  });
+
+  const exportVars = {
+    [outputVariable]: doc.rows,
+    [`${outputVariable}_content`]: doc.content,
+    [`${outputVariable}_dataUrl`]: doc.dataUrl,
+    [`${outputVariable}_filename`]: doc.filename,
+    [`${outputVariable}_count`]: doc.rowCount,
+    [`${outputVariable}_downloadId`]: downloadId,
+  };
+  Object.assign(ctx.variables, exportVars);
+
+  return {
+    success: true,
+    output: doc.rows,
+    variables: exportVars,
+  };
+};
+
 export const executeShowNotification: NodeExecutor = async (node, ctx) => {
   const rawTitle = node.data.properties.title || 'AutoFlow Alert';
   const rawMsg = node.data.properties.message || 'Workflow finished!';
@@ -2996,6 +3236,7 @@ export const executors: Record<string, NodeExecutor> = {
   json_parse: executeJsonParse,
   generate_data: executeGenerateData,
   math_calculate: executeMathCalculate,
+  export_data: executeExportData,
   screenshot: executeScreenshot,
   execute_javascript: executeJavaScript,
   http_request: executeHttpRequest,

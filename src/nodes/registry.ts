@@ -312,6 +312,9 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       itemVariable: 'currentElement',
       outputVariable: 'extractedList',
       timeout: 10000,
+      exportToFile: false,
+      exportFormat: 'csv', // 'csv' | 'xlsx' | 'json' | 'tsv'
+      exportFilename: 'extracted_items',
     },
   },
   crawl_pagination: {
@@ -333,6 +336,9 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       itemVariable: 'crawledItem',
       outputVariable: 'crawledDataset',
       totalExtractedVariable: 'totalCrawledItems',
+      exportToFile: false,
+      exportFormat: 'csv', // 'csv' | 'xlsx' | 'json' | 'tsv'
+      exportFilename: 'crawled_dataset',
     },
   },
   extract_links: {
@@ -665,6 +671,36 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       rightOperand: '1',
       formula: '',
       outputVariable: 'counter',
+    },
+  },
+  export_data: {
+    type: 'export_data',
+    label: 'Export Data (CSV/XLSX/JSON)',
+    category: 'data',
+    description: 'Format and export collected data, multiple variables, or webpage elements directly into CSV, Excel (.xlsx), JSON, or TSV with auto-download',
+    icon: 'FileSpreadsheet',
+    defaultProperties: {
+      format: 'csv', // 'csv' | 'xlsx' | 'json' | 'tsv' | 'html_table'
+      sourceMode: 'variable', // 'variable' | 'multiple_variables' | 'dom_elements' | 'custom_json'
+      datasetVariable: 'extractedList',
+      columns: [
+        { header: 'Title', value: '{{titles}}' },
+        { header: 'Price', value: '{{prices}}' },
+      ],
+      domContainerSelector: '',
+      domFields: [
+        { name: 'title', selector: '', attribute: '' },
+        { name: 'link', selector: 'a', attribute: 'href' },
+      ],
+      customJson: '[{"name": "{{name}}", "value": "{{val}}"}]',
+      filename: 'collected_data',
+      autoDownload: true,
+      saveAs: false,
+      copyToClipboard: false,
+      csvDelimiter: ',',
+      includeHeaders: true,
+      sheetName: 'Data',
+      outputVariable: 'exportedData',
     },
   },
 
