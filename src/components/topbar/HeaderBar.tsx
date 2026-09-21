@@ -20,6 +20,7 @@ import {
   Rabbit,
   ChevronDown,
   Key,
+  RefreshCw,
 } from 'lucide-react';
 import { WorkflowExecutionStatus } from '../../types/execution';
 import { HumanIntensity } from '../../types/workflow';
@@ -525,6 +526,22 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Import JSON</span>
+              </button>
+              <div className="h-[1px] bg-[#1c2230] my-1" />
+              <button
+                onClick={() => {
+                  setShowMoreMenu(false);
+                  if (typeof chrome !== 'undefined' && chrome.runtime?.reload) {
+                    chrome.runtime.reload();
+                  } else {
+                    window.location.reload();
+                  }
+                }}
+                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#1c2230] text-amber-400 hover:text-amber-300"
+                title="Reload the extension service worker and views after code updates"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reload Extension</span>
               </button>
             </div>
           )}

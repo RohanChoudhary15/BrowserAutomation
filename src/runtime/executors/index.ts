@@ -56,6 +56,57 @@ async function sendDomAction(
     });
 
     if (!response || response.error) {
+      const normAct = (action || '').toLowerCase().trim().replace(/[\s\-]+/g, '_');
+      const errStr = String(response?.error || '');
+      if (
+        (normAct === 'extract_dataset' || normAct === 'scrape_elements' || normAct === 'extract_cards' || normAct === 'extractcards') &&
+        errStr.includes('Unsupported DOM action')
+      ) {
+        ctx.log?.({
+          level: 'warn',
+          message: 'Active tab has an older content script. Falling back to multi-field extraction scraper...',
+        });
+        const fields = Array.isArray(params.fields) && params.fields.length > 0
+          ? params.fields
+          : [{ name: 'value', selector: '' }];
+        const fieldValues: Record<string, string[]> = {};
+        let maxLen = 0;
+        for (const field of fields) {
+          const fieldSel = field.selector
+            ? (params.containerSelector ? `${params.containerSelector} ${field.selector}` : field.selector)
+            : (params.containerSelector || '');
+          if (!fieldSel) {
+            fieldValues[field.name] = [];
+            continue;
+          }
+          try {
+            const multiRes = await chrome.runtime.sendMessage({
+              type: 'EXECUTE_DOM_ACTION',
+              payload: {
+                action: 'extract_multiple',
+                params: { selector: fieldSel, attribute: field.attribute || 'text', timeout: 5000 },
+                timeout: 5000,
+                tabId: ctx.currentTabId,
+              },
+            });
+            const vals = multiRes?.items || [];
+            fieldValues[field.name] = vals;
+            if (vals.length > maxLen) maxLen = vals.length;
+          } catch {
+            fieldValues[field.name] = [];
+          }
+        }
+        const fallbackItems: Record<string, any>[] = [];
+        for (let i = 0; i < maxLen; i++) {
+          const row: Record<string, any> = {};
+          for (const field of fields) {
+            row[field.name] = fieldValues[field.name]?.[i] ?? '';
+          }
+          fallbackItems.push(row);
+        }
+        return { success: true, items: fallbackItems, rowCount: fallbackItems.length, tabId: ctx.currentTabId };
+      }
+
       throw new Error(response?.error || `Failed to execute DOM action: ${action}`);
     }
 
@@ -65,6 +116,14 @@ async function sendDomAction(
     return response;
   } else {
     console.warn(`[AutoFlow Mock] Simulating DOM action: ${action}`, params);
+    if (action === 'extract_dataset' || action === 'scrape_elements' || action === 'extract_cards') {
+      const fields = Array.isArray(params.fields) && params.fields.length > 0 ? params.fields : [{ name: 'value', selector: '' }];
+      const mockRow: Record<string, any> = {};
+      for (const f of fields) {
+        mockRow[f.name || 'field'] = `Sample ${f.name || 'Value'}`;
+      }
+      return { success: true, items: [mockRow], rowCount: 1, headers: fields.map((f: any) => f.name || 'field') };
+    }
     if (action === 'extract_image') {
       return { success: true, url: 'https://example.com/mock-image.png', dataUrl: 'https://example.com/mock-image.png', items: [] };
     }
@@ -1759,6 +1818,9 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
     nodeId: node.id,
     nodeName: node.data.label,
   });
+
+  ctx.variables[outputVariable] = items;
+  ctx.variables[`${outputVariable}_count`] = items.length;
 
   return {
     success: true,

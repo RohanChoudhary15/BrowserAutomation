@@ -5,7 +5,7 @@ import * as domActions from './domActions';
 import { ExtensionMessage } from '../types/messages';
 import { HumanConfig } from '../utils/human';
 
-export const CONTENT_SCRIPT_VERSION = '1.4.0-card-scraper';
+export const CONTENT_SCRIPT_VERSION = '1.4.1-card-scraper';
 console.log('🤖 AutoFlow Content Script loaded on', window.location.href, `(v${CONTENT_SCRIPT_VERSION})`);
 
 // Expose latest version and action executor on window so re-injected scripts or existing listeners use latest logic
@@ -251,6 +251,7 @@ async function executeAction(
     case 'scrape_elements':
     case 'scrapeelements':
     case 'extract_cards':
+    case 'extractcards':
     case 'extract_card':
     case 'extract_dataset':
     case 'extractdataset':

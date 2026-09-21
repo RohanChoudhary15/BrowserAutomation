@@ -1118,6 +1118,37 @@ export interface ExtractDatasetField {
   attribute?: string;
 }
 
+function safeQueryElements(root: ParentNode, sel: string): Element[] {
+  if (!sel || !sel.trim()) return [];
+  try {
+    return Array.from(root.querySelectorAll(sel));
+  } catch {
+    try {
+      if (sel.startsWith('//') || sel.startsWith('(')) {
+        const doc = root instanceof Document ? root : root.ownerDocument || document;
+        const res = doc.evaluate(sel, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const list: Element[] = [];
+        for (let i = 0; i < res.snapshotLength; i++) {
+          const item = res.snapshotItem(i);
+          if (item instanceof Element) list.push(item);
+        }
+        return list;
+      }
+    } catch {}
+    return [];
+  }
+}
+
+function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
+  if (!sel || !sel.trim()) return null;
+  try {
+    return root.querySelector(sel);
+  } catch {
+    const list = safeQueryElements(root, sel);
+    return list[0] || null;
+  }
+}
+
 export async function extractDataset(
   params: {
     containerSelector?: string;
@@ -1125,7 +1156,7 @@ export async function extractDataset(
     timeout?: number;
   },
   signal?: AbortSignal
-): Promise<{ items: Record<string, any>[]; rowCount: number; headers: string[] }> {
+): Promise<{ success: boolean; items: Record<string, any>[]; rowCount: number; headers: string[] }> {
   const timeout = params.timeout || 10000;
   const startTime = Date.now();
   const pollInterval = 100;
@@ -1138,7 +1169,7 @@ export async function extractDataset(
 
       if (params.containerSelector) {
         // Mode 1: Extract from container elements (e.g. .product-card, tr)
-        const containers = Array.from(document.querySelectorAll(params.containerSelector));
+        const containers = safeQueryElements(document, params.containerSelector);
         if (containers.length > 0) {
           containers.slice(0, 3).forEach((el) => flashHighlight(el));
           const items: Record<string, any>[] = containers.map((container) => {
@@ -1147,13 +1178,13 @@ export async function extractDataset(
               const attrType = field.attribute || 'text';
               // Check if extracting paragraphs or multiple sub-elements
               if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
-                const subEls = Array.from(container.querySelectorAll(field.selector || 'p'));
+                const subEls = safeQueryElements(container, field.selector || 'p');
                 if (subEls.length > 0) {
                   row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
                   continue;
                 }
               }
-              const targetEl = field.selector ? container.querySelector(field.selector) : container;
+              const targetEl = field.selector ? safeQuerySingleElement(container, field.selector) : container;
               if (targetEl) {
                 row[field.name] = resolveElementAttribute(targetEl, attrType);
               } else {
@@ -1162,7 +1193,7 @@ export async function extractDataset(
             }
             return row;
           });
-          return resolve({ items, rowCount: items.length, headers });
+          return resolve({ success: true, items, rowCount: items.length, headers });
         }
       } else {
         // Mode 2: Extract globally per field and zip
@@ -1175,7 +1206,7 @@ export async function extractDataset(
             fieldValues[field.name] = [];
             continue;
           }
-          const els = Array.from(document.querySelectorAll(field.selector));
+          const els = safeQueryElements(document, field.selector);
           if (els.length > 0) {
             anyFound = true;
             els.slice(0, 3).forEach((el) => flashHighlight(el));
@@ -1197,12 +1228,12 @@ export async function extractDataset(
             }
             items.push(row);
           }
-          return resolve({ items, rowCount: items.length, headers });
+          return resolve({ success: true, items, rowCount: items.length, headers });
         }
       }
 
       if (Date.now() - startTime >= timeout) {
-        return resolve({ items: [], rowCount: 0, headers });
+        return resolve({ success: true, items: [], rowCount: 0, headers });
       }
       setTimeout(check, pollInterval);
     };

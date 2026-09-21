@@ -197,6 +197,68 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(result.variables?.myProducts_count).toBe(2);
       expect(result.variables?.myProducts[0].title).toBe('Keyboard');
     });
+
+    it('transparently recovers and scrapes cards when content script throws Unsupported DOM action: extract_dataset', async () => {
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn().mockImplementation((msg) => {
+            if (msg.type === 'EXECUTE_DOM_ACTION') {
+              if (msg.payload.action === 'extract_dataset') {
+                // Simulate an older content script that does not support extract_dataset
+                return Promise.resolve({
+                  success: false,
+                  error: 'Unsupported DOM action: extract_dataset',
+                });
+              }
+              if (msg.payload.action === 'extract_multiple') {
+                if (msg.payload.params.selector.includes('.title')) {
+                  return Promise.resolve({ success: true, items: ['Product 1', 'Product 2'] });
+                }
+                if (msg.payload.params.selector.includes('.price')) {
+                  return Promise.resolve({ success: true, items: ['$99', '$149'] });
+                }
+              }
+            }
+            return Promise.resolve({ success: true });
+          }),
+        },
+      };
+
+      const node: WorkflowNode = {
+        id: 'scrape-fallback-node',
+        type: 'scrape_elements',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Scrape Elements Fallback',
+          type: 'scrape_elements',
+          category: 'extraction',
+          properties: {
+            containerSelector: '.product-card',
+            fields: [
+              { name: 'title', selector: '.title', attribute: 'text' },
+              { name: 'price', selector: '.price', attribute: 'text' },
+            ],
+            outputVariable: 'fallbackItems',
+          },
+        },
+      };
+
+      const ctx: ExecutionContext = {
+        workflowId: 'test',
+        executionId: 'exec-fallback',
+        variables: {},
+        log: vi.fn(),
+        updateNodeState: vi.fn(),
+      };
+
+      const result = await executeScrapeElements(node, ctx);
+      expect(result.success).toBe(true);
+      expect(result.items.length).toBe(2);
+      expect(result.items[0]).toEqual({ title: 'Product 1', price: '$99' });
+      expect(result.items[1]).toEqual({ title: 'Product 2', price: '$149' });
+      expect(ctx.variables.fallbackItems.length).toBe(2);
+      expect(ctx.variables.fallbackItems_count).toBe(2);
+    });
   });
 
   describe('WorkflowEngine Loop Iteration with scrape_elements', () => {

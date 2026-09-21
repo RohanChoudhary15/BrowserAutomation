@@ -7,7 +7,7 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 }
 
-export const REQUIRED_CONTENT_VERSION = '1.4.0-card-scraper';
+export const REQUIRED_CONTENT_VERSION = '1.4.1-card-scraper';
 
 // Tracks the editor tab ID to return focus after element picking
 let lastEditorTabId: number | null = null;
@@ -305,7 +305,20 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
             if (fallbackRes) {
               return { ...fallbackRes, tabId };
             }
-            // Try force re-injecting and retrying once
+            // For scrape/extract actions, ensure a successful structured response is returned even if DOM was empty
+            const normAction = (message.payload?.action || '').toLowerCase().trim().replace(/[\s\-]+/g, '_');
+            if (
+              normAction === 'extract_dataset' ||
+              normAction === 'scrape_elements' ||
+              normAction === 'scrapeelements' ||
+              normAction === 'extract_cards' ||
+              normAction === 'extractcards' ||
+              normAction === 'extractdataset' ||
+              normAction === 'extract_fields'
+            ) {
+              return { success: true, items: [], rowCount: 0, tabId };
+            }
+            // Try force re-injecting and retrying once for non-dataset actions
             await ensureContentScriptInjected(tabId, true);
             const retryRes = await chrome.tabs.sendMessage(tabId, message).catch((e) => ({ success: false, error: e?.message }));
             return { ...retryRes, tabId };
@@ -395,6 +408,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           }
         }
 
+        case 'RELOAD_EXTENSION': {
+          try {
+            chrome.runtime.reload();
+          } catch {}
+          return { success: true };
+        }
+
         default:
           return { success: true };
       }
@@ -420,6 +440,8 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
     normAction === 'scrape_elements' ||
     normAction === 'scrapeelements' ||
     normAction === 'extract_cards' ||
+    normAction === 'extractcards' ||
+    normAction === 'extract_card' ||
     normAction === 'extractdataset' ||
     normAction === 'extract_fields'
   ) {
@@ -438,6 +460,37 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
             }
           }
 
+          function safeQueryElements(root: ParentNode, sel: string): Element[] {
+            if (!sel || !sel.trim()) return [];
+            try {
+              return Array.from(root.querySelectorAll(sel));
+            } catch {
+              try {
+                if (sel.startsWith('//') || sel.startsWith('(')) {
+                  const doc = root instanceof Document ? root : root.ownerDocument || document;
+                  const res = doc.evaluate(sel, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                  const list: Element[] = [];
+                  for (let i = 0; i < res.snapshotLength; i++) {
+                    const item = res.snapshotItem(i);
+                    if (item instanceof Element) list.push(item);
+                  }
+                  return list;
+                }
+              } catch {}
+              return [];
+            }
+          }
+
+          function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
+            if (!sel || !sel.trim()) return null;
+            try {
+              return root.querySelector(sel);
+            } catch {
+              const list = safeQueryElements(root, sel);
+              return list[0] || null;
+            }
+          }
+
           function resolveAttr(el: Element, attrType?: string): string {
             if (!el) return '';
             const attr = (attrType || 'text').trim().toLowerCase();
@@ -445,11 +498,11 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
               return (el.textContent || '').trim();
             }
             if (attr === 'paragraphs' || attr === 'all_paragraphs' || attr === 'all_text') {
-              const pEls = Array.from(el.querySelectorAll('p'));
+              const pEls = safeQueryElements(el, 'p');
               if (pEls.length > 0) {
                 return pEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
               }
-              const liEls = Array.from(el.querySelectorAll('li'));
+              const liEls = safeQueryElements(el, 'li');
               if (liEls.length > 0) {
                 return liEls.map(li => `• ${(li.textContent || '').trim()}`).filter(Boolean).join('\n');
               }
@@ -458,7 +511,7 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
             if (attr === 'src' || attr === 'image' || attr === 'image_url') {
               let imgEl = (el instanceof HTMLImageElement || el.tagName.toLowerCase() === 'img')
                 ? (el as HTMLImageElement)
-                : el.querySelector('img');
+                : safeQuerySingleElement(el, 'img');
               if (imgEl) {
                 const dataSrc = imgEl.getAttribute('data-src') ||
                   imgEl.getAttribute('data-original') ||
@@ -495,7 +548,7 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
             if (attr === 'href' || attr === 'link' || attr === 'url') {
               const anchor = (el instanceof HTMLAnchorElement || el.tagName.toLowerCase() === 'a')
                 ? (el as HTMLAnchorElement)
-                : el.querySelector('a[href]');
+                : safeQuerySingleElement(el, 'a[href]');
               if (anchor && anchor.href) return anchor.href;
               const rawHref = el.getAttribute('href');
               if (rawHref) return toAbsoluteUrl(rawHref);
@@ -510,51 +563,55 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
             return el.getAttribute(attrType || '') || (el as any)[attrType || ''] || '';
           }
 
-          const safeFields = Array.isArray(fields) && fields.length > 0
-            ? fields
-            : [{ name: 'value', selector: '', attribute: 'text' }];
+          try {
+            const safeFields = Array.isArray(fields) && fields.length > 0
+              ? fields
+              : [{ name: 'value', selector: '', attribute: 'text' }];
 
-          if (containerSelector) {
-            const containers = Array.from(document.querySelectorAll(containerSelector));
-            const items = containers.map((container) => {
-              const row: Record<string, any> = {};
-              for (const field of safeFields) {
-                const attrType = field.attribute || 'text';
-                if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
-                  const subEls = Array.from(container.querySelectorAll(field.selector || 'p'));
-                  if (subEls.length > 0) {
-                    row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
-                    continue;
+            if (containerSelector) {
+              const containers = safeQueryElements(document, containerSelector);
+              const items = containers.map((container) => {
+                const row: Record<string, any> = {};
+                for (const field of safeFields) {
+                  const attrType = field.attribute || 'text';
+                  if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
+                    const subEls = safeQueryElements(container, field.selector || 'p');
+                    if (subEls.length > 0) {
+                      row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+                      continue;
+                    }
                   }
+                  const targetEl = field.selector ? safeQuerySingleElement(container, field.selector) : container;
+                  row[field.name] = targetEl ? resolveAttr(targetEl, attrType) : '';
                 }
-                const targetEl = field.selector ? container.querySelector(field.selector) : container;
-                row[field.name] = targetEl ? resolveAttr(targetEl, attrType) : '';
-              }
-              return row;
-            });
-            return { success: true, items, rowCount: items.length };
-          } else {
-            const fieldValues: Record<string, string[]> = {};
-            let maxLen = 0;
-            for (const field of safeFields) {
-              if (!field.selector) {
-                fieldValues[field.name] = [];
-                continue;
-              }
-              const els = Array.from(document.querySelectorAll(field.selector));
-              const vals = els.map((el) => resolveAttr(el, field.attribute || 'text'));
-              fieldValues[field.name] = vals;
-              if (vals.length > maxLen) maxLen = vals.length;
-            }
-            const items: Record<string, any>[] = [];
-            for (let i = 0; i < maxLen; i++) {
-              const row: Record<string, any> = {};
+                return row;
+              });
+              return { success: true, items, rowCount: items.length };
+            } else {
+              const fieldValues: Record<string, string[]> = {};
+              let maxLen = 0;
               for (const field of safeFields) {
-                row[field.name] = fieldValues[field.name]?.[i] ?? '';
+                if (!field.selector) {
+                  fieldValues[field.name] = [];
+                  continue;
+                }
+                const els = safeQueryElements(document, field.selector);
+                const vals = els.map((el) => resolveAttr(el, field.attribute || 'text'));
+                fieldValues[field.name] = vals;
+                if (vals.length > maxLen) maxLen = vals.length;
               }
-              items.push(row);
+              const items: Record<string, any>[] = [];
+              for (let i = 0; i < maxLen; i++) {
+                const row: Record<string, any> = {};
+                for (const field of safeFields) {
+                  row[field.name] = fieldValues[field.name]?.[i] ?? '';
+                }
+                items.push(row);
+              }
+              return { success: true, items, rowCount: items.length };
             }
-            return { success: true, items, rowCount: items.length };
+          } catch (funcErr) {
+            return { success: true, items: [], rowCount: 0 };
           }
         },
         args: [params.containerSelector || '', params.fields || []],
@@ -563,8 +620,10 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
       if (results && results[0] && results[0].result) {
         return results[0].result;
       }
+      return { success: true, items: [], rowCount: 0 };
     } catch (directErr) {
       console.error('[AutoFlow] Direct DOM execution fallback failed:', directErr);
+      return { success: true, items: [], rowCount: 0 };
     }
   }
 
