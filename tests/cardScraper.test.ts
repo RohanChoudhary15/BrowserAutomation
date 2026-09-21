@@ -141,6 +141,39 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(res.items[1].image).toBe('https://example.com/xps15.png'); // correctly preferred data-src over placeholder
       expect(res.items[1].link).toContain('/buy/dell-xps');
     });
+
+    it('excludes card entries with empty fields when excludeEmpty is true', async () => {
+      document.body.innerHTML = `
+        <div class="product-grid">
+          <div class="product-card">
+            <h2 class="title">Product Complete</h2>
+            <span class="price">$50</span>
+          </div>
+          <div class="product-card">
+            <h2 class="title">Product Missing Price</h2>
+            <span class="price">   </span>
+          </div>
+          <div class="product-card">
+            <h2 class="title">Product Complete 2</h2>
+            <span class="price">$100</span>
+          </div>
+        </div>
+      `;
+
+      const res = await extractDataset({
+        containerSelector: '.product-card',
+        fields: [
+          { name: 'title', selector: '.title', attribute: 'text' },
+          { name: 'price', selector: '.price', attribute: 'text' },
+        ],
+        excludeEmpty: true,
+        filterEmptyMode: 'any',
+      });
+
+      expect(res.items.length).toBe(2);
+      expect(res.items[0].title).toBe('Product Complete');
+      expect(res.items[1].title).toBe('Product Complete 2');
+    });
   });
 
   describe('executeScrapeElements (Runtime Node Executor)', () => {
@@ -196,6 +229,61 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(result.variables?.myProducts.length).toBe(2);
       expect(result.variables?.myProducts_count).toBe(2);
       expect(result.variables?.myProducts[0].title).toBe('Keyboard');
+    });
+
+    it('executeScrapeElements filters out items with empty values when excludeEmpty is enabled', async () => {
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn().mockImplementation((msg) => {
+            if (msg.type === 'EXECUTE_DOM_ACTION' && msg.payload.action === 'extract_dataset') {
+              return Promise.resolve({
+                success: true,
+                items: [
+                  { title: 'Monitor', price: '$299' },
+                  { title: 'Headset', price: '' }, // empty price
+                  { title: 'Webcam', price: '$79' },
+                ],
+              });
+            }
+            return Promise.resolve({ success: true });
+          }),
+        },
+      };
+
+      const mockCtx: ExecutionContext = {
+        variables: {},
+        signal: new AbortController().signal,
+        log: vi.fn(),
+      } as any;
+
+      const node: WorkflowNode = {
+        id: 'scrape-filtered',
+        type: 'scrape_elements',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Scrape Products Filtered',
+          type: 'scrape_elements',
+          category: 'extraction',
+          properties: {
+            containerSelector: '.product-card',
+            fields: [
+              { name: 'title', selector: '.title', attribute: 'text' },
+              { name: 'price', selector: '.price', attribute: 'text' },
+            ],
+            excludeEmpty: true,
+            filterEmptyMode: 'any',
+            outputVariable: 'cleanProducts',
+          },
+        },
+      };
+
+      const result = await executeScrapeElements(node, mockCtx);
+      expect(result.success).toBe(true);
+      expect(result.items.length).toBe(2);
+      expect(mockCtx.variables.cleanProducts.length).toBe(2);
+      expect(mockCtx.variables.cleanProducts_count).toBe(2);
+      expect(mockCtx.variables.cleanProducts[0].title).toBe('Monitor');
+      expect(mockCtx.variables.cleanProducts[1].title).toBe('Webcam');
     });
 
     it('transparently recovers and scrapes cards when content script throws Unsupported DOM action: extract_dataset', async () => {

@@ -131,12 +131,18 @@ describe('Data Export System (CSV, XLSX, JSON, TSV, HTML)', () => {
       expect(csvDoc.columnCount).toBe(2);
       expect(csvDoc.dataUrl).toContain('data:text/csv');
 
-      // XLSX
+      // XLSX (Genuine OpenXML PKZIP package)
       const xlsxDoc = createExportDocument(dataset, 'xlsx', { filename: 'tasks' });
       expect(xlsxDoc.format).toBe('xlsx');
       expect(xlsxDoc.filename).toBe('tasks.xlsx');
-      expect(xlsxDoc.mimeType).toBe('application/vnd.ms-excel');
-      expect(xlsxDoc.content).toContain('<Workbook');
+      expect(xlsxDoc.mimeType).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      expect(xlsxDoc.dataUrl).toContain('data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,');
+      // Verify PKZIP signature (0x50 0x4b 0x03 0x04 / PK\x03\x04) in base64
+      const binaryBytes = Buffer.from(xlsxDoc.content, 'base64');
+      expect(binaryBytes[0]).toBe(0x50); // 'P'
+      expect(binaryBytes[1]).toBe(0x4b); // 'K'
+      expect(binaryBytes[2]).toBe(0x03);
+      expect(binaryBytes[3]).toBe(0x04);
 
       // JSON
       const jsonDoc = createExportDocument(dataset, 'json', { filename: 'tasks' });
@@ -155,6 +161,31 @@ describe('Data Export System (CSV, XLSX, JSON, TSV, HTML)', () => {
       expect(htmlDoc.format).toBe('html_table');
       expect(htmlDoc.filename).toBe('tasks.html');
       expect(htmlDoc.content).toContain('<table>');
+    });
+
+    it('filters out empty rows when excludeEmpty is enabled (mode any and all)', () => {
+      const rawData = [
+        { name: 'MacBook Pro', price: '$2499', stock: 'In Stock' }, // full
+        { name: 'iPad Air', price: '', stock: 'In Stock' }, // empty price
+        { name: '', price: '', stock: '' }, // all empty
+        { name: 'Magic Mouse', price: '$79', stock: 'In Stock' }, // full
+      ];
+
+      // Mode 'any' (default): drops any row with any empty field
+      const csvAny = createExportDocument(rawData, 'csv', { excludeEmpty: true, filterEmptyMode: 'any' });
+      expect(csvAny.rowCount).toBe(2);
+      expect(csvAny.rows).toHaveLength(2);
+      expect(csvAny.rows.map(r => r.name)).toEqual(['MacBook Pro', 'Magic Mouse']);
+
+      // Mode 'all': only drops the row where all fields are empty
+      const jsonAll = createExportDocument(rawData, 'json', { excludeEmpty: true, filterEmptyMode: 'all' });
+      expect(jsonAll.rowCount).toBe(3);
+      expect(jsonAll.rows.map(r => r.name)).toEqual(['MacBook Pro', 'iPad Air', 'Magic Mouse']);
+
+      // Also verify XLSX with excludeEmpty
+      const xlsxFiltered = createExportDocument(rawData, 'xlsx', { excludeEmpty: true, filterEmptyMode: 'any' });
+      expect(xlsxFiltered.rowCount).toBe(2);
+      expect(xlsxFiltered.rows.map(r => r.name)).toEqual(['MacBook Pro', 'Magic Mouse']);
     });
   });
 
@@ -309,9 +340,50 @@ describe('Data Export System (CSV, XLSX, JSON, TSV, HTML)', () => {
       expect(result.success).toBe(true);
       expect(ctx.variables.excelCatalog).toHaveLength(2);
       expect(ctx.variables.excelCatalog_filename).toBe('catalog.xlsx');
-      expect(ctx.variables.excelCatalog_content).toContain('<Workbook');
-      expect(ctx.variables.excelCatalog_content).toContain('Monitor');
-      expect(ctx.variables.excelCatalog_content).toContain('299');
+      expect(ctx.variables.excelCatalog_dataUrl).toContain('data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,');
+      // Content is base64 PKZIP
+      const bytes = Buffer.from(ctx.variables.excelCatalog_content, 'base64');
+      expect(bytes[0]).toBe(0x50); // 'P'
+      expect(bytes[1]).toBe(0x4b); // 'K'
+    });
+
+    it('executeExportData filters empty rows when excludeEmpty is enabled', async () => {
+      const ctx = createMockContext({
+        teamList: [
+          { name: 'John Doe', email: 'john@corp.com', phone: '123-456' },
+          { name: 'Jane Smith', email: '', phone: '999-888' }, // empty email
+          { name: 'Bob Jones', email: 'bob@corp.com', phone: '555-444' },
+        ],
+      });
+
+      const node: WorkflowNode = {
+        id: 'export_filter_node',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Export Filtered Team',
+          category: 'data',
+          type: 'export_data',
+          properties: {
+            format: 'csv',
+            sourceMode: 'variable',
+            datasetVariable: 'teamList',
+            excludeEmpty: true,
+            filterEmptyMode: 'any',
+            filename: 'team_clean',
+            autoDownload: false,
+            outputVariable: 'cleanTeam',
+          },
+        },
+      };
+
+      const result = await executeExportData(node, ctx);
+      expect(result.success).toBe(true);
+      expect(ctx.variables.cleanTeam).toHaveLength(2);
+      expect(ctx.variables.cleanTeam_count).toBe(2);
+      expect(ctx.variables.cleanTeam_content).toContain('John Doe');
+      expect(ctx.variables.cleanTeam_content).toContain('Bob Jones');
+      expect(ctx.variables.cleanTeam_content).not.toContain('Jane Smith');
     });
 
     it('direct export inside executeExtractMultiple when exportToFile is enabled', async () => {

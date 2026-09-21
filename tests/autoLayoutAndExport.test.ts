@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { autoLayoutNodes } from '../src/utils/autoLayout';
 import {
   jsonToCsv,
@@ -207,13 +207,16 @@ describe('Document Exporter (PDF, CSV, JSON, XLSX)', () => {
       expect(result.dataUrl).toContain('%EF%BB%BF');
     });
 
-    it('formats XLSX output as SpreadsheetML XML', () => {
+    it('formats XLSX output as genuine OpenXML .xlsx', () => {
       const raw = JSON.stringify([{ User: 'Alice', Role: 'Admin' }]);
       const result = formatAiAgentDocument(raw, 'xlsx', 'users');
       expect(result.fileExtension).toBe('xlsx');
       expect(result.defaultFilename).toBe('users.xlsx');
-      expect(result.formattedContent).toContain('<Workbook');
-      expect(result.dataUrl).toContain('data:application/vnd.ms-excel');
+      expect(result.mimeType).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      expect(result.dataUrl).toContain('data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,');
+      const bytes = Buffer.from(result.formattedContent, 'base64');
+      expect(bytes[0]).toBe(0x50);
+      expect(bytes[1]).toBe(0x4b);
     });
 
     it('formats PDF output with Base64 data URL', () => {
@@ -327,7 +330,7 @@ describe('AI Agent Node Multi-Format Execution', () => {
 
     const result = await executeAiAgent(node, ctx);
     expect(result.success).toBe(true);
-    expect(result.variables?.salesReport_dataUrl).toContain('data:application/vnd.ms-excel');
+    expect(result.variables?.salesReport_dataUrl).toContain('data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,');
     expect(result.variables?.salesReport_filename).toBe('monthly_sales.xlsx');
   });
 

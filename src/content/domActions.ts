@@ -1154,6 +1154,8 @@ export async function extractDataset(
     containerSelector?: string;
     fields: ExtractDatasetField[];
     timeout?: number;
+    excludeEmpty?: boolean;
+    filterEmptyMode?: 'any' | 'all';
   },
   signal?: AbortSignal
 ): Promise<{ success: boolean; items: Record<string, any>[]; rowCount: number; headers: string[] }> {
@@ -1162,6 +1164,22 @@ export async function extractDataset(
   const pollInterval = 100;
   const fields = params.fields && params.fields.length > 0 ? params.fields : [{ name: 'value', selector: '' }];
   const headers = fields.map((f) => f.name || 'field');
+
+  const filterEmptyRows = (dataRows: Record<string, any>[]): Record<string, any>[] => {
+    if (!params.excludeEmpty) return dataRows;
+    const mode = params.filterEmptyMode || 'any';
+    const isValEmpty = (v: any) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0);
+    return dataRows.filter((row) => {
+      if (!row || typeof row !== 'object') return false;
+      const keys = headers.length > 0 ? headers : Object.keys(row);
+      if (keys.length === 0) return false;
+      if (mode === 'any') {
+        return !keys.some((k) => isValEmpty(row[k]));
+      } else {
+        return !keys.every((k) => isValEmpty(row[k]));
+      }
+    });
+  };
 
   return new Promise((resolve, reject) => {
     const check = () => {
@@ -1193,7 +1211,8 @@ export async function extractDataset(
             }
             return row;
           });
-          return resolve({ success: true, items, rowCount: items.length, headers });
+          const finalItems = filterEmptyRows(items);
+          return resolve({ success: true, items: finalItems, rowCount: finalItems.length, headers });
         }
       } else {
         // Mode 2: Extract globally per field and zip
@@ -1228,7 +1247,8 @@ export async function extractDataset(
             }
             items.push(row);
           }
-          return resolve({ success: true, items, rowCount: items.length, headers });
+          const finalItems = filterEmptyRows(items);
+          return resolve({ success: true, items: finalItems, rowCount: finalItems.length, headers });
         }
       }
 

@@ -1617,6 +1617,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Exclude Empty Entries Filter */}
+            <div className="space-y-2 pt-2 border-t border-[#1c2230]">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!props.excludeEmpty}
+                  onChange={(e) => handlePropChange('excludeEmpty', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px] font-medium text-amber-300 flex items-center gap-1.5">
+                  <span>🚫</span> Exclude entries with empty fields
+                </span>
+              </label>
+
+              {props.excludeEmpty && (
+                <div className="pl-5 space-y-1.5">
+                  <label className="block text-[10px] text-gray-400">Exclusion Rule</label>
+                  <select
+                    value={props.filterEmptyMode || 'any'}
+                    onChange={(e) => handlePropChange('filterEmptyMode', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                  >
+                    <option value="any">Strict: Exclude card if ANY field is empty</option>
+                    <option value="all">Lenient: Exclude card only if ALL fields are empty</option>
+                  </select>
+                  <p className="text-[10px] text-gray-500">
+                    Drops scraped cards that have missing or blank values before saving to variables or exporting.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -2461,6 +2493,37 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   />
                   <span className="text-[11px]">Copy exported content to system clipboard</span>
                 </label>
+
+                {/* Exclude Empty Entries Toggle */}
+                <div className="pt-2 border-t border-[#1c2230] space-y-1.5">
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.excludeEmpty}
+                      onChange={(e) => handlePropChange('excludeEmpty', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[11px] font-medium text-amber-300 flex items-center gap-1.5">
+                      <span>🚫</span> Exclude entries with empty fields
+                    </span>
+                  </label>
+
+                  {props.excludeEmpty && (
+                    <div className="pl-5 space-y-1">
+                      <select
+                        value={props.filterEmptyMode || 'any'}
+                        onChange={(e) => handlePropChange('filterEmptyMode', e.target.value)}
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                      >
+                        <option value="any">Strict: Exclude row if ANY field is empty</option>
+                        <option value="all">Lenient: Exclude row only if ALL fields are empty</option>
+                      </select>
+                      <p className="text-[10px] text-gray-500">
+                        Filters out incomplete rows before generating CSV, Excel (.xlsx), JSON, or TSV.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -25,6 +25,8 @@ export interface ExportDocumentOptions {
   sheetName?: string;
   customHeaders?: string[];
   prettyJson?: boolean;
+  excludeEmpty?: boolean;
+  filterEmptyMode?: 'any' | 'all';
 }
 
 export interface ExportDocumentResult {
@@ -38,6 +40,51 @@ export interface ExportDocumentResult {
   columnCount: number;
   headers: string[];
   rows: Record<string, any>[];
+}
+
+/**
+ * Checks if a dataset row is considered empty.
+ * In 'any' mode: returns true if ANY field in the row is empty (null, undefined, or whitespace string).
+ * In 'all' mode: returns true only if ALL fields in the row are empty.
+ */
+export function isRowEmpty(
+  row: Record<string, any>,
+  mode: 'any' | 'all' = 'any',
+  headers?: string[]
+): boolean {
+  if (!row || typeof row !== 'object') return true;
+  const keys = headers && headers.length > 0 ? headers : Object.keys(row);
+  if (keys.length === 0) return true;
+
+  const isValEmpty = (val: any): boolean => {
+    if (val === null || val === undefined) return true;
+    if (typeof val === 'string') return val.trim() === '';
+    if (Array.isArray(val)) return val.length === 0;
+    return false;
+  };
+
+  if (mode === 'any') {
+    return keys.some((k) => isValEmpty(row[k]));
+  } else {
+    return keys.every((k) => isValEmpty(row[k]));
+  }
+}
+
+/**
+ * Filters rows from a dataset based on whether fields are empty.
+ */
+export function filterDatasetRows(
+  rows: Record<string, any>[],
+  options?: {
+    excludeEmpty?: boolean;
+    filterEmptyMode?: 'any' | 'all';
+    headers?: string[];
+  }
+): Record<string, any>[] {
+  if (!Array.isArray(rows)) return [];
+  if (!options?.excludeEmpty) return rows;
+  const mode = options.filterEmptyMode || 'any';
+  return rows.filter((row) => !isRowEmpty(row, mode, options.headers));
 }
 
 /**
@@ -215,6 +262,362 @@ export function dataToSpreadsheetXml(data: any, sheetName = 'Sheet1'): string {
 }
 
 /**
+ * Fast IEEE 802.3 CRC-32 implementation for PKZIP checksumming.
+ */
+const CRC_TABLE = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let c = i;
+  for (let k = 0; k < 8; k++) {
+    c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  }
+  CRC_TABLE[i] = c >>> 0;
+}
+
+function calculateCrc32(bytes: Uint8Array): number {
+  let crc = 0 ^ (-1);
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ bytes[i]) & 0xff];
+  }
+  return (crc ^ (-1)) >>> 0;
+}
+
+/**
+ * Creates a standard PKZIP archive (ZIP 2.0 / Store mode) containing arbitrary files.
+ * Works natively in both Browser (Uint8Array) and Node.js environments without dependencies.
+ */
+export function createPkZipArchive(files: Array<{ name: string; data: string | Uint8Array }>): Uint8Array {
+  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+  const toUint8 = (input: string | Uint8Array): Uint8Array => {
+    if (input instanceof Uint8Array) return input;
+    if (encoder) return encoder.encode(input);
+    if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(input, 'utf8'));
+    const arr = new Uint8Array(input.length);
+    for (let i = 0; i < input.length; i++) arr[i] = input.charCodeAt(i) & 0xff;
+    return arr;
+  };
+
+  interface PreparedEntry {
+    nameBytes: Uint8Array;
+    dataBytes: Uint8Array;
+    crc: number;
+    size: number;
+    offset: number;
+  }
+
+  const entries: PreparedEntry[] = [];
+  let totalLocalSize = 0;
+
+  for (const f of files) {
+    const nameBytes = toUint8(f.name);
+    const dataBytes = toUint8(f.data);
+    const crc = calculateCrc32(dataBytes);
+    const size = dataBytes.length;
+    const entry: PreparedEntry = {
+      nameBytes,
+      dataBytes,
+      crc,
+      size,
+      offset: totalLocalSize,
+    };
+    entries.push(entry);
+    // 30 bytes fixed local header + name length + data length
+    totalLocalSize += 30 + nameBytes.length + size;
+  }
+
+  let centralDirSize = 0;
+  for (const entry of entries) {
+    // 46 bytes fixed central dir header + name length
+    centralDirSize += 46 + entry.nameBytes.length;
+  }
+
+  const totalZipSize = totalLocalSize + centralDirSize + 22;
+  const zipBuffer = new Uint8Array(totalZipSize);
+  const view = new DataView(zipBuffer.buffer);
+
+  let currentPos = 0;
+
+  // 1. Write Local File Headers and file data
+  for (const entry of entries) {
+    // Signature 0x04034b50 (PK\x03\x04)
+    view.setUint32(currentPos, 0x04034b50, true);
+    view.setUint16(currentPos + 4, 20, true); // Version needed (2.0)
+    view.setUint16(currentPos + 6, 0x0800, true); // General purpose flag: UTF-8 (bit 11)
+    view.setUint16(currentPos + 8, 0, true); // Compression: 0 (Store)
+    view.setUint16(currentPos + 10, 0x4000, true); // Last mod time
+    view.setUint16(currentPos + 12, 0x5800, true); // Last mod date
+    view.setUint32(currentPos + 14, entry.crc, true); // CRC32
+    view.setUint32(currentPos + 18, entry.size, true); // Compressed size
+    view.setUint32(currentPos + 22, entry.size, true); // Uncompressed size
+    view.setUint16(currentPos + 26, entry.nameBytes.length, true); // Filename length
+    view.setUint16(currentPos + 28, 0, true); // Extra field length
+
+    currentPos += 30;
+    zipBuffer.set(entry.nameBytes, currentPos);
+    currentPos += entry.nameBytes.length;
+    zipBuffer.set(entry.dataBytes, currentPos);
+    currentPos += entry.size;
+  }
+
+  const centralDirStartOffset = currentPos;
+
+  // 2. Write Central Directory Headers
+  for (const entry of entries) {
+    // Signature 0x02014b50 (PK\x01\x02)
+    view.setUint32(currentPos, 0x02014b50, true);
+    view.setUint16(currentPos + 4, 20, true); // Version made by
+    view.setUint16(currentPos + 6, 20, true); // Version needed
+    view.setUint16(currentPos + 8, 0x0800, true); // Flag (UTF-8)
+    view.setUint16(currentPos + 10, 0, true); // Compression: 0 (Store)
+    view.setUint16(currentPos + 12, 0x4000, true); // Mod time
+    view.setUint16(currentPos + 14, 0x5800, true); // Mod date
+    view.setUint32(currentPos + 16, entry.crc, true); // CRC32
+    view.setUint32(currentPos + 20, entry.size, true); // Compressed size
+    view.setUint32(currentPos + 24, entry.size, true); // Uncompressed size
+    view.setUint16(currentPos + 28, entry.nameBytes.length, true); // Name length
+    view.setUint16(currentPos + 30, 0, true); // Extra length
+    view.setUint16(currentPos + 32, 0, true); // Comment length
+    view.setUint16(currentPos + 34, 0, true); // Disk start
+    view.setUint16(currentPos + 36, 0, true); // Internal attr
+    view.setUint32(currentPos + 38, 0, true); // External attr
+    view.setUint32(currentPos + 42, entry.offset, true); // Local header offset
+
+    currentPos += 46;
+    zipBuffer.set(entry.nameBytes, currentPos);
+    currentPos += entry.nameBytes.length;
+  }
+
+  // 3. Write End of Central Directory (EOCD)
+  // Signature 0x06054b50 (PK\x05\x06)
+  view.setUint32(currentPos, 0x06054b50, true);
+  view.setUint16(currentPos + 4, 0, true); // Disk number
+  view.setUint16(currentPos + 6, 0, true); // Start disk
+  view.setUint16(currentPos + 8, entries.length, true); // Entries on disk
+  view.setUint16(currentPos + 10, entries.length, true); // Total entries
+  view.setUint32(currentPos + 12, centralDirSize, true); // Central dir size
+  view.setUint32(currentPos + 16, centralDirStartOffset, true); // Central dir offset
+  view.setUint16(currentPos + 20, 0, true); // Comment length
+
+  return zipBuffer;
+}
+
+/**
+ * Encodes Uint8Array binary bytes into a Base64 string in any environment (Browser or Node).
+ */
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, chunk as any);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Converts 0-based column index to Excel column letter (0 -> A, 25 -> Z, 26 -> AA, 27 -> AB).
+ */
+export function getExcelColumnLetter(colIndex: number): string {
+  let letter = '';
+  let temp = colIndex;
+  while (temp >= 0) {
+    letter = String.fromCharCode((temp % 26) + 65) + letter;
+    temp = Math.floor(temp / 26) - 1;
+  }
+  return letter;
+}
+
+/**
+ * Generates a genuine Microsoft Excel OpenXML (.xlsx) binary package.
+ * Produces a 100% valid ZIP archive with standard OpenXML parts:
+ * - [Content_Types].xml
+ * - _rels/.rels
+ * - xl/workbook.xml
+ * - xl/_rels/workbook.xml.rels
+ * - xl/styles.xml
+ * - xl/worksheets/sheet1.xml
+ *
+ * Natively recognized and opened by Microsoft Excel, Google Sheets, LibreOffice, and Numbers with 0 errors.
+ */
+export function generateOpenXmlXlsx(
+  data: any,
+  customHeaders?: string[],
+  sheetName = 'Sheet1'
+): Uint8Array {
+  let rows: Record<string, any>[] = [];
+
+  if (Array.isArray(data)) {
+    if (data.length > 0 && typeof data[0] === 'object' && data[0] !== null) {
+      rows = data;
+    } else {
+      rows = data.map((v, i) => ({ Index: i + 1, Value: v }));
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const arrayKey = Object.keys(data).find((k) => Array.isArray(data[k]));
+    if (arrayKey && Array.isArray(data[arrayKey])) {
+      return generateOpenXmlXlsx(data[arrayKey], customHeaders, sheetName);
+    }
+    rows = [data];
+  } else {
+    rows = [{ Value: String(data || '') }];
+  }
+
+  const headers = customHeaders && customHeaders.length > 0
+    ? customHeaders
+    : Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
+
+  const cleanSheetName = (sheetName || 'Sheet1').replace(/[\\/*?:[\]]/g, '_').slice(0, 31);
+
+  const escapeXml = (val: any): string => {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  };
+
+  // 1. [Content_Types].xml
+  const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+
+  // 2. _rels/.rels
+  const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+  // 3. xl/_rels/workbook.xml.rels
+  const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+  // 4. xl/workbook.xml
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <bookViews>
+    <workbookView xWindow="0" yWindow="0" windowWidth="20480" windowHeight="10240"/>
+  </bookViews>
+  <sheets>
+    <sheet name="${escapeXml(cleanSheetName)}" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`;
+
+  // 5. xl/styles.xml
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2">
+    <font>
+      <sz val="11"/>
+      <color theme="1"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+      <scheme val="minor"/>
+    </font>
+    <font>
+      <b/>
+      <sz val="11"/>
+      <color rgb="FFFFFFFF"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+      <scheme val="minor"/>
+    </font>
+  </fonts>
+  <fills count="3">
+    <fill>
+      <patternFill patternType="none"/>
+    </fill>
+    <fill>
+      <patternFill patternType="gray125"/>
+    </fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FF4F46E5"/>
+        <bgColor indexed="64"/>
+      </patternFill>
+    </fill>
+  </fills>
+  <borders count="1">
+    <border>
+      <left/><right/><top/><bottom/><diagonal/>
+    </border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+  </cellXfs>
+</styleSheet>`;
+
+  // 6. xl/worksheets/sheet1.xml
+  let sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>`;
+
+  // Header Row (Row 1, s="1" for bold white text on indigo fill)
+  if (headers.length > 0) {
+    sheetXml += `\n    <row r="1">`;
+    for (let c = 0; c < headers.length; c++) {
+      const colLetter = getExcelColumnLetter(c);
+      sheetXml += `<c r="${colLetter}1" t="inlineStr" s="1"><is><t>${escapeXml(headers[c])}</t></is></c>`;
+    }
+    sheetXml += `</row>`;
+  }
+
+  // Data Rows (Starting at row 2)
+  for (let r = 0; r < rows.length; r++) {
+    const rowNum = headers.length > 0 ? r + 2 : r + 1;
+    const rowData = rows[r];
+    sheetXml += `\n    <row r="${rowNum}">`;
+
+    for (let c = 0; c < headers.length; c++) {
+      const colLetter = getExcelColumnLetter(c);
+      const cellRef = `${colLetter}${rowNum}`;
+      const val = rowData[headers[c]];
+
+      if (val === null || val === undefined || val === '') {
+        continue; // Empty cell
+      } else if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
+        sheetXml += `<c r="${cellRef}"><v>${val}</v></c>`;
+      } else if (typeof val === 'boolean') {
+        sheetXml += `<c r="${cellRef}" t="b"><v>${val ? 1 : 0}</v></c>`;
+      } else {
+        const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        sheetXml += `<c r="${cellRef}" t="inlineStr"><is><t>${escapeXml(strVal)}</t></is></c>`;
+      }
+    }
+    sheetXml += `</row>`;
+  }
+
+  sheetXml += `\n  </sheetData>\n</worksheet>`;
+
+  const files = [
+    { name: '[Content_Types].xml', data: contentTypesXml },
+    { name: '_rels/.rels', data: rootRelsXml },
+    { name: 'xl/_rels/workbook.xml.rels', data: workbookRelsXml },
+    { name: 'xl/workbook.xml', data: workbookXml },
+    { name: 'xl/styles.xml', data: stylesXml },
+    { name: 'xl/worksheets/sheet1.xml', data: sheetXml },
+  ];
+
+  return createPkZipArchive(files);
+}
+
+/**
  * Creates a valid PDF document with metadata and content stream.
  */
 export function dataToPdfBinary(title: string, data: any): string {
@@ -377,17 +780,19 @@ export function formatAiAgentDocument(
     }
 
     case 'xlsx': {
-      const xmlStr = dataToSpreadsheetXml(dataSource, 'AI Analysis');
-      const dataUrl = `data:application/vnd.ms-excel;charset=utf-8,${encodeURIComponent(xmlStr)}`;
+      const xlsxBytes = generateOpenXmlXlsx(dataSource, undefined, 'AI Analysis');
+      const base64Xlsx = uint8ArrayToBase64(xlsxBytes);
+      const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const dataUrl = `data:${mimeType};base64,${base64Xlsx}`;
       return {
         format: 'xlsx',
-        data: xmlStr,
+        data: base64Xlsx,
         filename: `${baseFilename}.xlsx`,
-        sizeBytes: xmlStr.length,
+        sizeBytes: xlsxBytes.length,
         parsedOutput: parsedJson !== null ? parsedJson : rawResponse,
-        formattedContent: xmlStr,
+        formattedContent: base64Xlsx,
         dataUrl,
-        mimeType: 'application/vnd.ms-excel',
+        mimeType,
         fileExtension: 'xlsx',
         defaultFilename: `${baseFilename}.xlsx`,
       };
@@ -608,18 +1013,28 @@ export function createExportDocument(
     ? options.customHeaders
     : Array.from(new Set(normalizedRows.flatMap((r) => Object.keys(r))));
 
+  // Filter empty rows if excludeEmpty is requested
+  if (options.excludeEmpty) {
+    normalizedRows = filterDatasetRows(normalizedRows, {
+      excludeEmpty: true,
+      filterEmptyMode: options.filterEmptyMode || 'any',
+      headers,
+    });
+  }
+
   const rowCount = normalizedRows.length;
   const columnCount = headers.length;
 
   switch (format) {
     case 'xlsx': {
-      const xmlStr = dataToSpreadsheetXml(normalizedRows, sheetName);
+      const xlsxBytes = generateOpenXmlXlsx(normalizedRows, headers, sheetName);
+      const base64Xlsx = uint8ArrayToBase64(xlsxBytes);
       const filename = `${baseFilename}.xlsx`;
-      const mimeType = 'application/vnd.ms-excel';
-      const dataUrl = `data:${mimeType};charset=utf-8,${encodeURIComponent(xmlStr)}`;
+      const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const dataUrl = `data:${mimeType};base64,${base64Xlsx}`;
       return {
         format: 'xlsx',
-        content: xmlStr,
+        content: base64Xlsx,
         dataUrl,
         mimeType,
         fileExtension: 'xlsx',

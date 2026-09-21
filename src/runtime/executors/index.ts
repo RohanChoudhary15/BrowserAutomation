@@ -1778,10 +1778,12 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
   const exportFormat = (node.data.properties.exportFormat || 'csv') as ExportDataFormat;
   const rawExportFilename = node.data.properties.exportFilename || `${outputVariable}_export`;
   const exportFilename = interpolateVariables(rawExportFilename, ctx.variables);
+  const excludeEmpty = !!node.data.properties.excludeEmpty;
+  const filterEmptyMode = (node.data.properties.filterEmptyMode || 'any') as 'any' | 'all';
 
   ctx.log({
     level: 'info',
-    message: `Scraping card elements${containerSelector ? ` from ${containerSelector}` : ''} (${fields.length} fields)`,
+    message: `Scraping card elements${containerSelector ? ` from ${containerSelector}` : ''} (${fields.length} fields)${excludeEmpty ? ` [Exclude empty: ${filterEmptyMode}]` : ''}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -1792,16 +1794,42 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
       containerSelector,
       fields,
       timeout,
+      excludeEmpty,
+      filterEmptyMode,
     },
     ctx,
     timeout
   );
 
-  const items = res?.items || [];
+  let items = res?.items || [];
+
+  // Defensively filter empty rows in runtime executor
+  if (excludeEmpty && items.length > 0) {
+    const initialCount = items.length;
+    const isValEmpty = (v: any) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0);
+    items = items.filter((row: any) => {
+      if (!row || typeof row !== 'object') return false;
+      const keys = Object.keys(row);
+      if (keys.length === 0) return false;
+      if (filterEmptyMode === 'any') {
+        return !keys.some((k) => isValEmpty(row[k]));
+      } else {
+        return !keys.every((k) => isValEmpty(row[k]));
+      }
+    });
+    if (items.length < initialCount) {
+      ctx.log({
+        level: 'info',
+        message: `Excluded ${initialCount - items.length} entries with empty fields (${items.length} remaining)`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+    }
+  }
 
   let exportResult: any = undefined;
   if (exportToFile && items.length > 0) {
-    const doc = createExportDocument(items, exportFormat, { filename: exportFilename });
+    const doc = createExportDocument(items, exportFormat, { filename: exportFilename, excludeEmpty, filterEmptyMode });
     await triggerFileDownload(doc.dataUrl, doc.filename);
     exportResult = doc;
     ctx.log({
@@ -2858,10 +2886,12 @@ export const executeExportData: NodeExecutor = async (node, ctx) => {
   const includeHeaders = node.data.properties.includeHeaders !== false;
   const sheetName = node.data.properties.sheetName || 'Data';
   const outputVariable = node.data.properties.outputVariable || 'exportedData';
+  const excludeEmpty = !!node.data.properties.excludeEmpty;
+  const filterEmptyMode = (node.data.properties.filterEmptyMode || 'any') as 'any' | 'all';
 
   ctx.log({
     level: 'info',
-    message: `Exporting dataset (${format.toUpperCase()} mode: ${sourceMode}) to ${filename}`,
+    message: `Exporting dataset (${format.toUpperCase()} mode: ${sourceMode}) to ${filename}${excludeEmpty ? ` [Exclude empty: ${filterEmptyMode}]` : ''}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -2888,7 +2918,7 @@ export const executeExportData: NodeExecutor = async (node, ctx) => {
       attribute: f.attribute ? interpolateVariables(f.attribute, ctx.variables) : undefined,
     }));
 
-    const res = await sendDomAction('extract_dataset', { containerSelector, fields }, ctx, 15000);
+    const res = await sendDomAction('extract_dataset', { containerSelector, fields, excludeEmpty, filterEmptyMode }, ctx, 15000);
     rawDataset = res?.items || [];
   } else if (sourceMode === 'multiple_variables') {
     const columns = Array.isArray(node.data.properties.columns) ? node.data.properties.columns : [];
@@ -2936,13 +2966,24 @@ export const executeExportData: NodeExecutor = async (node, ctx) => {
     }
   }
 
-  // 2. Format dataset into document
+  // 2. Format dataset into document (with optional empty entry exclusion)
   const doc = createExportDocument(rawDataset, format, {
     filename,
     delimiter: csvDelimiter,
     includeHeaders,
     sheetName,
+    excludeEmpty,
+    filterEmptyMode,
   });
+
+  if (excludeEmpty && Array.isArray(rawDataset) && doc.rowCount < rawDataset.length) {
+    ctx.log({
+      level: 'info',
+      message: `Excluded ${rawDataset.length - doc.rowCount} empty entries (${doc.rowCount} valid rows retained)`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  }
 
   // 3. Auto-download if enabled
   let downloadId: any = undefined;
