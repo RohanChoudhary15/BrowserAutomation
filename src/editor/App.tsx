@@ -14,6 +14,7 @@ import { HeaderBar } from '../components/topbar/HeaderBar';
 import { NodeLibrary } from '../components/sidebar/NodeLibrary';
 import { WorkflowCanvas } from '../components/canvas/WorkflowCanvas';
 import { PropertiesPanel } from '../components/properties/PropertiesPanel';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { ExecutionPanel } from '../components/bottompanel/ExecutionPanel';
 import { WorkflowListModal } from '../components/sidebar/WorkflowListModal';
 import { AiCopilotDrawer } from '../components/ai/AiCopilotDrawer';
@@ -1030,26 +1031,28 @@ export const App: React.FC = () => {
 
         {/* Right: Properties Panel */}
         {!isPropertiesCollapsed && (selectedNode || selectedNodes.length > 1) && (
-          <PropertiesPanel
-            selectedNode={selectedNode}
-            selectedNodes={selectedNodes}
-            runtimeState={selectedNode ? nodeStates[selectedNode.id] : undefined}
-            variables={liveVariables}
-            onUpdateProperties={handleUpdateProperties}
-            onUpdateLabel={handleUpdateLabel}
-            onToggleDisable={handleToggleDisableNode}
-            onToggleDisableNodes={handleToggleDisableNodes}
-            onDeleteNode={handleDeleteNode}
-            onDeleteNodes={handleDeleteNodes}
-            onCopyNode={(node) => handleCopyNodes([node])}
-            onCopyNodes={handleCopyNodes}
-            onDuplicateNodes={handleDuplicateNodes}
-            onRunSingleNode={handleRunSingleNode}
-            onStartElementPicker={handleStartElementPicker}
-            isPickingElement={isPickingElement}
-            onClose={() => setIsPropertiesCollapsed(true)}
-            allNodes={currentWorkflow.nodes}
-          />
+          <ErrorBoundary fallbackTitle="Properties Panel Error" onReset={() => setSelectedNodeId(null)}>
+            <PropertiesPanel
+              selectedNode={selectedNode}
+              selectedNodes={selectedNodes}
+              runtimeState={selectedNode ? nodeStates[selectedNode.id] : undefined}
+              variables={liveVariables}
+              onUpdateProperties={handleUpdateProperties}
+              onUpdateLabel={handleUpdateLabel}
+              onToggleDisable={handleToggleDisableNode}
+              onToggleDisableNodes={handleToggleDisableNodes}
+              onDeleteNode={handleDeleteNode}
+              onDeleteNodes={handleDeleteNodes}
+              onCopyNode={(node) => handleCopyNodes([node])}
+              onCopyNodes={handleCopyNodes}
+              onDuplicateNodes={handleDuplicateNodes}
+              onRunSingleNode={handleRunSingleNode}
+              onStartElementPicker={handleStartElementPicker}
+              isPickingElement={isPickingElement}
+              onClose={() => setIsPropertiesCollapsed(true)}
+              allNodes={nodes}
+            />
+          </ErrorBoundary>
         )}
       </div>
 

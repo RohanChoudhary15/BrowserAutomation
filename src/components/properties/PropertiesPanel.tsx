@@ -2264,10 +2264,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               >
                 <option value="all">⚡ All Active Wait Timers</option>
                 {(allNodes || [])
-                  .filter((n) => n.data.type === 'wait' && n.id !== selectedNode.id)
+                  .filter((n) => n && n.data && n.data.type === 'wait' && n.id !== selectedNode.id)
                   .map((n) => (
                     <option key={n.id} value={n.data.properties?.timerName || n.id}>
-                      ⏳ {n.data.label} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${n.id.slice(0, 8)})`}
+                      ⏳ {n.data.label || 'Wait'} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${(n.id || '').slice(0, 8)})`}
                     </option>
                   ))}
               </select>
@@ -2362,10 +2362,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               >
                 <option value="all">⚡ All Active Wait Timers</option>
                 {(allNodes || [])
-                  .filter((n) => n.data.type === 'wait' && n.id !== selectedNode.id)
+                  .filter((n) => n && n.data && n.data.type === 'wait' && n.id !== selectedNode.id)
                   .map((n) => (
                     <option key={n.id} value={n.data.properties?.timerName || n.id}>
-                      ⏳ {n.data.label} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${n.id.slice(0, 8)})`}
+                      ⏳ {n.data.label || 'Wait'} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${(n.id || '').slice(0, 8)})`}
                     </option>
                   ))}
               </select>
@@ -2528,10 +2528,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               >
                 <option value="">Select target node...</option>
                 {(allNodes || [])
-                  .filter((n) => n.id !== selectedNode.id)
+                  .filter((n) => n && n.id && n.id !== selectedNode.id)
                   .map((n) => (
                     <option key={n.id} value={n.id}>
-                      {n.data.label} ({n.data.type} - {n.id.slice(0, 8)})
+                      {n.data?.label || 'Node'} ({n.data?.type || 'custom'} - {(n.id || '').slice(0, 8)})
                     </option>
                   ))}
               </select>

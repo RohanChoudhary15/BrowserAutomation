@@ -483,4 +483,61 @@ describe('Workflow Commands & Breakable Timers', () => {
       expect(engine.getVariables().bypassed).toBeUndefined();
     });
   });
+
+  describe('PropertiesPanel UI for Stop Timer and Commands', () => {
+    it('renders Stop Timer properties panel cleanly without throwing ReferenceError', async () => {
+      const { PropertiesPanel } = await import('../src/components/properties/PropertiesPanel');
+      const { createRoot } = await import('react-dom/client');
+      const React = await import('react');
+
+      const stopTimerNode = createMockNode('stop_1', 'stop_timer', {
+        targetTimer: 'all',
+        action: 'complete_early',
+        reason: 'Done',
+        outputVariable: 'timerStopped',
+      });
+
+      const waitNode = createMockNode('wait_1', 'wait', {
+        duration: 5000,
+        timerName: 'my_wait_timer',
+      });
+
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+
+      const root = createRoot(container);
+      await React.act(async () => {
+        root.render(
+          React.createElement(PropertiesPanel, {
+            selectedNode: stopTimerNode,
+            selectedNodes: [stopTimerNode],
+            variables: {},
+            onUpdateProperties: vi.fn(),
+            onUpdateLabel: vi.fn(),
+            onToggleDisable: vi.fn(),
+            onToggleDisableNodes: vi.fn(),
+            onDeleteNode: vi.fn(),
+            onDeleteNodes: vi.fn(),
+            onCopyNode: vi.fn(),
+            onCopyNodes: vi.fn(),
+            onDuplicateNodes: vi.fn(),
+            onRunSingleNode: vi.fn(),
+            onStartElementPicker: vi.fn(),
+            isPickingElement: false,
+            onClose: vi.fn(),
+            allNodes: [stopTimerNode, waitNode],
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('Stop Timer Command');
+      expect(container.textContent).toContain('Target Wait Timer');
+      expect(container.textContent).toContain('my_wait_timer');
+
+      await React.act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    });
+  });
 });
