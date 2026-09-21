@@ -17,6 +17,12 @@ import {
   ExportDataFormat,
 } from '../../utils/documentExporter';
 import { runInSandbox, safeEvaluateMath } from '../sandboxEvaluator';
+import {
+  processDataset,
+  normalizeUrl,
+  cleanPrice,
+  formatDateString,
+} from '../../utils/dataPostProcessor';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -1243,6 +1249,26 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
       }
       break;
     }
+    case 'normalizeUrl': {
+      const basePrefix = node.data.properties.basePrefix || node.data.properties.urlBasePrefix || '';
+      const stripQueryParams = node.data.properties.stripQueryParams !== false;
+      result = normalizeUrl(str, { basePrefix, stripQueryParams });
+      break;
+    }
+    case 'cleanPrice': {
+      const mode = node.data.properties.priceMode || 'number_only';
+      result = cleanPrice(str, { mode });
+      break;
+    }
+    case 'formatDate': {
+      const mode = node.data.properties.dateMode || 'iso_date';
+      result = formatDateString(str, { mode });
+      break;
+    }
+  }
+
+  if (outputVariable && ctx.variables) {
+    ctx.variables[outputVariable] = result;
   }
 
   return {
@@ -1811,9 +1837,26 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
   const excludeEmpty = !!node.data.properties.excludeEmpty;
   const filterEmptyMode = (node.data.properties.filterEmptyMode || 'any') as 'any' | 'all';
 
+  // Post-processing & pattern filter settings
+  const postProcessingEnabled = !!node.data.properties.postProcessingEnabled;
+  const rawUrlBasePrefix = node.data.properties.urlBasePrefix || '';
+  const urlBasePrefix = rawUrlBasePrefix ? String(interpolateVariables(rawUrlBasePrefix, ctx.variables)) : '';
+  const stripUrlQueryParams = !!node.data.properties.stripUrlQueryParams;
+  const stripAllQueryParams = !!node.data.properties.stripAllQueryParams;
+  const cleanPriceOption = !!node.data.properties.cleanPrice;
+  const priceMode = (node.data.properties.priceMode || 'number_only') as 'number_only' | 'strip_symbols';
+  const formatDateOption = !!node.data.properties.formatDate;
+  const dateMode = (node.data.properties.dateMode || 'iso_date') as 'iso_date' | 'iso_datetime' | 'timestamp';
+  const patternFilterEnabled = !!node.data.properties.patternFilterEnabled;
+  const patternFilterField = node.data.properties.patternFilterField || 'link';
+  const patternFilterAction = (node.data.properties.patternFilterAction || 'include_only') as 'include_only' | 'exclude_matching';
+  const patternFilterMode = (node.data.properties.patternFilterMode || 'contains') as 'contains' | 'regex' | 'starts_with' | 'ends_with';
+  const rawPatternFilterValue = node.data.properties.patternFilterValue || '';
+  const patternFilterValue = rawPatternFilterValue ? String(interpolateVariables(rawPatternFilterValue, ctx.variables)) : '';
+
   ctx.log({
     level: 'info',
-    message: `Scraping card elements${containerSelector ? ` from ${containerSelector}` : ''} (${fields.length} fields)${excludeEmpty ? ` [Exclude empty: ${filterEmptyMode}]` : ''}`,
+    message: `Scraping card elements${containerSelector ? ` from ${containerSelector}` : ''} (${fields.length} fields)${excludeEmpty ? ` [Exclude empty: ${filterEmptyMode}]` : ''}${patternFilterEnabled ? ` [Filter: ${patternFilterField} ${patternFilterMode} "${patternFilterValue}"]` : ''}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -1832,6 +1875,46 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
   );
 
   let items = res?.items || [];
+
+  // Apply data post-processing (URL normalization, price cleaning, date formatting, and row pattern filtering)
+  if (
+    (postProcessingEnabled || urlBasePrefix || stripUrlQueryParams || stripAllQueryParams || cleanPriceOption || formatDateOption || (patternFilterEnabled && patternFilterValue)) &&
+    items.length > 0
+  ) {
+    const processed = processDataset(items, {
+      urlBasePrefix,
+      stripUrlQueryParams,
+      stripAllQueryParams,
+      cleanPrice: cleanPriceOption,
+      priceMode,
+      formatDate: formatDateOption,
+      dateMode,
+      patternFilterEnabled,
+      patternFilterField,
+      patternFilterAction,
+      patternFilterMode,
+      patternFilterValue,
+    });
+    items = processed.items;
+
+    if (processed.filteredCount > 0) {
+      ctx.log({
+        level: 'info',
+        message: `Pattern condition filter: dropped ${processed.filteredCount} entries (${items.length} matched "${patternFilterValue}")`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+    }
+
+    if (processed.modifiedCount > 0) {
+      ctx.log({
+        level: 'info',
+        message: `Post-processed ${processed.modifiedCount} items (normalized URLs, cleaned prices/dates)`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+    }
+  }
 
   // Defensively filter empty rows in runtime executor
   if (excludeEmpty && items.length > 0) {

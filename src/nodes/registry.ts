@@ -415,6 +415,21 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       exportFilename: 'scraped_products',
       excludeEmpty: false,
       filterEmptyMode: 'any',
+      // Post-Processing & Normalization
+      postProcessingEnabled: false,
+      urlBasePrefix: '',
+      stripUrlQueryParams: false,
+      stripAllQueryParams: false,
+      cleanPrice: false,
+      priceMode: 'number_only', // 'number_only' | 'strip_symbols'
+      formatDate: false,
+      dateMode: 'iso_date', // 'iso_date' | 'iso_datetime' | 'timestamp'
+      // Pattern Filter Condition ("if url in this pattern then only")
+      patternFilterEnabled: false,
+      patternFilterField: 'link',
+      patternFilterAction: 'include_only', // 'include_only' | 'exclude_matching'
+      patternFilterMode: 'contains', // 'contains' | 'regex' | 'starts_with' | 'ends_with'
+      patternFilterValue: '',
       timeout: 10000,
     },
   },

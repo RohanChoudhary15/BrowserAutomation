@@ -740,4 +740,130 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(resFast.output.scrollSpeed).toBe('fast');
     });
   });
+
+  describe('Scrape Elements Post-Processing & Filtering Integration', () => {
+    it('applies URL normalization, price cleaning, and pattern filtering inside executeScrapeElements', async () => {
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn().mockImplementation((msg) => {
+            if (msg.type === 'EXECUTE_DOM_ACTION' && msg.payload.action === 'extract_dataset') {
+              return Promise.resolve({
+                success: true,
+                items: [
+                  { title: 'Item 1', link: '/dp/B08111?ref=sr_1_1&qid=123', price: '$1,299.00' },
+                  { title: 'Promo Item', link: '/sspa/click?id=ad999', price: '$19.99' },
+                  { title: 'Item 2', link: '/dp/B08222?ref=sr_1_2&qid=456', price: '₹2,499.00' },
+                ],
+              });
+            }
+            return Promise.resolve({ success: true });
+          }),
+        },
+      };
+
+      const mockCtx: any = {
+        variables: {},
+        log: vi.fn(),
+        updateNodeState: vi.fn(),
+      };
+
+      const node: any = {
+        id: 'scrape-post-process',
+        data: {
+          label: 'Scrape Products',
+          properties: {
+            containerSelector: '.product-card',
+            fields: [
+              { name: 'title', selector: '.title', attribute: 'text' },
+              { name: 'link', selector: 'a', attribute: 'href' },
+              { name: 'price', selector: '.price', attribute: 'text' },
+            ],
+            outputVariable: 'cleanProducts',
+            postProcessingEnabled: true,
+            urlBasePrefix: 'https://www.amazon.in',
+            stripUrlQueryParams: true,
+            cleanPrice: true,
+            priceMode: 'number_only',
+            patternFilterEnabled: true,
+            patternFilterField: 'link',
+            patternFilterAction: 'include_only',
+            patternFilterMode: 'contains',
+            patternFilterValue: '/dp/',
+          },
+        },
+      };
+
+      const res = await executeScrapeElements(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(res.items.length).toBe(2);
+
+      // Verify URL normalization + query stripping
+      expect(res.items[0].link).toBe('https://www.amazon.in/dp/B08111');
+      expect(res.items[0].price).toBe('1299');
+
+      expect(res.items[1].link).toBe('https://www.amazon.in/dp/B08222');
+      expect(res.items[1].price).toBe('2499');
+
+      // Verify filtered out row (/sspa/) was excluded
+      expect(res.items.find((i: any) => i.title === 'Promo Item')).toBeUndefined();
+    });
+
+    it('transforms data via executeTransform operations: normalizeUrl, cleanPrice, formatDate', async () => {
+      const mockCtx: any = {
+        variables: {
+          rawUrl: '/product/view?ref=123&item=456',
+          rawPrice: '$2,499.99',
+          rawDate: '2026-09-22T08:00:00Z',
+        },
+        log: vi.fn(),
+      };
+
+      // 1. normalizeUrl
+      const urlNode: any = {
+        id: 't-url',
+        data: {
+          properties: {
+            input: '{{rawUrl}}',
+            operation: 'normalizeUrl',
+            basePrefix: 'https://example.com',
+            stripQueryParams: true,
+            outputVariable: 'processedUrl',
+          },
+        },
+      };
+      await executeTransform(urlNode, mockCtx);
+      expect(mockCtx.variables.processedUrl).toBe('https://example.com/product/view?item=456');
+
+      // 2. cleanPrice
+      const priceNode: any = {
+        id: 't-price',
+        data: {
+          properties: {
+            input: '{{rawPrice}}',
+            operation: 'cleanPrice',
+            priceMode: 'number_only',
+            outputVariable: 'processedPrice',
+          },
+        },
+      };
+      await executeTransform(priceNode, mockCtx);
+      expect(mockCtx.variables.processedPrice).toBe('2499.99');
+
+      // 3. formatDate
+      const dateNode: any = {
+        id: 't-date',
+        data: {
+          properties: {
+            input: '{{rawDate}}',
+            operation: 'formatDate',
+            dateMode: 'iso_date',
+            outputVariable: 'processedDate',
+          },
+        },
+      };
+      await executeTransform(dateNode, mockCtx);
+      expect(mockCtx.variables.processedDate).toBe('2026-09-22');
+    });
+  });
 });
+

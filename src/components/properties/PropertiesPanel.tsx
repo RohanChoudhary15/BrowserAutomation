@@ -1711,6 +1711,217 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </div>
               )}
             </div>
+
+            {/* 🛠️ Data Post-Processing & Filtering */}
+            <div className="pt-3 border-t border-[#1c2230] space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <span>🛠️ Data Post-Processing &amp; Filtering</span>
+                </label>
+                <span className="text-[10px] text-teal-400 font-mono">Clean &amp; Filter</span>
+              </div>
+
+              {/* 1. URL & Link Normalization */}
+              <div className="p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-gray-300">🔗 URL &amp; Link Processor</span>
+                  <span className="text-[10px] text-gray-500">Auto-fixes incomplete links</span>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1">
+                    Base URL Prefix (e.g. for /product or relative paths)
+                  </label>
+                  <input
+                    type="text"
+                    value={props.urlBasePrefix || ''}
+                    onChange={(e) => handlePropChange('urlBasePrefix', e.target.value)}
+                    placeholder="e.g. https://www.amazon.in"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                  />
+                  <p className="text-[9px] text-gray-500 mt-1">
+                    Prepends this domain if an extracted link is relative like <code className="text-gray-400 font-mono">/dp/B08XYZ</code>.
+                  </p>
+                </div>
+                <div className="space-y-1.5 pt-1">
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.stripUrlQueryParams}
+                      onChange={(e) => handlePropChange('stripUrlQueryParams', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[10px]">
+                      Strip marketing tracking parameters (<code className="text-indigo-300 font-mono">?ref=...</code>, <code className="text-indigo-300 font-mono">utm_*</code>, <code className="text-indigo-300 font-mono">qid</code>)
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.stripAllQueryParams}
+                      onChange={(e) => handlePropChange('stripAllQueryParams', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[10px]">
+                      Strip all query parameters completely (clean canonical path only)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* 2. Price & Number Cleaner */}
+              <div className="p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.cleanPrice}
+                      onChange={(e) => handlePropChange('cleanPrice', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[11px] font-medium text-gray-200">💰 Price &amp; Number Cleaner</span>
+                  </label>
+                  {props.cleanPrice && <span className="text-[10px] text-emerald-400 font-mono">Active</span>}
+                </div>
+
+                {props.cleanPrice && (
+                  <div className="space-y-2 pt-1 border-t border-[#1c2230]/60">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">Price Cleaning Mode</label>
+                      <select
+                        value={props.priceMode || 'number_only'}
+                        onChange={(e) => handlePropChange('priceMode', e.target.value)}
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                      >
+                        <option value="number_only">Number Only (e.g. "$1,299.99" or "₹1,299" ➔ "1299.99")</option>
+                        <option value="strip_symbols">Strip Currency Symbols (e.g. "$1,299.99" ➔ "1,299.99")</option>
+                      </select>
+                      <p className="text-[9px] text-gray-500 mt-1">
+                        Extracts pure numbers and cleans thousand-separators or currencies (₹, $, €, £, etc.).
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Date & Time Formatter */}
+              <div className="p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.formatDate}
+                      onChange={(e) => handlePropChange('formatDate', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[11px] font-medium text-gray-200">📅 Date &amp; Time Formatter</span>
+                  </label>
+                  {props.formatDate && <span className="text-[10px] text-teal-400 font-mono">Active</span>}
+                </div>
+
+                {props.formatDate && (
+                  <div className="space-y-2 pt-1 border-t border-[#1c2230]/60">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">Date Format Mode</label>
+                      <select
+                        value={props.dateMode || 'iso_date'}
+                        onChange={(e) => handlePropChange('dateMode', e.target.value)}
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                      >
+                        <option value="iso_date">ISO Date (YYYY-MM-DD)</option>
+                        <option value="iso_datetime">Full ISO DateTime (YYYY-MM-DDTHH:mm:ssZ)</option>
+                        <option value="timestamp">Unix Millisecond Timestamp</option>
+                      </select>
+                      <p className="text-[9px] text-gray-500 mt-1">
+                        Converts relative dates (e.g. "2 hours ago", "yesterday") and dates into standardized ISO strings.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 4. Pattern Condition Filter ("if url in this pattern then only") */}
+              <div className="p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!props.patternFilterEnabled}
+                      onChange={(e) => handlePropChange('patternFilterEnabled', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                    />
+                    <span className="text-[11px] font-medium text-gray-200">🎯 Pattern Condition Filter</span>
+                  </label>
+                  {props.patternFilterEnabled && (
+                    <span className="text-[10px] text-amber-400 font-mono">Filtering Rows</span>
+                  )}
+                </div>
+
+                {props.patternFilterEnabled && (
+                  <div className="space-y-2.5 pt-1 border-t border-[#1c2230]/60">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1">Target Field</label>
+                        <select
+                          value={props.patternFilterField || 'link'}
+                          onChange={(e) => handlePropChange('patternFilterField', e.target.value)}
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none font-mono"
+                        >
+                          <option value="link">link / URL</option>
+                          <option value="title">title</option>
+                          <option value="price">price</option>
+                          <option value="image">image</option>
+                          {(Array.isArray(props.fields) ? props.fields : []).map((f: any) => (
+                            <option key={f.name} value={f.name}>
+                              {f.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1">Rule Action</label>
+                        <select
+                          value={props.patternFilterAction || 'include_only'}
+                          onChange={(e) => handlePropChange('patternFilterAction', e.target.value)}
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                        >
+                          <option value="include_only">Only include if matches</option>
+                          <option value="exclude_matching">Exclude if matches</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-1">
+                        <label className="block text-[10px] text-gray-400 mb-1">Match Mode</label>
+                        <select
+                          value={props.patternFilterMode || 'contains'}
+                          onChange={(e) => handlePropChange('patternFilterMode', e.target.value)}
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
+                        >
+                          <option value="contains">Contains (*)</option>
+                          <option value="starts_with">Starts With</option>
+                          <option value="ends_with">Ends With</option>
+                          <option value="regex">Regex</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] text-gray-400 mb-1">Pattern Value</label>
+                        <input
+                          type="text"
+                          value={props.patternFilterValue || ''}
+                          onChange={(e) => handlePropChange('patternFilterValue', e.target.value)}
+                          placeholder="e.g. /product/, /dp/, *electronics*"
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[9px] text-gray-500">
+                      Discards incoming scraped rows that do not satisfy this pattern condition before feeding downstream loop bodies or exports.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -3485,6 +3696,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               >
                 <option value="extractField">Extract Property / Field (e.g. link, title, price)</option>
+                <option value="normalizeUrl">Normalize URL (Prepend Base / Strip Tracking)</option>
+                <option value="cleanPrice">Clean Price / Extract Number</option>
+                <option value="formatDate">Format Date / Relative Time</option>
                 <option value="trim">Trim Whitespace</option>
                 <option value="lowercase">To Lowercase</option>
                 <option value="uppercase">To Uppercase</option>
@@ -3509,6 +3723,56 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <p className="text-[10px] text-gray-500 mt-1">
                   Extracts a specific property from an object or JSON string (e.g. from &#123;&#123;currentProduct&#125;&#125;).
                 </p>
+              </div>
+            )}
+            {props.operation === 'normalizeUrl' && (
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Base URL Prefix</label>
+                  <input
+                    type="text"
+                    value={props.basePrefix || ''}
+                    onChange={(e) => handlePropChange('basePrefix', e.target.value)}
+                    placeholder="e.g. https://www.amazon.in"
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={props.stripQueryParams !== false}
+                    onChange={(e) => handlePropChange('stripQueryParams', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[10px]">Strip tracking query parameters (?ref=..., utm_*)</span>
+                </label>
+              </div>
+            )}
+            {props.operation === 'cleanPrice' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Price Mode</label>
+                <select
+                  value={props.priceMode || 'number_only'}
+                  onChange={(e) => handlePropChange('priceMode', e.target.value)}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                >
+                  <option value="number_only">Number only (e.g. "$1,299.99" ➔ "1299.99")</option>
+                  <option value="strip_symbols">Strip currency symbols (e.g. "$1,299.99" ➔ "1,299.99")</option>
+                </select>
+              </div>
+            )}
+            {props.operation === 'formatDate' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Date Format Mode</label>
+                <select
+                  value={props.dateMode || 'iso_date'}
+                  onChange={(e) => handlePropChange('dateMode', e.target.value)}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                >
+                  <option value="iso_date">ISO Date (YYYY-MM-DD)</option>
+                  <option value="iso_datetime">ISO DateTime (YYYY-MM-DDTHH:mm:ssZ)</option>
+                  <option value="timestamp">Timestamp (ms)</option>
+                </select>
               </div>
             )}
             {props.operation === 'replace' && (
