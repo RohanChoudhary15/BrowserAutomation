@@ -197,6 +197,18 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       duration: 2000,
       timeout: 2000,
       unit: 'ms',
+      timerName: '',
+      stopCondition: {
+        enabled: false,
+        type: 'text',
+        text: '',
+        matchMode: 'partial',
+        caseSensitive: false,
+        selector: '',
+        operator: 'equals',
+        leftValue: '',
+        rightValue: '',
+      },
     },
   },
   wait_for_element: {
@@ -846,6 +858,68 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'slackResponse',
     },
   },
+
+  // Commands & Workflow Control
+  stop_timer: {
+    type: 'stop_timer',
+    label: 'Stop Timer',
+    category: 'command',
+    description: 'Stop or cancel running wait timer(s) when a condition matches',
+    icon: 'TimerOff',
+    defaultProperties: {
+      targetTimer: 'all',
+      action: 'complete_early',
+      reason: 'Condition matched',
+      outputVariable: 'timerStopped',
+    },
+  },
+  reset_timer: {
+    type: 'reset_timer',
+    label: 'Reset Timer',
+    category: 'command',
+    description: 'Restart or extend the duration of an active wait timer',
+    icon: 'RotateCcw',
+    defaultProperties: {
+      targetTimer: 'all',
+      mode: 'restart',
+      extendMs: 5000,
+      outputVariable: 'timerReset',
+    },
+  },
+  stop_workflow: {
+    type: 'stop_workflow',
+    label: 'Stop Workflow',
+    category: 'command',
+    description: 'Terminate workflow execution cleanly (successful early exit or stop)',
+    icon: 'StopCircle',
+    defaultProperties: {
+      exitStatus: 'completed',
+      exitMessage: 'Workflow stopped early by command',
+      saveOutput: true,
+    },
+  },
+  pause_workflow: {
+    type: 'pause_workflow',
+    label: 'Pause Workflow',
+    category: 'command',
+    description: 'Pause execution for manual user review or captcha solving before continuing',
+    icon: 'PauseCircle',
+    defaultProperties: {
+      message: 'Workflow paused. Click Resume to continue.',
+      autoResumeMs: 0,
+    },
+  },
+  skip_to: {
+    type: 'skip_to',
+    label: 'Skip to Node',
+    category: 'command',
+    description: 'Skip intermediate steps and jump execution directly to a target node',
+    icon: 'FastForward',
+    defaultProperties: {
+      targetNodeId: '',
+      reason: 'Skipped to target node',
+    },
+  },
 };
 
 export const CATEGORIES: { id: NodeCategory; label: string; color: string }[] = [
@@ -857,6 +931,7 @@ export const CATEGORIES: { id: NodeCategory; label: string; color: string }[] = 
   { id: 'data', label: 'Data', color: '#ec4899' },
   { id: 'utility', label: 'Utility', color: '#06b6d4' },
   { id: 'messaging', label: 'Messaging', color: '#14b8a6' },
+  { id: 'command', label: 'Commands', color: '#f43f5e' },
 ];
 
 export function getNodeDefinition(type: NodeType): NodeDefinition {

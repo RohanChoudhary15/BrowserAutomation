@@ -1,5 +1,5 @@
 import { Workflow, WorkflowNode, WorkflowEdge } from '../types/workflow';
-import { ExecutionContext, NodeRuntimeState, ExecutionLog, WorkflowExecutionStatus } from '../types/execution';
+import { ExecutionContext, NodeRuntimeState, ExecutionLog, WorkflowExecutionStatus, ActiveTimer } from '../types/execution';
 import { executors } from './executors';
 import { generateId } from '../utils/id';
 import { createFriendlyError } from '../utils/formatters';
@@ -27,6 +27,8 @@ export class WorkflowEngine {
   private gateInputsState = new Map<string, Map<string, { result: boolean; output: any; nodeName: string }>>();
   /** Tracks which gate nodes have already fired during this execution pass */
   private triggeredGates = new Set<string>();
+  /** Active wait timers registry for stopping/resetting timers across branches */
+  private activeTimers = new Map<string, ActiveTimer>();
 
   constructor(workflow: Workflow, events: EngineEvents = {}) {
     this.workflow = workflow;
@@ -99,6 +101,12 @@ export class WorkflowEngine {
       this.resumeResolve();
       this.resumeResolve = null;
     }
+    for (const timer of this.activeTimers.values()) {
+      try {
+        timer.stop('cancel', 'Workflow stopped');
+      } catch {}
+    }
+    this.activeTimers.clear();
     this.setStatus('stopped');
     this.log({ level: 'warn', message: 'Workflow stopped by user.' });
   }
@@ -118,6 +126,8 @@ export class WorkflowEngine {
       human: this.human,
       log: (l) => this.log(l),
       updateNodeState: (id, s) => this.updateNodeState(id, s),
+      _activeTimers: this.activeTimers,
+      _pauseTrigger: () => this.pause(),
     };
 
     try {
@@ -147,6 +157,7 @@ export class WorkflowEngine {
     this.events.onVariablesChange?.(this.variables);
     this.gateInputsState.clear();
     this.triggeredGates.clear();
+    this.activeTimers.clear();
 
     this.log({
       level: 'info',
@@ -171,6 +182,8 @@ export class WorkflowEngine {
       human: this.human,
       log: (l) => this.log(l),
       updateNodeState: (id, s) => this.updateNodeState(id, s),
+      _activeTimers: this.activeTimers,
+      _pauseTrigger: () => this.pause(),
     };
 
     // Reset all node states to queued / idle
@@ -266,6 +279,52 @@ export class WorkflowEngine {
       if (result.variables) {
         Object.assign(this.variables, result.variables);
         this.events.onVariablesChange?.(this.variables);
+      }
+
+      // Handle Stop Workflow command
+      if (result.stopWorkflow) {
+        const exitStatus = result.exitStatus || 'completed';
+        this.setStatus(exitStatus);
+        this.log({
+          level: 'info',
+          nodeId: node.id,
+          nodeName: node.data.label,
+          message: result.exitMessage || `Workflow stopped early by ${node.data.label}`,
+        });
+        return;
+      }
+
+      // Handle Cancel Branch (e.g. stop_timer with cancel action)
+      if (result.cancelBranch) {
+        this.log({
+          level: 'info',
+          nodeId: node.id,
+          nodeName: node.data.label,
+          message: `Branch cancelled at ${node.data.label}`,
+        });
+        return;
+      }
+
+      // Handle Skip To (Jump to specific node)
+      if (result.jumpToNodeId) {
+        const targetNode = this.workflow.nodes.find(n => n.id === result.jumpToNodeId);
+        if (targetNode) {
+          this.log({
+            level: 'info',
+            nodeId: node.id,
+            nodeName: node.data.label,
+            message: `Jumping execution to ${targetNode.data.label} (${targetNode.id})`,
+          });
+          await this.traverseAndExecute(targetNode, ctx);
+          return;
+        } else {
+          this.log({
+            level: 'warn',
+            nodeId: node.id,
+            nodeName: node.data.label,
+            message: `Target node "${result.jumpToNodeId}" not found for skip_to command`,
+          });
+        }
       }
 
       // Step mode pause

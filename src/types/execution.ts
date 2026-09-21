@@ -64,6 +64,15 @@ export interface ExecutionLog {
   screenshotUrl?: string;
 }
 
+export interface ActiveTimer {
+  nodeId: string;
+  timerName?: string;
+  totalDurationMs: number;
+  startTime: number;
+  stop: (action: 'complete_early' | 'cancel', reason?: string) => void;
+  reset: (mode: 'restart' | 'extend', extendMs?: number) => void;
+}
+
 export interface NodeResult {
   success: boolean;
   output?: any;
@@ -72,6 +81,11 @@ export interface NodeResult {
   nextBranch?: string; // 'true' | 'false' | 'loop_body' | 'loop_done' | 'try' | 'catch' | 'default'
   breakLoop?: boolean;
   continueLoop?: boolean;
+  stopWorkflow?: boolean;
+  exitStatus?: 'completed' | 'stopped';
+  exitMessage?: string;
+  jumpToNodeId?: string;
+  cancelBranch?: boolean;
 }
 
 export interface ExecutionContext {
@@ -88,4 +102,8 @@ export interface ExecutionContext {
   updateNodeState: (nodeId: string, state: Partial<NodeRuntimeState>) => void;
   /** Internal tracking for inputs delivered to logic gates when merging branches */
   _gateInputs?: Record<string, any[]>;
+  /** Registry of currently running wait timers accessible by command nodes */
+  _activeTimers?: Map<string, ActiveTimer>;
+  /** Engine-level pause trigger hook */
+  _pauseTrigger?: (message?: string) => void;
 }

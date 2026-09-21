@@ -81,6 +81,7 @@ interface PropertiesPanelProps {
   onStartElementPicker: (mode?: 'single' | 'pattern_2click') => void;
   isPickingElement: boolean;
   onClose: () => void;
+  allNodes?: WorkflowNode[];
 }
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -101,6 +102,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onStartElementPicker,
   isPickingElement,
   onClose,
+  allNodes = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'config' | 'strategies'>('config');
   const [aiAgentModels, setAiAgentModels] = useState<ModelOption[]>([]);
@@ -853,38 +855,272 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
         {/* Duration (Wait) */}
         {selectedNode.data.type === 'wait' && (
-          <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">Wait Duration / Timeout (ms)</label>
-            <input
-              type="number"
-              value={props.duration || props.timeout || 1000}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                handlePropChange('duration', val);
-                handlePropChange('timeout', val);
-              }}
-              min={50}
-              step={100}
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-            />
-            <div className="flex items-center gap-1.5 mt-2">
-              {[500, 1000, 2000, 5000, 10000].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => {
-                    handlePropChange('duration', preset);
-                    handlePropChange('timeout', preset);
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Wait Duration / Timeout (ms)</label>
+              <input
+                type="number"
+                value={props.duration || props.timeout || 1000}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  handlePropChange('duration', val);
+                  handlePropChange('timeout', val);
+                }}
+                min={50}
+                step={100}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+              <div className="flex items-center gap-1.5 mt-2">
+                {[500, 1000, 2000, 5000, 10000].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      handlePropChange('duration', preset);
+                      handlePropChange('timeout', preset);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                      (props.duration || props.timeout || 1000) === preset
+                        ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
+                        : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                    }`}
+                  >
+                    {preset >= 1000 ? `${preset / 1000}s` : `${preset}ms`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Optional Timer Identifier for command targeting */}
+            <div className="pt-2 border-t border-[#1c2230]">
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Timer Name / ID (optional)
+              </label>
+              <input
+                type="text"
+                value={props.timerName || ''}
+                onChange={(e) => handlePropChange('timerName', e.target.value)}
+                placeholder="e.g. loginWait, myTimer (for targeting with Stop Timer)"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Allows other nodes (like Stop Timer or Reset Timer) to specifically stop this timer by name.
+              </p>
+            </div>
+
+            {/* Early Stop Condition Card */}
+            <div className="p-3 rounded-xl bg-[#131722] border border-[#232a3b] space-y-2.5">
+              <label className="flex items-center gap-2 text-gray-200 cursor-pointer font-medium text-xs">
+                <input
+                  type="checkbox"
+                  checked={props.stopCondition?.enabled === true}
+                  onChange={(e) => {
+                    const current = props.stopCondition || {};
+                    handlePropChange('stopCondition', { ...current, enabled: e.target.checked });
                   }}
-                  className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-                    (props.duration || props.timeout || 1000) === preset
-                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
-                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
-                  }`}
-                >
-                  {preset >= 1000 ? `${preset / 1000}s` : `${preset}ms`}
-                </button>
-              ))}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span>Stop wait timer early if condition matches</span>
+              </label>
+
+              {props.stopCondition?.enabled && (
+                <div className="space-y-2.5 pt-2 border-t border-[#1c2230]">
+                  <div>
+                    <label className="block text-[10px] font-medium text-gray-400 mb-1">Condition Type</label>
+                    <div className="grid grid-cols-3 gap-1">
+                      {[
+                        { id: 'text', label: 'Text Exists' },
+                        { id: 'element', label: 'Element Exists' },
+                        { id: 'variable', label: 'Variable Check' },
+                      ].map((typeOption) => (
+                        <button
+                          key={typeOption.id}
+                          type="button"
+                          onClick={() => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, type: typeOption.id });
+                          }}
+                          className={`py-1 px-1.5 rounded text-[10px] font-medium border transition-colors ${
+                            (props.stopCondition?.type || 'text') === typeOption.id
+                              ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 font-semibold'
+                              : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                          }`}
+                        >
+                          {typeOption.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Text Exists Stop Condition */}
+                  {(props.stopCondition?.type || 'text') === 'text' && (
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1">Text to Watch For</label>
+                        <input
+                          type="text"
+                          value={props.stopCondition?.text || ''}
+                          onChange={(e) => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, text: e.target.value });
+                          }}
+                          placeholder="e.g. Order Confirmed, Submit Successful..."
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, matchMode: 'partial' });
+                          }}
+                          className={`py-1 px-2 rounded text-[10px] border transition-colors ${
+                            (props.stopCondition?.matchMode || 'partial') === 'partial'
+                              ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 font-semibold'
+                              : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                          }`}
+                        >
+                          Partial Match
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, matchMode: 'exact' });
+                          }}
+                          className={`py-1 px-2 rounded text-[10px] border transition-colors ${
+                            props.stopCondition?.matchMode === 'exact'
+                              ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 font-semibold'
+                              : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                          }`}
+                        >
+                          Exact Match
+                        </button>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={props.stopCondition?.caseSensitive === true}
+                          onChange={(e) => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, caseSensitive: e.target.checked });
+                          }}
+                          className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                        />
+                        <span className="text-[10px]">Respect Casing (Case-sensitive)</span>
+                      </label>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] text-gray-400">Container Element (optional)</label>
+                          <button
+                            type="button"
+                            onClick={() => onStartElementPicker('single')}
+                            className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-white"
+                          >
+                            <Crosshair className="w-3 h-3" />
+                            <span>Pick Element</span>
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={props.stopCondition?.selector || ''}
+                          onChange={(e) => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, selector: e.target.value });
+                          }}
+                          placeholder="Leave empty for whole page, or #container"
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Element Exists Stop Condition */}
+                  {props.stopCondition?.type === 'element' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] text-gray-400">Element to Watch For</label>
+                        <button
+                          type="button"
+                          onClick={() => onStartElementPicker('single')}
+                          className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-white"
+                        >
+                          <Crosshair className="w-3 h-3" />
+                          <span>Pick Element</span>
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={props.stopCondition?.selector || ''}
+                        onChange={(e) => {
+                          const current = props.stopCondition || {};
+                          handlePropChange('stopCondition', { ...current, selector: e.target.value });
+                        }}
+                        placeholder="#target, .modal-success, button[disabled]"
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                      />
+                    </div>
+                  )}
+
+                  {/* Variable Check Stop Condition */}
+                  {props.stopCondition?.type === 'variable' && (
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1">Left Variable / Value</label>
+                        <input
+                          type="text"
+                          value={props.stopCondition?.leftValue || ''}
+                          onChange={(e) => {
+                            const current = props.stopCondition || {};
+                            handlePropChange('stopCondition', { ...current, leftValue: e.target.value });
+                          }}
+                          placeholder="{{status}}, {{isReady}}"
+                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Operator</label>
+                          <select
+                            value={props.stopCondition?.operator || 'equals'}
+                            onChange={(e) => {
+                              const current = props.stopCondition || {};
+                              handlePropChange('stopCondition', { ...current, operator: e.target.value });
+                            }}
+                            className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                          >
+                            <option value="equals">equals (==)</option>
+                            <option value="not_equals">not equals (!=)</option>
+                            <option value="contains">contains</option>
+                            <option value="exists">exists</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Right Value</label>
+                          <input
+                            type="text"
+                            value={props.stopCondition?.rightValue || ''}
+                            onChange={(e) => {
+                              const current = props.stopCondition || {};
+                              handlePropChange('stopCondition', { ...current, rightValue: e.target.value });
+                            }}
+                            placeholder="true, done, success"
+                            className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-emerald-400/90 leading-tight">
+                    ✨ If this condition becomes true while waiting, the timer immediately finishes early and proceeds downstream!
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2005,6 +2241,314 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
           );
         })()}
+
+        {/* Stop Timer Command Node */}
+        {selectedNode.data.type === 'stop_timer' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Stop Timer Command</span>
+              </label>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">
+                Active Wait Killer
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Target Wait Timer</label>
+              <select
+                value={props.targetTimer || 'all'}
+                onChange={(e) => handlePropChange('targetTimer', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="all">⚡ All Active Wait Timers</option>
+                {(allNodes || [])
+                  .filter((n) => n.data.type === 'wait' && n.id !== selectedNode.id)
+                  .map((n) => (
+                    <option key={n.id} value={n.data.properties?.timerName || n.id}>
+                      ⏳ {n.data.label} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${n.id.slice(0, 8)})`}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            {props.targetTimer !== 'all' && (
+              <div>
+                <label className="block text-[10px] font-medium text-gray-500 mb-1">Or Custom Timer Name</label>
+                <input
+                  type="text"
+                  value={props.targetTimer || ''}
+                  onChange={(e) => handlePropChange('targetTimer', e.target.value)}
+                  placeholder="e.g. loginWait, myTimer"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Action on Target Timer</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('action', 'complete_early')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border text-left transition-colors ${
+                    (props.action || 'complete_early') === 'complete_early'
+                      ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  <div className="font-semibold text-[11px]">Finish Early</div>
+                  <div className="text-[9px] text-gray-400">Proceeds downstream</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('action', 'cancel')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border text-left transition-colors ${
+                    props.action === 'cancel'
+                      ? 'bg-rose-600/20 text-rose-300 border-rose-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  <div className="font-semibold text-[11px]">Cancel Branch</div>
+                  <div className="text-[9px] text-gray-400">Stops waiting branch</div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Reason / Note (for logs)</label>
+              <input
+                type="text"
+                value={props.reason || ''}
+                onChange={(e) => handlePropChange('reason', e.target.value)}
+                placeholder="Condition matched, stopping wait"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Variable (boolean)</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'timerStopped'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="timerStopped"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Reset Timer Command Node */}
+        {selectedNode.data.type === 'reset_timer' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Reset Timer Command</span>
+              </label>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                Timer Controller
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Target Wait Timer</label>
+              <select
+                value={props.targetTimer || 'all'}
+                onChange={(e) => handlePropChange('targetTimer', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="all">⚡ All Active Wait Timers</option>
+                {(allNodes || [])
+                  .filter((n) => n.data.type === 'wait' && n.id !== selectedNode.id)
+                  .map((n) => (
+                    <option key={n.id} value={n.data.properties?.timerName || n.id}>
+                      ⏳ {n.data.label} {n.data.properties?.timerName ? `[${n.data.properties.timerName}]` : `(${n.id.slice(0, 8)})`}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Reset Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('mode', 'restart')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border text-center transition-colors ${
+                    (props.mode || 'restart') === 'restart'
+                      ? 'bg-amber-600/20 text-amber-300 border-amber-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Restart from 0s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('mode', 'extend')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border text-center transition-colors ${
+                    props.mode === 'extend'
+                      ? 'bg-amber-600/20 text-amber-300 border-amber-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Extend Duration
+                </button>
+              </div>
+            </div>
+
+            {props.mode === 'extend' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Extend By (ms)</label>
+                <input
+                  type="number"
+                  value={props.extendMs || 5000}
+                  onChange={(e) => handlePropChange('extendMs', Number(e.target.value))}
+                  min={500}
+                  step={500}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Stop Workflow Command Node */}
+        {selectedNode.data.type === 'stop_workflow' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-rose-400 uppercase tracking-wider">
+                Exit Workflow Command
+              </label>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">
+                Clean Exit
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Exit Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('exitStatus', 'completed')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    (props.exitStatus || 'completed') === 'completed'
+                      ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Completed (Success)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('exitStatus', 'stopped')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition-colors ${
+                    props.exitStatus === 'stopped'
+                      ? 'bg-rose-600/25 text-rose-300 border-rose-500/50 font-semibold'
+                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
+                  }`}
+                >
+                  Stopped (Early Exit)
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Exit Message</label>
+              <input
+                type="text"
+                value={props.exitMessage || ''}
+                onChange={(e) => handlePropChange('exitMessage', e.target.value)}
+                placeholder="Workflow ended early (e.g. item already booked)"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Pause Workflow Command Node */}
+        {selectedNode.data.type === 'pause_workflow' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-yellow-400 uppercase tracking-wider">
+                Pause Workflow Command
+              </label>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-mono">
+                Human Checkpoint
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Pause Prompt Message</label>
+              <textarea
+                rows={2}
+                value={props.message || ''}
+                onChange={(e) => handlePropChange('message', e.target.value)}
+                placeholder="Workflow paused. Solve captcha or review page, then click Resume."
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Auto-Resume Timeout (optional, ms)</label>
+              <input
+                type="number"
+                value={props.autoResumeMs || 0}
+                onChange={(e) => handlePropChange('autoResumeMs', Number(e.target.value))}
+                min={0}
+                step={1000}
+                placeholder="0 = wait indefinitely until user resumes"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">Leave 0 to wait until user clicks Resume button.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Skip to Node Command Node */}
+        {selectedNode.data.type === 'skip_to' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">
+                Skip to Node Command
+              </label>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono">
+                Jump Execution
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Target Node to Jump To</label>
+              <select
+                value={props.targetNodeId || ''}
+                onChange={(e) => handlePropChange('targetNodeId', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="">Select target node...</option>
+                {(allNodes || [])
+                  .filter((n) => n.id !== selectedNode.id)
+                  .map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.data.label} ({n.data.type} - {n.id.slice(0, 8)})
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Reason / Note (optional)</label>
+              <input
+                type="text"
+                value={props.reason || ''}
+                onChange={(e) => handlePropChange('reason', e.target.value)}
+                placeholder="Skipping checkout since user not logged in"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Loop Node */}
         {selectedNode.data.type === 'loop' && (

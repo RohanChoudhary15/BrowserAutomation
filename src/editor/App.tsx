@@ -1048,6 +1048,7 @@ export const App: React.FC = () => {
             onStartElementPicker={handleStartElementPicker}
             isPickingElement={isPickingElement}
             onClose={() => setIsPropertiesCollapsed(true)}
+            allNodes={currentWorkflow.nodes}
           />
         )}
       </div>

@@ -6,7 +6,8 @@ export type NodeCategory =
   | 'logic'
   | 'data'
   | 'utility'
-  | 'messaging';
+  | 'messaging'
+  | 'command';
 
 export type NodeType =
   // Browser
@@ -80,7 +81,13 @@ export type NodeType =
   // Messaging & Notifications
   | 'telegram_message'
   | 'discord_message'
-  | 'slack_message';
+  | 'slack_message'
+  // Commands & Workflow Control
+  | 'stop_timer'
+  | 'reset_timer'
+  | 'stop_workflow'
+  | 'pause_workflow'
+  | 'skip_to';
 
 export interface WorkflowNodeData {
   label: string;

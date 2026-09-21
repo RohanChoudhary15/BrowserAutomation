@@ -32,6 +32,21 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
   else if (data.type === 'math_calculate') summary = `${data.properties?.outputVariable || 'counter'} (${data.properties?.operation || 'add'})`;
+  else if (data.type === 'stop_timer') summary = `Stop: ${data.properties?.targetTimer === 'all' ? 'All Timers' : data.properties?.targetTimer || 'All'} (${data.properties?.action === 'cancel' ? 'Cancel' : 'Finish Early'})`;
+  else if (data.type === 'reset_timer') summary = `Reset: ${data.properties?.targetTimer === 'all' ? 'All Timers' : data.properties?.targetTimer || 'All'} (${data.properties?.mode === 'extend' ? `+${data.properties?.extendMs || 5000}ms` : 'Restart'})`;
+  else if (data.type === 'stop_workflow') summary = `Exit Workflow (${data.properties?.exitStatus || 'completed'})`;
+  else if (data.type === 'pause_workflow') summary = data.properties?.message ? `"${data.properties.message.slice(0, 26)}"` : 'Wait for Resume';
+  else if (data.type === 'skip_to') summary = `Jump to: ${data.properties?.targetNodeId || 'Select node'}`;
+  else if (data.type === 'wait') {
+    const timerPrefix = data.properties?.timerName ? `[${data.properties.timerName}] ` : '';
+    if (data.properties?.stopCondition?.enabled) {
+      const cond = data.properties.stopCondition;
+      const condDesc = cond.type === 'text' ? `"${cond.text || 'text'}"` : (cond.type === 'element' ? (cond.selector || 'element') : 'condition');
+      summary = `${timerPrefix}${data.properties?.duration || 1000}ms or until ${condDesc}`;
+    } else {
+      summary = `${timerPrefix}${data.properties?.duration || 1000}ms`;
+    }
+  }
   else if (data.properties?.url) summary = data.properties.url;
   else if (data.properties?.selector) summary = data.properties.selector;
   else if (data.properties?.text) summary = `"${data.properties.text}"`;
