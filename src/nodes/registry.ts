@@ -418,6 +418,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       // Post-Processing & Normalization
       postProcessingEnabled: false,
       urlBasePrefix: '',
+      urlTargetFields: ['link'],
       stripUrlQueryParams: false,
       stripAllQueryParams: false,
       cleanPrice: false,

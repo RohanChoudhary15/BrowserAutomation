@@ -808,6 +808,68 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(res.items.find((i: any) => i.title === 'Promo Item')).toBeUndefined();
     });
 
+    it('cleans "./" and formats multiple user-selected urlTargetFields in executeScrapeElements', async () => {
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn().mockImplementation((msg) => {
+            if (msg.type === 'EXECUTE_DOM_ACTION' && msg.payload.action === 'extract_dataset') {
+              return Promise.resolve({
+                success: true,
+                items: [
+                  {
+                    title: 'Ergonomic Chair',
+                    link: './product/chair-101?ref=test_1',
+                    image: './images/chair.png',
+                    sku: './sku-123',
+                  },
+                ],
+              });
+            }
+            return Promise.resolve({ success: true });
+          }),
+        },
+      };
+
+      const mockCtx: any = {
+        variables: {},
+        log: vi.fn(),
+        updateNodeState: vi.fn(),
+      };
+
+      const node: any = {
+        id: 'scrape-url-fields',
+        data: {
+          label: 'Scrape Products',
+          properties: {
+            containerSelector: '.product',
+            fields: [
+              { name: 'title', selector: 'h3', attribute: 'text' },
+              { name: 'link', selector: 'a', attribute: 'href' },
+              { name: 'image', selector: 'img', attribute: 'src' },
+              { name: 'sku', selector: '.sku', attribute: 'text' },
+            ],
+            outputVariable: 'scrapedChairs',
+            postProcessingEnabled: true,
+            urlBasePrefix: 'https://www.furniturestore.com',
+            urlTargetFields: ['link', 'image'],
+            stripUrlQueryParams: true,
+          },
+        },
+      };
+
+      const res = await executeScrapeElements(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(res.items.length).toBe(1);
+
+      // 'link' and 'image' had './' removed and base prefix applied
+      expect(res.items[0].link).toBe('https://www.furniturestore.com/product/chair-101');
+      expect(res.items[0].image).toBe('https://www.furniturestore.com/images/chair.png');
+
+      // 'sku' and 'title' were not in urlTargetFields so they were not modified
+      expect(res.items[0].sku).toBe('./sku-123');
+      expect(res.items[0].title).toBe('Ergonomic Chair');
+    });
+
     it('transforms data via executeTransform operations: normalizeUrl, cleanPrice, formatDate', async () => {
       const mockCtx: any = {
         variables: {

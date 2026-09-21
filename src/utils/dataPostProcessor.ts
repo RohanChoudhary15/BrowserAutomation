@@ -119,7 +119,36 @@ export function normalizeUrl(
     return str;
   }
 
-  // Prepend Base URL prefix if provided and URL is relative
+  // 1. Remove '.' from './' occurrences (e.g. './product/123' -> '/product/123', '/a/./b' -> '/a/b')
+  // Isolate path from query string & hash fragment so query values are preserved
+  let pathAndQuery = str;
+  let hashPart = '';
+  const hashIdx = pathAndQuery.indexOf('#');
+  if (hashIdx !== -1) {
+    hashPart = pathAndQuery.slice(hashIdx);
+    pathAndQuery = pathAndQuery.slice(0, hashIdx);
+  }
+
+  const qIdx = pathAndQuery.indexOf('?');
+  let pathPart = qIdx !== -1 ? pathAndQuery.slice(0, qIdx) : pathAndQuery;
+  const queryPart = qIdx !== -1 ? pathAndQuery.slice(qIdx) : '';
+
+  // Remove leading './' -> '/'
+  if (pathPart.startsWith('./')) {
+    pathPart = pathPart.replace(/^\.\/+/, '/');
+  }
+  // Remove any '/./' inside path -> '/'
+  while (pathPart.includes('/./')) {
+    pathPart = pathPart.replace(/\/\.\//g, '/');
+  }
+  // Remove trailing '/.' -> '/'
+  if (pathPart.endsWith('/.')) {
+    pathPart = pathPart.slice(0, -1);
+  }
+
+  str = pathPart + queryPart + hashPart;
+
+  // 2. Prepend Base URL prefix if provided and URL is relative
   if (options.basePrefix && options.basePrefix.trim() !== '') {
     const rawBase = options.basePrefix.trim();
     // Ensure base has protocol
@@ -134,6 +163,11 @@ export function normalizeUrl(
     } else if (!/^https?:\/\//i.test(str)) {
       str = `${cleanBase}/${str.replace(/^\/+/, '')}`;
     }
+  }
+
+  // Clean any remaining '/./' in final combined URL
+  while (str.includes('/./')) {
+    str = str.replace(/\/\.\//g, '/');
   }
 
   // Strip query parameters
@@ -409,10 +443,11 @@ export function processDataset(
         const originalVal = currentVal;
 
         // URL normalization
-        if (
-          (config.urlBasePrefix || config.stripUrlQueryParams || config.stripAllQueryParams) &&
-          urlFields.some((f) => f.toLowerCase() === key.toLowerCase() || key.toLowerCase().includes('url') || key.toLowerCase().includes('link') || key.toLowerCase().includes('href'))
-        ) {
+        const isTargetUrlField = config.urlFields && config.urlFields.length > 0
+          ? config.urlFields.some((f) => f.toLowerCase().trim() === key.toLowerCase().trim())
+          : urlFields.some((f) => f.toLowerCase() === key.toLowerCase() || key.toLowerCase().includes('url') || key.toLowerCase().includes('link') || key.toLowerCase().includes('href'));
+
+        if (isTargetUrlField) {
           currentVal = normalizeUrl(currentVal, {
             basePrefix: config.urlBasePrefix,
             stripQueryParams: config.stripUrlQueryParams,

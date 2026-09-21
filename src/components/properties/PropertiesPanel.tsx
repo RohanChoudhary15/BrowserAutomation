@@ -30,6 +30,8 @@ import {
   FileSpreadsheet,
   Table,
   FileDown,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
@@ -170,10 +172,81 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [showRawOutput, setShowRawOutput] = useState(false);
   const [copiedBase64, setCopiedBase64] = useState(false);
 
+  // Inspect panel width resizing state (persisted to localStorage)
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('autoflow_inspect_panel_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 260 && parsed <= 1400) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 320;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const panelWidthRef = React.useRef(panelWidth);
+  panelWidthRef.current = panelWidth;
+
+  const handleMouseDownResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = panelWidthRef.current;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX;
+      const maxWidth = Math.max(450, Math.floor(window.innerWidth * 0.75));
+      const newWidth = Math.min(Math.max(startWidth + delta, 280), maxWidth);
+      setPanelWidth(newWidth);
+      panelWidthRef.current = newWidth;
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      try {
+        localStorage.setItem('autoflow_inspect_panel_width', String(panelWidthRef.current));
+      } catch {}
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
   // Multi-node selection batch overview
   if (selectedNodes && selectedNodes.length > 1) {
     return (
-      <aside className="w-full sm:w-80 max-w-full absolute sm:relative right-0 top-0 bottom-0 border-l border-[#1c2230] bg-[#0c0e14] flex flex-col select-none z-20 sm:z-10 shadow-2xl sm:shadow-none">
+      <aside
+        style={{ width: `${panelWidth}px` }}
+        className="max-w-full absolute sm:relative right-0 top-0 bottom-0 border-l border-[#1c2230] bg-[#0c0e14] flex flex-col select-none z-20 sm:z-10 shadow-2xl sm:shadow-none shrink-0"
+      >
+        {/* Drag-to-resize handle on left edge */}
+        <div
+          onMouseDown={handleMouseDownResize}
+          onDoubleClick={() => {
+            setPanelWidth(320);
+            try { localStorage.setItem('autoflow_inspect_panel_width', '320'); } catch {}
+          }}
+          className={`absolute -left-1.5 top-0 bottom-0 w-3 cursor-col-resize z-30 group flex items-center justify-center hover:bg-indigo-500/20 transition-colors ${
+            isResizing ? 'bg-indigo-500/30' : ''
+          }`}
+          title="Drag left edge to resize inspect panel (Double-click to reset to 320px)"
+        >
+          <div
+            className={`w-0.5 h-16 rounded-full transition-colors ${
+              isResizing ? 'bg-indigo-400' : 'bg-transparent group-hover:bg-indigo-400/80'
+            }`}
+          />
+        </div>
+
         {/* Header */}
         <div className="p-3 border-b border-[#1c2230] flex items-center justify-between bg-[#11141c]">
           <div className="flex items-center gap-2">
@@ -182,12 +255,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
             <span className="font-semibold text-xs text-white">{selectedNodes.length} Nodes Selected</span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                const nextWidth = panelWidth < 400 ? 480 : (panelWidth < 600 ? 640 : 320);
+                setPanelWidth(nextWidth);
+                try { localStorage.setItem('autoflow_inspect_panel_width', String(nextWidth)); } catch {}
+              }}
+              className="p-1 rounded text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+              title={`Inspect panel width: ${panelWidth}px (Click to cycle 320px / 480px / 640px, or drag left edge)`}
+            >
+              {panelWidth >= 500 ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Selected nodes list */}
@@ -274,7 +361,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const availableVars = Object.keys(variables);
 
   return (
-    <aside className="w-full sm:w-80 max-w-full absolute sm:relative right-0 top-0 bottom-0 border-l border-[#1c2230] bg-[#0c0e14] flex flex-col select-none z-20 sm:z-10 shadow-2xl sm:shadow-none">
+    <aside
+      style={{ width: `${panelWidth}px` }}
+      className="max-w-full absolute sm:relative right-0 top-0 bottom-0 border-l border-[#1c2230] bg-[#0c0e14] flex flex-col select-none z-20 sm:z-10 shadow-2xl sm:shadow-none shrink-0"
+    >
+      {/* Drag-to-resize handle on left edge */}
+      <div
+        onMouseDown={handleMouseDownResize}
+        onDoubleClick={() => {
+          setPanelWidth(320);
+          try { localStorage.setItem('autoflow_inspect_panel_width', '320'); } catch {}
+        }}
+        className={`absolute -left-1.5 top-0 bottom-0 w-3 cursor-col-resize z-30 group flex items-center justify-center hover:bg-indigo-500/20 transition-colors ${
+          isResizing ? 'bg-indigo-500/30' : ''
+        }`}
+        title="Drag left edge to resize inspect panel (Double-click to reset to 320px)"
+      >
+        <div
+          className={`w-0.5 h-16 rounded-full transition-colors ${
+            isResizing ? 'bg-indigo-400' : 'bg-transparent group-hover:bg-indigo-400/80'
+          }`}
+        />
+      </div>
+
       {/* Header */}
       <div className="p-3 border-b border-[#1c2230] flex items-center justify-between bg-[#11141c]">
         <div className="flex items-center gap-2 overflow-hidden">
@@ -299,6 +408,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           >
             <Play className="w-3 h-3 fill-current" />
             <span>Run</span>
+          </button>
+
+          {/* Width Resize Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const nextWidth = panelWidth < 400 ? 480 : (panelWidth < 600 ? 640 : 320);
+              setPanelWidth(nextWidth);
+              try { localStorage.setItem('autoflow_inspect_panel_width', String(nextWidth)); } catch {}
+            }}
+            className="p-1 rounded text-gray-400 hover:text-white hover:bg-[#161a24] transition-colors"
+            title={`Inspect panel width: ${panelWidth}px (Click to cycle 320px / 480px / 640px, or drag left edge)`}
+          >
+            {panelWidth >= 500 ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
           <button
@@ -1739,7 +1862,79 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
                   />
                   <p className="text-[9px] text-gray-500 mt-1">
-                    Prepends this domain if an extracted link is relative like <code className="text-gray-400 font-mono">/dp/B08XYZ</code>.
+                    Prepends this domain if an extracted link is relative like <code className="text-gray-400 font-mono">/dp/B08XYZ</code> (also strips leading <code className="text-gray-400 font-mono">./</code>).
+                  </p>
+                </div>
+
+                {/* Selectable Target Fields for URL Formatting */}
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] font-semibold text-gray-300">
+                      Apply URL Formatting To Fields:
+                    </label>
+                    <div className="flex items-center gap-1.5 text-[9px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allNames = Array.isArray(props.fields)
+                            ? props.fields.map((f: any) => f.name).filter(Boolean)
+                            : ['link', 'image'];
+                          handlePropChange('urlTargetFields', allNames);
+                        }}
+                        className="text-indigo-400 hover:text-indigo-300 underline"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-gray-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => handlePropChange('urlTargetFields', ['link'])}
+                        className="text-gray-400 hover:text-gray-300 underline"
+                      >
+                        Link Only
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Multiple Selectable Field Badges */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {(() => {
+                      const definedFields: string[] = Array.isArray(props.fields)
+                        ? props.fields.map((f: any) => f.name || '').filter(Boolean)
+                        : [];
+                      const candidateFields = Array.from(new Set([...definedFields, 'link', 'image']));
+                      const currentSelected: string[] = Array.isArray(props.urlTargetFields)
+                        ? props.urlTargetFields
+                        : (Array.isArray(props.urlFields) ? props.urlFields : ['link']);
+
+                      return candidateFields.map((field) => {
+                        const isSelected = currentSelected.includes(field);
+                        return (
+                          <button
+                            key={field}
+                            type="button"
+                            onClick={() => {
+                              const updated = isSelected
+                                ? currentSelected.filter((f) => f !== field)
+                                : [...currentSelected, field];
+                              handlePropChange('urlTargetFields', updated);
+                            }}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                              isSelected
+                                ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50 shadow-sm'
+                                : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-gray-200 hover:border-[#2b3548]'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-indigo-400' : 'bg-gray-600'}`} />
+                            <span>{field}</span>
+                            {isSelected && <Check className="w-2.5 h-2.5 text-indigo-400" />}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                  <p className="text-[9px] text-gray-500 mt-1">
+                    Select multiple fields to clean <code className="text-gray-400 font-mono">./</code> and prepend base URL (e.g. <code className="text-gray-400 font-mono">link</code>, <code className="text-gray-400 font-mono">image</code>).
                   </p>
                 </div>
                 <div className="space-y-1.5 pt-1">

@@ -30,6 +30,29 @@ describe('Data Post-Processor Utility (dataPostProcessor)', () => {
       expect(result).toBe('https://amazon.in/product/456');
     });
 
+    it('removes "." from leading "./" in relative URLs', () => {
+      const resultNoBase = normalizeUrl('./product/dp/B08XYZ');
+      expect(resultNoBase).toBe('/product/dp/B08XYZ');
+
+      const resultWithBase = normalizeUrl('./product/dp/B08XYZ', {
+        basePrefix: 'https://www.amazon.in',
+      });
+      expect(resultWithBase).toBe('https://www.amazon.in/product/dp/B08XYZ');
+    });
+
+    it('removes "." from embedded "/./" segments in URLs', () => {
+      const result = normalizeUrl('https://www.amazon.in/./dp/./B08XYZ');
+      expect(result).toBe('https://www.amazon.in/dp/B08XYZ');
+
+      const relativeResult = normalizeUrl('/category/./items/./detail');
+      expect(relativeResult).toBe('/category/items/detail');
+    });
+
+    it('preserves query parameter values while cleaning "./" from path', () => {
+      const result = normalizeUrl('./search?q=./test&filter=1');
+      expect(result).toBe('/search?q=./test&filter=1');
+    });
+
     it('handles protocol-relative URLs (//cdn.example.com/item)', () => {
       const result = normalizeUrl('//cdn.example.com/item.png', {
         basePrefix: 'https://mysite.com',
@@ -249,6 +272,29 @@ describe('Data Post-Processor Utility (dataPostProcessor)', () => {
       expect(res.items.length).toBe(2);
       expect(res.filteredCount).toBe(1);
       expect(res.items.map((i) => i.title)).toEqual(['Item 1', 'Item 2']);
+    });
+
+    it('applies URL formatting only to specified multiple urlFields', () => {
+      const rawItems = [
+        {
+          title: './title-not-a-url',
+          link: './dp/B08123?ref=123',
+          image: './images/photo.png?qid=456',
+          other: './other/path',
+        },
+      ];
+
+      // Format both 'link' and 'image', but NOT 'other' or 'title'
+      const res = processDataset(rawItems, {
+        urlBasePrefix: 'https://www.amazon.in',
+        urlFields: ['link', 'image'],
+        stripUrlQueryParams: true,
+      });
+
+      expect(res.items[0].link).toBe('https://www.amazon.in/dp/B08123');
+      expect(res.items[0].image).toBe('https://www.amazon.in/images/photo.png');
+      expect(res.items[0].other).toBe('./other/path');
+      expect(res.items[0].title).toBe('./title-not-a-url');
     });
   });
 });

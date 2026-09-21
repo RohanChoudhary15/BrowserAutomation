@@ -1841,6 +1841,10 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
   const postProcessingEnabled = !!node.data.properties.postProcessingEnabled;
   const rawUrlBasePrefix = node.data.properties.urlBasePrefix || '';
   const urlBasePrefix = rawUrlBasePrefix ? String(interpolateVariables(rawUrlBasePrefix, ctx.variables)) : '';
+  const rawUrlTargetFields = node.data.properties.urlTargetFields || node.data.properties.urlFields;
+  const urlFields = Array.isArray(rawUrlTargetFields) && rawUrlTargetFields.length > 0
+    ? rawUrlTargetFields
+    : undefined;
   const stripUrlQueryParams = !!node.data.properties.stripUrlQueryParams;
   const stripAllQueryParams = !!node.data.properties.stripAllQueryParams;
   const cleanPriceOption = !!node.data.properties.cleanPrice;
@@ -1878,11 +1882,12 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
 
   // Apply data post-processing (URL normalization, price cleaning, date formatting, and row pattern filtering)
   if (
-    (postProcessingEnabled || urlBasePrefix || stripUrlQueryParams || stripAllQueryParams || cleanPriceOption || formatDateOption || (patternFilterEnabled && patternFilterValue)) &&
+    (postProcessingEnabled || urlBasePrefix || urlFields || stripUrlQueryParams || stripAllQueryParams || cleanPriceOption || formatDateOption || (patternFilterEnabled && patternFilterValue)) &&
     items.length > 0
   ) {
     const processed = processDataset(items, {
       urlBasePrefix,
+      urlFields,
       stripUrlQueryParams,
       stripAllQueryParams,
       cleanPrice: cleanPriceOption,
