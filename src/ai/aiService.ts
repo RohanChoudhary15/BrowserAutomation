@@ -16,7 +16,17 @@ export const DEFAULT_CONFIG: AiConfig = {
 };
 
 export function getOpenAiBaseUrl(config?: Partial<AiConfig>): string {
-  const raw = config?.openaiBaseUrl?.trim() || DEFAULT_OPENAI_BASE_URL;
+  // If user has a genuine OpenAI key (sk-...) and hasn't set a custom base URL,
+  // route directly to api.openai.com instead of the default ExperientialLabs gateway
+  const hasCustomBaseUrl = config?.openaiBaseUrl && config.openaiBaseUrl.trim() !== '' && config.openaiBaseUrl.trim() !== DEFAULT_OPENAI_BASE_URL;
+  const isGenuineOpenAiKey = config?.apiKey && config.apiKey.startsWith('sk-');
+  
+  let raw: string;
+  if (isGenuineOpenAiKey && !hasCustomBaseUrl) {
+    raw = 'https://api.openai.com';
+  } else {
+    raw = config?.openaiBaseUrl?.trim() || DEFAULT_OPENAI_BASE_URL;
+  }
   const stripped = raw.replace(/\/+$/, '');
   return stripped.endsWith('/v1') ? stripped : `${stripped}/v1`;
 }
@@ -360,11 +370,8 @@ export function parseApiError(
     return `${prefix} API Key is Missing: Please configure your ${provider} API key in AutoFlow AI Settings to use this model.`;
   }
 
-  // Network or CORS error
-  if (/failed to fetch|network error|cors|offline|connection refused/i.test(errText)) {
-    return `${prefix} Network Connection / CORS Error: Failed to reach ${provider} endpoints. Check internet connection, proxy settings, or host permissions. (Details: ${parsedMessage || errText})`;
-  }
-
+  // Check HTTP status codes FIRST before generic network error regex,
+  // so real upstream errors (401, 429, etc.) are never masked as "Failed to fetch"
   if (status === 401) {
     return `${prefix} Invalid API Key or Unauthorized (401): Authentication failed. Please verify your ${provider} API key in AutoFlow AI Settings. (Details: ${parsedMessage || 'Unauthorized'})`;
   }
@@ -388,6 +395,11 @@ export function parseApiError(
     return `${prefix} Service Outage / Server Error (${status}): ${provider} servers are temporarily unavailable or experiencing high load. (Details: ${parsedMessage || errText})`;
   }
 
+  // Network or CORS error (checked AFTER status codes so real API errors are never masked)
+  if (/failed to fetch|network error|cors|offline|connection refused/i.test(errText)) {
+    return `${prefix} Network Connection / CORS Error: Failed to reach ${provider} endpoints. Check internet connection, proxy settings, or host permissions. (Details: ${parsedMessage || errText})`;
+  }
+
   return `${prefix} Error (${status || 'general'}): ${parsedMessage || errText || 'Request failed'}`;
 }
 
@@ -396,44 +408,49 @@ export function parseApiError(
  * delegates to the background service worker (which has host_permissions for <all_urls> and zero CORS restrictions).
  */
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
-  try {
-    const res = await fetch(url, init);
-    return res;
-  } catch (err: any) {
-    // If running in Chrome extension context and direct fetch threw (typically CORS / Network block)
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      try {
-        const bgRes = await chrome.runtime.sendMessage({
-          type: 'PROXY_FETCH',
-          payload: {
-            url,
-            options: {
-              method: init?.method || 'GET',
-              headers: init?.headers as any,
-              body: init?.body as any,
-            },
+  // In Chrome extension context, prefer background proxy to avoid CORS issues entirely
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      const bgRes = await chrome.runtime.sendMessage({
+        type: 'PROXY_FETCH',
+        payload: {
+          url,
+          options: {
+            method: init?.method || 'GET',
+            headers: init?.headers as any,
+            body: init?.body as any,
           },
+        },
+      });
+      if (bgRes && bgRes.success && bgRes.response) {
+        return new Response(bgRes.response.text, {
+          status: bgRes.response.status,
+          statusText: bgRes.response.statusText,
+          headers: bgRes.response.headers,
         });
-        if (bgRes && bgRes.success && bgRes.response) {
-          return new Response(bgRes.response.text, {
-            status: bgRes.response.status,
-            statusText: bgRes.response.statusText,
-            headers: bgRes.response.headers,
-          });
-        }
-      } catch (bgErr) {
-        console.warn('[AutoFlow] Background proxy fetch error:', bgErr);
       }
+      // Background proxy returned failure - propagate the actual error, not a generic "Failed to fetch"
+      if (bgRes && !bgRes.success && bgRes.error) {
+        throw new Error(bgRes.error);
+      }
+    } catch (bgErr: any) {
+      // If bgErr is our own rethrow from above, propagate it
+      if (bgErr.message && !bgErr.message.includes('Could not establish connection')) {
+        throw bgErr;
+      }
+      console.warn('[AutoFlow] Background proxy unavailable, falling back to direct fetch:', bgErr.message);
     }
-    throw err;
   }
+
+  // Direct fetch fallback (non-extension context, or background proxy unavailable)
+  return await fetch(url, init);
 }
 
 /**
  * Ensures the requested model is compatible with the target provider,
  * falling back to the provider's default model if incompatible.
  */
-export function resolveCompatibleModel(provider: AiProvider, requestedModel?: string): string {
+export function resolveCompatibleModel(provider: AiProvider, requestedModel?: string, config?: Partial<AiConfig>): string {
   if (!requestedModel || requestedModel.trim() === '') {
     return getDefaultModelForProvider(provider);
   }
@@ -448,7 +465,16 @@ export function resolveCompatibleModel(provider: AiProvider, requestedModel?: st
     }
   } else if (provider === 'openai') {
     if (clean.includes('mistral') || clean.includes('gemini') || clean.includes('claude')) {
-      return 'gpt-5.6-sol';
+      return 'gpt-4o-mini';
+    }
+    // Map ExperientialLabs-specific virtual models (gpt-5.6-sol, gpt-5.6-luna) to valid
+    // OpenAI models ONLY when routing to api.openai.com (user has genuine sk-... key)
+    // When routing to ExperientialLabs, keep virtual models since they're supported there
+    if (clean === 'gpt-5.6-sol' || clean === 'gpt-5.6-luna') {
+      const resolvedBase = getOpenAiBaseUrl(config);
+      if (resolvedBase.includes('api.openai.com')) {
+        return 'gpt-4o-mini';
+      }
     }
   }
   return requestedModel.trim();
@@ -498,7 +524,7 @@ export async function queryLlm(
   };
 
   const provider = currentConfig.provider || 'openai';
-  const model = resolveCompatibleModel(provider, currentConfig.model);
+  const model = resolveCompatibleModel(provider, currentConfig.model, currentConfig);
 
   // 1. OpenAI / OpenAI Compatible
   if (provider === 'openai') {
@@ -526,9 +552,10 @@ export async function queryLlm(
 
       if (!res.ok) {
         const err = await res.text();
-        // If default ExperientialLabs endpoint returns model locked or purchase required, fall back to Mistral
-        if (/purchase|locked|credit/i.test(err) && (!currentConfig.apiKey || currentConfig.apiKey === DEFAULT_OPENAI_API_KEY)) {
-          console.warn('[AutoFlow AI] Primary gateway model locked. Falling back to Mistral AI.');
+        const isDefaultKey = !currentConfig.apiKey || currentConfig.apiKey === DEFAULT_OPENAI_API_KEY;
+        // If default gateway returns model locked, purchase required, card required, or quota exceeded, fall back to Mistral
+        if (isDefaultKey && (res.status === 429 || /purchase|locked|credit|card_required|insufficient_quota/i.test(err))) {
+          console.warn('[AutoFlow AI] Primary gateway blocked (status ' + res.status + '). Falling back to Mistral AI.');
           return await executeMistralFallback(prompt, systemInstruction);
         }
         throw new Error(parseApiError(err, res.status, 'OpenAI', model));
@@ -836,7 +863,7 @@ export async function queryVisionLlm(params: VisionLlmParams): Promise<string> {
   };
 
   const provider = currentConfig.provider || 'openai';
-  const model = resolveCompatibleModel(provider, currentConfig.model);
+  const model = resolveCompatibleModel(provider, currentConfig.model, currentConfig);
   const sanitizedImage = sanitizeVisionImage(imageBase64);
 
   // 1. OpenAI / OpenAI Compatible Gateway (including ExperientialLabs)

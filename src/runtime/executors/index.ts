@@ -2644,18 +2644,63 @@ export const executeShowNotification: NodeExecutor = async (node, ctx) => {
   });
 
   const notificationId = `notif_${Date.now()}`;
-  if (typeof chrome !== 'undefined' && chrome.notifications && chrome.notifications.create) {
+  let notificationSent = false;
+
+  // Route notification through background service worker for reliable OS-level display
+  // (background has chrome.runtime.getURL access and no CORS/icon download issues)
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     try {
+      const bgRes = await chrome.runtime.sendMessage({
+        type: 'SHOW_NOTIFICATION',
+        payload: {
+          title,
+          message,
+          iconUrl: node.data.properties.iconUrl,
+        },
+      });
+      notificationSent = bgRes?.success === true;
+    } catch (bgErr) {
+      console.warn('[AutoFlow] Background notification dispatch failed:', bgErr);
+    }
+  }
+
+  // Fallback: try direct chrome.notifications.create (may fail with icon issues in MV3 tabs)
+  if (!notificationSent && typeof chrome !== 'undefined' && chrome.notifications?.create) {
+    try {
+      const resolvedIcon = chrome.runtime?.getURL
+        ? chrome.runtime.getURL(node.data.properties.iconUrl || 'icons/icon128.png')
+        : node.data.properties.iconUrl || 'icons/icon128.png';
       chrome.notifications.create(notificationId, {
         type: 'basic',
-        iconUrl: node.data.properties.iconUrl || 'icons/icon128.png',
+        iconUrl: resolvedIcon,
         title,
         message,
         priority: 2,
       });
+      notificationSent = true;
     } catch (e) {
-      console.warn('Chrome notification warning:', e);
+      console.warn('[AutoFlow] Direct chrome.notifications.create warning:', e);
     }
+  }
+
+  // In-tab toast banner fallback so user always sees something even if OS notifications are silenced
+  if (typeof document !== 'undefined') {
+    try {
+      const toast = document.createElement('div');
+      toast.setAttribute('style', [
+        'position:fixed', 'top:16px', 'right:16px', 'z-index:2147483647',
+        'max-width:360px', 'padding:14px 18px', 'border-radius:10px',
+        'background:linear-gradient(135deg,#1e1e2e 0%,#2a2a3e 100%)',
+        'color:#e0e0e0', 'font-family:system-ui,sans-serif', 'font-size:13px',
+        'box-shadow:0 8px 32px rgba(0,0,0,0.45)', 'border:1px solid rgba(99,102,241,0.3)',
+        'animation:slideInRight 0.3s ease-out',
+        'pointer-events:auto', 'cursor:pointer',
+      ].join(';'));
+      toast.innerHTML = `<div style="font-weight:600;margin-bottom:4px;color:#a5b4fc">🔔 ${title}</div><div style="opacity:0.85">${message}</div>`;
+      toast.onclick = () => toast.remove();
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 6000);
+    } catch {}
   }
 
   ctx.updateNodeState(node.id, {
@@ -2667,8 +2712,8 @@ export const executeShowNotification: NodeExecutor = async (node, ctx) => {
 
   return {
     success: true,
-    output: { notificationId, title, message },
-    variables: { [outputVariable]: { notificationId, title, message } },
+    output: { notificationId, title, message, notificationSent },
+    variables: { [outputVariable]: { notificationId, title, message, notificationSent } },
   };
 };
 

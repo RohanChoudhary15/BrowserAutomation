@@ -321,6 +321,42 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           return { success: true };
         }
 
+        case 'SHOW_NOTIFICATION': {
+          const { title, message: notifMessage, iconUrl } = message.payload || {};
+          const resolvedIcon = typeof chrome !== 'undefined' && chrome.runtime?.getURL
+            ? chrome.runtime.getURL(iconUrl || 'icons/icon128.png')
+            : iconUrl || 'icons/icon128.png';
+          const notificationId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          try {
+            await new Promise<void>((resolve, reject) => {
+              chrome.notifications.create(notificationId, {
+                type: 'basic',
+                iconUrl: resolvedIcon,
+                title: title || 'AutoFlow Alert',
+                message: notifMessage || '',
+                priority: 2,
+              }, (createdId) => {
+                if (chrome.runtime.lastError) {
+                  console.warn('[AutoFlow] Notification icon error, retrying with fallback:', chrome.runtime.lastError.message);
+                  // Retry with a data URI fallback (1x1 transparent PNG)
+                  chrome.notifications.create(notificationId + '_fb', {
+                    type: 'basic',
+                    iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==',
+                    title: title || 'AutoFlow Alert',
+                    message: notifMessage || '',
+                    priority: 2,
+                  }, () => resolve());
+                } else {
+                  resolve();
+                }
+              });
+            });
+          } catch (notifErr: any) {
+            console.warn('[AutoFlow] chrome.notifications.create failed:', notifErr);
+          }
+          return { success: true, notificationId };
+        }
+
         case 'PROXY_FETCH': {
           const { url, options } = message.payload || {};
           try {
