@@ -33,10 +33,19 @@ export class WorkflowEngine {
   private pendingStopTimers = new Map<string, { action: 'complete_early' | 'cancel'; reason?: string; timestamp: number }>();
 
   constructor(workflow: Workflow, events: EngineEvents = {}) {
-    this.workflow = workflow;
+    this.workflow = {
+      ...workflow,
+      settings: {
+        timeout: 30000,
+        retryCount: 0,
+        retryDelay: 1000,
+        stopOnError: true,
+        ...(workflow.settings || {}),
+      },
+    };
     this.events = events;
     this.variables = { ...workflow.variables };
-    this.human = resolveHumanConfig(workflow.settings);
+    this.human = resolveHumanConfig(this.workflow.settings);
   }
 
   getStatus(): WorkflowExecutionStatus {
@@ -360,7 +369,8 @@ export class WorkflowEngine {
         }
 
         const isImageNode = node.data.type === 'extract_all_images' || node.data.type === 'extract_image';
-        const isElementNode = node.data.type === 'extract_multiple' || node.data.type === 'crawl_pagination';
+        const isScrapeNode = node.data.type === 'scrape_elements';
+        const isElementNode = node.data.type === 'extract_multiple' || node.data.type === 'crawl_pagination' || isScrapeNode;
         const customVar = node.data.properties?.itemVariable;
 
         this.log({
@@ -389,6 +399,16 @@ export class WorkflowEngine {
           if (isElementNode) {
             ctx.variables.currentElement = item;
           }
+          if (isScrapeNode) {
+            ctx.variables.currentProduct = item;
+            if (typeof item === 'object' && item !== null) {
+              for (const [k, v] of Object.entries(item)) {
+                if (ctx.variables[k] === undefined) {
+                  ctx.variables[k] = v;
+                }
+              }
+            }
+          }
           if (customVar) {
             ctx.variables[customVar] = item;
           }
@@ -397,8 +417,8 @@ export class WorkflowEngine {
           this.events.onVariablesChange?.(this.variables);
 
           const progress = Math.round(((index + 1) / Math.max(1, totalItems)) * 100);
-          const detail = typeof item === 'object' && item?.url
-            ? item.url
+          const detail = typeof item === 'object' && item !== null
+            ? (item.title || item.name || item.url || (item.price ? `${item.price}` : undefined) || JSON.stringify(item).slice(0, 40))
             : typeof item === 'string'
             ? item.slice(0, 30)
             : undefined;
@@ -412,6 +432,8 @@ export class WorkflowEngine {
               progress,
               message: isImageNode
                 ? `Image ${index + 1} of ${totalItems}`
+                : isScrapeNode
+                ? `Card ${index + 1} of ${totalItems}`
                 : `Element ${index + 1} of ${totalItems}`,
               detail,
             },

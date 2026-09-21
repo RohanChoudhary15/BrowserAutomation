@@ -832,6 +832,148 @@ export async function checkElementPresence(
   });
 }
 
+/**
+ * Helper to convert relative URLs to absolute URLs using current document location
+ */
+export function toAbsoluteUrl(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
+  try {
+    const base = typeof window !== 'undefined' && window.location?.href ? window.location.href : 'http://localhost';
+    return new URL(trimmed, base).href;
+  } catch {
+    return trimmed;
+  }
+}
+
+/**
+ * Smart attribute resolver that handles:
+ * - Image URLs ('src', 'image', 'image_url', 'img'): handles <img> (currentSrc, src, data-src, data-lazy-src, data-original, srcset), nested <img> in container, CSS background-image
+ * - Link URLs ('href', 'link', 'url'): resolves absolute URLs, checks nested <a>
+ * - Paragraphs / multi-text ('paragraphs', 'all_text', 'text_all'): aggregates all <p> or child text
+ * - Form values ('value'): input, textarea, select
+ * - HTML ('innerHTML', 'outerHTML')
+ * - Standard and custom attributes ('data-*', 'title', 'alt', 'aria-label', etc.)
+ */
+export function resolveElementAttribute(el: Element, attributeType?: string): string {
+  if (!el) return '';
+  const attr = (attributeType || 'text').trim().toLowerCase();
+
+  // 1. Text & Paragraphs
+  if (attr === 'text' || attr === 'innertext' || attr === 'textcontent' || !attributeType) {
+    return (el.textContent || '').trim();
+  }
+
+  if (attr === 'paragraphs' || attr === 'all_paragraphs' || attr === 'all_text' || attr === 'text_all') {
+    const pEls = Array.from(el.querySelectorAll('p'));
+    if (pEls.length > 0) {
+      return pEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+    }
+    const liEls = Array.from(el.querySelectorAll('li'));
+    if (liEls.length > 0) {
+      return liEls.map(li => `• ${(li.textContent || '').trim()}`).filter(Boolean).join('\n');
+    }
+    return (el.textContent || '').trim();
+  }
+
+  // 2. Image URL (Smart fallback for lazy loading, data-src, srcset, background-image)
+  if (attr === 'src' || attr === 'image' || attr === 'image_url' || attr === 'img') {
+    let imgEl: HTMLImageElement | null = null;
+    if (el instanceof HTMLImageElement || el.tagName.toLowerCase() === 'img') {
+      imgEl = el as HTMLImageElement;
+    } else {
+      imgEl = el.querySelector('img');
+    }
+
+    if (imgEl) {
+      // Check data-src / data-lazy / data-original (common lazy loaders)
+      const dataSrc = imgEl.getAttribute('data-src') ||
+        imgEl.getAttribute('data-original') ||
+        imgEl.getAttribute('data-lazy-src') ||
+        imgEl.getAttribute('data-url');
+      if (dataSrc && !dataSrc.startsWith('data:image')) {
+        return toAbsoluteUrl(dataSrc);
+      }
+
+      // Check srcset (pick highest resolution candidate)
+      const srcset = imgEl.getAttribute('srcset');
+      if (srcset) {
+        const candidates = srcset.split(',').map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
+        if (candidates.length > 0) {
+          return toAbsoluteUrl(candidates[candidates.length - 1]);
+        }
+      }
+
+      // Check direct src / currentSrc
+      const directSrc = imgEl.currentSrc || imgEl.src || imgEl.getAttribute('src');
+      if (directSrc && !directSrc.startsWith('data:image/svg+xml') && !directSrc.startsWith('data:image/gif')) {
+        return toAbsoluteUrl(directSrc);
+      }
+
+      if (dataSrc) return toAbsoluteUrl(dataSrc);
+    }
+
+    // Check CSS background-image (inline or computed)
+    const inlineBg = (el as HTMLElement).style?.backgroundImage;
+    let computedBg = '';
+    if (typeof window !== 'undefined' && window.getComputedStyle) {
+      try {
+        computedBg = window.getComputedStyle(el).backgroundImage;
+      } catch {}
+    }
+    const bg = inlineBg || computedBg;
+    if (bg && bg !== 'none') {
+      const match = bg.match(/url\(['"]?(.*?)['"]?\)/i);
+      if (match && match[1]) {
+        return toAbsoluteUrl(match[1]);
+      }
+    }
+
+    // Raw attribute fallback
+    const rawSrc = el.getAttribute('src');
+    if (rawSrc) return toAbsoluteUrl(rawSrc);
+    return '';
+  }
+
+  // 3. Link URL (href)
+  if (attr === 'href' || attr === 'link' || attr === 'url') {
+    let anchor: HTMLAnchorElement | null = null;
+    if (el instanceof HTMLAnchorElement || el.tagName.toLowerCase() === 'a') {
+      anchor = el as HTMLAnchorElement;
+    } else {
+      anchor = el.querySelector('a[href]');
+    }
+
+    if (anchor && anchor.href) {
+      return anchor.href;
+    }
+
+    const rawHref = el.getAttribute('href');
+    if (rawHref) return toAbsoluteUrl(rawHref);
+    return '';
+  }
+
+  // 4. Form values
+  if (attr === 'value') {
+    if ('value' in el) {
+      return String((el as HTMLInputElement).value ?? '');
+    }
+    return el.getAttribute('value') || '';
+  }
+
+  // 5. HTML Content
+  if (attr === 'html' || attr === 'outerhtml') {
+    return el.outerHTML;
+  }
+  if (attr === 'innerhtml') {
+    return el.innerHTML;
+  }
+
+  // 6. Standard and custom attributes (data-*, title, alt, aria-label, etc.)
+  return el.getAttribute(attributeType || '') || (el as any)[attributeType || ''] || '';
+}
+
 export async function extractText(selector: string, timeout = 10000, signal?: AbortSignal): Promise<{ text: string }> {
   const el = await waitForElement(selector, { timeout }, signal);
   flashHighlight(el);
@@ -842,7 +984,7 @@ export async function extractText(selector: string, timeout = 10000, signal?: Ab
 export async function extractAttribute(selector: string, attribute: string, timeout = 10000, signal?: AbortSignal): Promise<{ value: string | null }> {
   const el = await waitForElement(selector, { timeout }, signal);
   flashHighlight(el);
-  const val = el.getAttribute(attribute);
+  const val = resolveElementAttribute(el, attribute);
   return { value: val };
 }
 
@@ -957,12 +1099,7 @@ export async function extractMultipleElements(
       const elements = Array.from(document.querySelectorAll(selector));
       if (elements.length > 0) {
         elements.slice(0, 3).forEach(el => flashHighlight(el));
-        const items = elements.map(el => {
-          if (params.attribute) {
-            return el.getAttribute(params.attribute) || '';
-          }
-          return (el.textContent || '').trim();
-        });
+        const items = elements.map(el => resolveElementAttribute(el, params.attribute || 'text'));
         return resolve({ items });
       }
 
@@ -1007,21 +1144,18 @@ export async function extractDataset(
           const items: Record<string, any>[] = containers.map((container) => {
             const row: Record<string, any> = {};
             for (const field of fields) {
+              const attrType = field.attribute || 'text';
+              // Check if extracting paragraphs or multiple sub-elements
+              if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
+                const subEls = Array.from(container.querySelectorAll(field.selector || 'p'));
+                if (subEls.length > 0) {
+                  row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+                  continue;
+                }
+              }
               const targetEl = field.selector ? container.querySelector(field.selector) : container;
               if (targetEl) {
-                if (field.attribute) {
-                  if (field.attribute === 'href' && 'href' in targetEl) {
-                    row[field.name] = (targetEl as HTMLAnchorElement).href;
-                  } else if (field.attribute === 'src' && 'src' in targetEl) {
-                    row[field.name] = (targetEl as HTMLImageElement).src;
-                  } else if (field.attribute === 'value' && 'value' in targetEl) {
-                    row[field.name] = (targetEl as HTMLInputElement).value;
-                  } else {
-                    row[field.name] = targetEl.getAttribute(field.attribute) || '';
-                  }
-                } else {
-                  row[field.name] = (targetEl.textContent || '').trim();
-                }
+                row[field.name] = resolveElementAttribute(targetEl, attrType);
               } else {
                 row[field.name] = '';
               }
@@ -1045,15 +1179,7 @@ export async function extractDataset(
           if (els.length > 0) {
             anyFound = true;
             els.slice(0, 3).forEach((el) => flashHighlight(el));
-            const vals = els.map((el) => {
-              if (field.attribute) {
-                if (field.attribute === 'href' && 'href' in el) return (el as HTMLAnchorElement).href;
-                if (field.attribute === 'src' && 'src' in el) return (el as HTMLImageElement).src;
-                if (field.attribute === 'value' && 'value' in el) return (el as HTMLInputElement).value;
-                return el.getAttribute(field.attribute) || '';
-              }
-              return (el.textContent || '').trim();
-            });
+            const vals = els.map((el) => resolveElementAttribute(el, field.attribute || 'text'));
             fieldValues[field.name] = vals;
             if (vals.length > maxLen) maxLen = vals.length;
           } else {

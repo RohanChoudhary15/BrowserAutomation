@@ -389,6 +389,30 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       timeout: 10000,
     },
   },
+  scrape_elements: {
+    type: 'scrape_elements',
+    label: 'Scrape Elements (Product Cards)',
+    category: 'extraction',
+    description: 'Extract structured multi-field cards (title, price, image, link, paragraphs) from repeating elements with loop body and file export',
+    icon: 'LayoutGrid',
+    reactFlowType: 'iteratorNode',
+    defaultProperties: {
+      containerSelector: '.product-card',
+      fields: [
+        { name: 'title', selector: 'h2', attribute: 'text' },
+        { name: 'price', selector: '.price', attribute: 'text' },
+        { name: 'image', selector: 'img', attribute: 'src' },
+        { name: 'link', selector: 'a', attribute: 'href' },
+        { name: 'description', selector: 'p', attribute: 'paragraphs' },
+      ],
+      itemVariable: 'currentProduct',
+      outputVariable: 'scrapedProducts',
+      exportToFile: false,
+      exportFormat: 'csv',
+      exportFilename: 'scraped_products',
+      timeout: 10000,
+    },
+  },
 
   // Logic
   condition: {

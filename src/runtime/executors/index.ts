@@ -1705,6 +1705,78 @@ export const executeExtractAllImages: NodeExecutor = async (node, ctx) => {
   };
 };
 
+export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
+  const containerSelector = interpolateVariables(node.data.properties.containerSelector || '', ctx.variables);
+  const rawFields = Array.isArray(node.data.properties.fields) ? node.data.properties.fields : [];
+  const fields = rawFields.map((f: any) => ({
+    name: interpolateVariables(f.name || 'field', ctx.variables),
+    selector: f.selector ? interpolateVariables(f.selector, ctx.variables) : undefined,
+    attribute: f.attribute ? interpolateVariables(f.attribute, ctx.variables) : undefined,
+  }));
+  const outputVariable = node.data.properties.outputVariable || 'scrapedProducts';
+  const timeout = Number(node.data.properties.timeout) || 10000;
+  const exportToFile = !!node.data.properties.exportToFile;
+  const exportFormat = (node.data.properties.exportFormat || 'csv') as ExportDataFormat;
+  const rawExportFilename = node.data.properties.exportFilename || `${outputVariable}_export`;
+  const exportFilename = interpolateVariables(rawExportFilename, ctx.variables);
+
+  ctx.log({
+    level: 'info',
+    message: `Scraping card elements${containerSelector ? ` from ${containerSelector}` : ''} (${fields.length} fields)`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const res = await sendDomAction(
+    'extract_dataset',
+    {
+      containerSelector,
+      fields,
+      timeout,
+    },
+    ctx,
+    timeout
+  );
+
+  const items = res?.items || [];
+
+  let exportResult: any = undefined;
+  if (exportToFile && items.length > 0) {
+    const doc = createExportDocument(items, exportFormat, { filename: exportFilename });
+    await triggerFileDownload(doc.dataUrl, doc.filename);
+    exportResult = doc;
+    ctx.log({
+      level: 'info',
+      message: `Scrape Elements direct export: saved ${doc.rowCount} items to ${doc.filename}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  }
+
+  ctx.log({
+    level: 'success',
+    message: `Scraped ${items.length} card items successfully`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: items,
+    items,
+    variables: {
+      [outputVariable]: items,
+      [`${outputVariable}_count`]: items.length,
+      ...(exportResult
+        ? {
+            [`${outputVariable}_dataUrl`]: exportResult.dataUrl,
+            [`${outputVariable}_filename`]: exportResult.filename,
+          }
+        : {}),
+    },
+  };
+};
+
 export const executeStorageManage: NodeExecutor = async (node, ctx) => {
   const storageType = node.data.properties.type || 'local';
   const action = node.data.properties.action || 'get';
@@ -3215,6 +3287,7 @@ export const executors: Record<string, NodeExecutor> = {
   extract_links: executeExtractLinks,
   extract_image: executeExtractImage,
   extract_all_images: executeExtractAllImages,
+  scrape_elements: executeScrapeElements,
   condition: executeCondition,
   contains: executeContains,
   contains_text: executeContainsText,

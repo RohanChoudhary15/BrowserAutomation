@@ -27,14 +27,19 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
   const status = runtime?.status || (data.disabled ? 'disabled' : 'idle');
 
   const isImageNode = data.type === 'extract_all_images' || data.type === 'extract_image';
-  const forEachLabel = isImageNode ? 'For Each Image' : 'For Each Element';
-  const itemVar = data.properties?.itemVariable || (isImageNode ? 'currentImage' : 'currentElement');
+  const isScrapeCardNode = data.type === 'scrape_elements';
+  const forEachLabel = isImageNode ? 'For Each Image' : (isScrapeCardNode ? 'For Each Card' : 'For Each Element');
+  const itemVar = data.properties?.itemVariable || (isImageNode ? 'currentImage' : (isScrapeCardNode ? 'currentProduct' : 'currentElement'));
 
   let summary = '';
   if (data.type === 'extract_all_images') {
     summary = data.properties?.containerSelector
       ? `All images in ${data.properties.containerSelector}`
       : 'All images on page';
+  } else if (data.type === 'scrape_elements') {
+    summary = data.properties?.containerSelector
+      ? `${(data.properties?.fields || []).length} fields from ${data.properties.containerSelector}`
+      : 'Multi-field card scraper';
   } else if (data.properties?.selector) {
     summary = data.properties.selector;
   } else {

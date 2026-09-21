@@ -1129,7 +1129,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -1148,20 +1148,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Collection Iterator: Item Variable Name */}
-        {['extract_image', 'extract_all_images', 'extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && (
+        {['extract_image', 'extract_all_images', 'extract_multiple', 'crawl_pagination', 'scrape_elements'].includes(selectedNode.data.type) && (
           <div className="pt-2 border-t border-[#1c2230]">
             <label className="block text-[11px] font-medium text-gray-400 mb-1">
               Loop Body Item Variable Name
             </label>
             <input
               type="text"
-              value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}
+              value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}
               onChange={(e) => handlePropChange('itemVariable', e.target.value)}
-              placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')}
+              placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
             />
             <p className="text-[10px] text-gray-500 mt-1">
-              When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}&#125;&#125;
+              When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}&#125;&#125;
             </p>
           </div>
         )}
@@ -1392,6 +1392,234 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
+        {/* Scrape Elements (Product Cards / Multi-Field) Node */}
+        {selectedNode.data.type === 'scrape_elements' && (
+          <div className="space-y-3.5 pt-2 border-t border-[#1c2230]">
+            {/* Card Container Selector */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-semibold text-gray-300">
+                  Card Container Selector
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onStartElementPicker('single')}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                    isPickingElement
+                      ? 'bg-rose-600 text-white animate-pulse'
+                      : 'bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white border border-indigo-500/30'
+                  }`}
+                  title="Pick container card element from page"
+                >
+                  <Crosshair className="w-3 h-3" />
+                  <span>{isPickingElement ? 'Picking...' : 'Pick Container'}</span>
+                </button>
+              </div>
+              <input
+                type="text"
+                value={props.containerSelector || ''}
+                onChange={(e) => handlePropChange('containerSelector', e.target.value)}
+                placeholder=".product-card, .listing-item, article, div.item"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                CSS selector that identifies each repeating item/card container on the page.
+              </p>
+            </div>
+
+            {/* Quick Schema Presets */}
+            <div>
+              <span className="text-[10px] font-medium text-gray-400 block mb-1">
+                ⚡ Quick Schema Presets:
+              </span>
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePropChange('fields', [
+                      { name: 'title', selector: 'h2, .title, [class*="title"]', attribute: 'text' },
+                      { name: 'price', selector: '.price, [class*="price"]', attribute: 'text' },
+                      { name: 'image', selector: 'img', attribute: 'src' },
+                      { name: 'link', selector: 'a', attribute: 'href' },
+                      { name: 'description', selector: 'p', attribute: 'paragraphs' },
+                    ]);
+                  }}
+                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
+                >
+                  🛒 E-Commerce
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePropChange('fields', [
+                      { name: 'headline', selector: 'h2, h3, a', attribute: 'text' },
+                      { name: 'author', selector: '.author, [rel="author"]', attribute: 'text' },
+                      { name: 'date', selector: 'time, .date', attribute: 'text' },
+                      { name: 'paragraphs', selector: 'p', attribute: 'paragraphs' },
+                      { name: 'image', selector: 'img', attribute: 'src' },
+                      { name: 'url', selector: 'a', attribute: 'href' },
+                    ]);
+                  }}
+                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
+                >
+                  📰 Articles
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePropChange('fields', [
+                      { name: 'name', selector: 'h3, .name, strong', attribute: 'text' },
+                      { name: 'role', selector: '.role, .title', attribute: 'text' },
+                      { name: 'company', selector: '.company', attribute: 'text' },
+                      { name: 'email', selector: 'a[href^="mailto:"]', attribute: 'href' },
+                      { name: 'link', selector: 'a', attribute: 'href' },
+                    ]);
+                  }}
+                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
+                >
+                  👤 Leads
+                </button>
+              </div>
+            </div>
+
+            {/* Fields List */}
+            <div className="space-y-2 p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433]">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-gray-300">
+                  Card Fields to Extract ({(props.fields || []).length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const current = Array.isArray(props.fields) ? props.fields : [];
+                    handlePropChange('fields', [
+                      ...current,
+                      { name: `field_${current.length + 1}`, selector: '', attribute: 'text' },
+                    ]);
+                  }}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                >
+                  <Plus className="w-3 h-3" /> Add Field
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {(Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : [
+                  { name: 'title', selector: 'h2', attribute: 'text' },
+                  { name: 'price', selector: '.price', attribute: 'text' },
+                  { name: 'image', selector: 'img', attribute: 'src' },
+                  { name: 'link', selector: 'a', attribute: 'href' },
+                ]).map((field: any, idx: number) => (
+                  <div key={idx} className="bg-[#141924] p-2 rounded-lg border border-[#202738] space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={field.name}
+                        onChange={(e) => {
+                          const updated = [...(props.fields || [])];
+                          updated[idx] = { ...updated[idx], name: e.target.value };
+                          handlePropChange('fields', updated);
+                        }}
+                        placeholder="Field name"
+                        className="w-1/3 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        value={field.selector}
+                        onChange={(e) => {
+                          const updated = [...(props.fields || [])];
+                          updated[idx] = { ...updated[idx], selector: e.target.value };
+                          handlePropChange('fields', updated);
+                        }}
+                        placeholder="Selector inside card (e.g. h2, img, a)"
+                        className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (props.fields || []).filter((_: any, i: number) => i !== idx);
+                          handlePropChange('fields', updated);
+                        }}
+                        className="text-gray-500 hover:text-red-400 p-1"
+                        title="Delete field"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-gray-500 shrink-0">Extract:</span>
+                      <select
+                        value={field.attribute || 'text'}
+                        onChange={(e) => {
+                          const updated = [...(props.fields || [])];
+                          updated[idx] = { ...updated[idx], attribute: e.target.value };
+                          handlePropChange('fields', updated);
+                        }}
+                        className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[10px]"
+                      >
+                        <option value="text">Text Content</option>
+                        <option value="src">Image URL (src / lazy data-src / srcset)</option>
+                        <option value="href">Link URL (href - absolute URL)</option>
+                        <option value="paragraphs">Paragraphs (all &lt;p&gt; aggregated)</option>
+                        <option value="value">Form Input Value</option>
+                        <option value="innerHTML">innerHTML</option>
+                        <option value="outerHTML">outerHTML</option>
+                        <option value="data-id">data-id / custom attribute</option>
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Direct Export to File Checkbox & Settings */}
+            <div className="space-y-2.5 pt-2 border-t border-[#1c2230]">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!props.exportToFile}
+                  onChange={(e) => handlePropChange('exportToFile', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px] font-medium text-indigo-300">
+                  💾 Direct Export Scraped Cards to File (CSV / XLSX / JSON / TSV)
+                </span>
+              </label>
+
+              {props.exportToFile && (
+                <div className="space-y-2 p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433]">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">Format</label>
+                      <select
+                        value={props.exportFormat || 'csv'}
+                        onChange={(e) => handlePropChange('exportFormat', e.target.value)}
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs"
+                      >
+                        <option value="csv">CSV Spreadsheet (.csv)</option>
+                        <option value="xlsx">Excel Spreadsheet (.xlsx)</option>
+                        <option value="json">JSON (.json)</option>
+                        <option value="tsv">TSV (.tsv)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-1">Filename</label>
+                      <input
+                        type="text"
+                        value={props.exportFilename || 'scraped_products'}
+                        onChange={(e) => handlePropChange('exportFilename', e.target.value)}
+                        placeholder="scraped_products"
+                        className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Extract Image Node Options */}
         {selectedNode.data.type === 'extract_image' && (
           <div className="space-y-3 pt-2 border-t border-[#1c2230]">
@@ -1593,17 +1821,44 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
         {/* Attribute Name (Extract Attribute / Extract Multiple / Crawl Pagination) */}
         {['extract_attribute', 'extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && (
-          <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-medium text-gray-400">
               Attribute Name {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && '(optional, leave blank for text)'}
             </label>
             <input
               type="text"
               value={props.attribute || ''}
               onChange={(e) => handlePropChange('attribute', e.target.value)}
-              placeholder="href, src, value, data-id..."
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              placeholder="text, src, href, paragraphs, value, data-id..."
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
             />
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {[
+                { label: 'text', value: 'text', desc: 'Inner text' },
+                { label: 'src (image)', value: 'src', desc: 'Image URL' },
+                { label: 'href (link)', value: 'href', desc: 'Link URL' },
+                { label: 'paragraphs', value: 'paragraphs', desc: 'All <p> paragraphs' },
+                { label: 'value', value: 'value', desc: 'Input Value' },
+                { label: 'innerHTML', value: 'innerHTML', desc: 'Inner HTML' },
+              ].map((attr) => (
+                <button
+                  key={attr.value}
+                  type="button"
+                  onClick={() => handlePropChange('attribute', attr.value)}
+                  className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                    (props.attribute || '') === attr.value
+                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50 font-semibold'
+                      : 'bg-[#141924] text-gray-400 border-[#202738] hover:text-white'
+                  }`}
+                  title={attr.desc}
+                >
+                  {attr.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-500">
+              💡 <span className="text-indigo-400 font-mono">src</span> auto-resolves lazy images (<code>data-src</code>, <code>srcset</code>, background-image); <span className="text-indigo-400 font-mono">href</span> returns full absolute URLs.
+            </p>
           </div>
         )}
 
