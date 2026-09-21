@@ -162,7 +162,12 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
       {/* Iterator variable badge */}
       <div className="flex items-center gap-1.5 mb-2.5 px-1 text-[10px] text-indigo-300 font-mono bg-indigo-950/40 border border-indigo-800/40 rounded py-0.5">
         <Repeat className="w-2.5 h-2.5 text-indigo-400 shrink-0" />
-        <span className="truncate">item: &#123;&#123;{itemVar}&#125;&#125;</span>
+        <span className="truncate">
+          item: &#123;&#123;{itemVar}&#125;&#125;
+          {isScrapeCardNode && data.properties?.itemExtractField && data.properties.itemExtractField !== 'all'
+            ? ` (${data.properties.itemExtractField})`
+            : ''}
+        </span>
       </div>
 
       {/* Execution timing / Success message badge */}

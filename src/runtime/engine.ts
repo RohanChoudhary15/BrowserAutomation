@@ -3,8 +3,34 @@ import { ExecutionContext, NodeRuntimeState, ExecutionLog, WorkflowExecutionStat
 import { executors, globalActiveTimers, globalPendingStopTimers } from './executors';
 import { generateId } from '../utils/id';
 import { createFriendlyError } from '../utils/formatters';
-import { interpolateVariables } from './interpolator';
+import { interpolateVariables, getNestedValue } from './interpolator';
 import { HumanConfig, nodeThinkTime, randomBetween, resolveHumanConfig, wait } from '../utils/human';
+
+/**
+ * Wraps an object so that string coercion (e.g. String(item), `item: ${item}`)
+ * yields JSON string representation rather than "[object Object]", while fully
+ * preserving all normal object property accesses, keys, and prototype methods.
+ */
+export function createInspectableItem(rawItem: any): any {
+  if (typeof rawItem !== 'object' || rawItem === null) return rawItem;
+  if (Array.isArray(rawItem)) {
+    return rawItem.map(createInspectableItem);
+  }
+  try {
+    const item = { ...rawItem };
+    Object.defineProperty(item, 'toString', {
+      value: function() {
+        return JSON.stringify(this);
+      },
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return item;
+  } catch {
+    return rawItem;
+  }
+}
 
 export interface EngineEvents {
   onStatusChange?: (status: WorkflowExecutionStatus) => void;
@@ -372,6 +398,8 @@ export class WorkflowEngine {
         const isScrapeNode = node.data.type === 'scrape_elements';
         const isElementNode = node.data.type === 'extract_multiple' || node.data.type === 'crawl_pagination' || isScrapeNode;
         const customVar = node.data.properties?.itemVariable;
+        const itemExtractField = node.data.properties?.itemExtractField || 'all';
+        const itemExtractCustomField = node.data.properties?.itemExtractCustomField;
 
         this.log({
           level: 'info',
@@ -383,7 +411,8 @@ export class WorkflowEngine {
         const totalItems = items.length;
         for (let index = 0; index < totalItems; index++) {
           if (ctx.signal.aborted) break;
-          const item = items[index];
+          const rawItem = items[index];
+          const item = createInspectableItem(rawItem);
 
           ctx.variables.index = index;
           ctx.variables.item = item;
@@ -400,16 +429,34 @@ export class WorkflowEngine {
             ctx.variables.currentElement = item;
           }
           if (isScrapeNode) {
-            ctx.variables.currentProduct = item;
-            if (typeof item === 'object' && item !== null) {
+            // Determine the exposed value for the primary variable (currentProduct or custom itemVariable)
+            let exposedValue: any = item;
+            if (itemExtractField && itemExtractField !== 'all') {
+              const targetKey = itemExtractField === 'custom' ? (itemExtractCustomField || '') : itemExtractField;
+              if (targetKey && typeof item === 'object' && item !== null) {
+                exposedValue = item[targetKey] ?? getNestedValue(item, targetKey) ?? '';
+              }
+            }
+
+            const itemVarName = customVar || 'currentProduct';
+            ctx.variables[itemVarName] = exposedValue;
+            ctx.variables.currentProduct = exposedValue;
+            // Always retain the full inspectable card object under _object
+            ctx.variables[`${itemVarName}_object`] = item;
+            ctx.variables.currentProduct_object = item;
+
+            // Always unpack all card fields for this iteration so {{field}} and {{currentProduct.field}} work reliably
+            if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
               for (const [k, v] of Object.entries(item)) {
-                if (ctx.variables[k] === undefined) {
-                  ctx.variables[k] = v;
-                }
+                ctx.variables[k] = v;
+                ctx.variables[`${itemVarName}_${k}`] = v;
+                ctx.variables[`${itemVarName}.${k}`] = v;
+                ctx.variables[`currentProduct_${k}`] = v;
+                ctx.variables[`currentProduct.${k}`] = v;
               }
             }
           }
-          if (customVar) {
+          if (customVar && !isScrapeNode) {
             ctx.variables[customVar] = item;
           }
 
@@ -531,9 +578,17 @@ export class WorkflowEngine {
     for (let index = 0; index < totalIterations; index++) {
       if (ctx.signal.aborted) break;
 
-      const item = iterations[index];
+      const rawItem = iterations[index];
+      const item = createInspectableItem(rawItem);
       ctx.variables.index = index;
       ctx.variables.item = item;
+      if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+        for (const [k, v] of Object.entries(item)) {
+          ctx.variables[k] = v;
+          ctx.variables[`item_${k}`] = v;
+          ctx.variables[`item.${k}`] = v;
+        }
+      }
       this.events.onVariablesChange?.(this.variables);
 
       const progress = Math.round(((index + 1) / Math.max(1, totalIterations)) * 100);

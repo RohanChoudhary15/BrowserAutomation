@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolveElementAttribute, toAbsoluteUrl, extractDataset } from '../src/content/domActions';
-import { executeScrapeElements } from '../src/runtime/executors';
-import { WorkflowEngine } from '../src/runtime/engine';
+import { executeScrapeElements, executeNavigate, executeTypeText, executeTransform, executeSmartScroll } from '../src/runtime/executors';
+import { WorkflowEngine, createInspectableItem } from '../src/runtime/engine';
 import { ExecutionContext } from '../src/types/execution';
 import { WorkflowNode } from '../src/types/workflow';
 
@@ -436,6 +436,308 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(capturedTitles).toContain('Item Alpha - $10');
       expect(capturedTitles).toContain('Item Beta - $20');
       expect(capturedTitles).toContain('Item Gamma - $30');
+    });
+
+    it('createInspectableItem never coerces to [object Object] and produces valid JSON string', () => {
+      const card = createInspectableItem({ title: 'Gaming Laptop', price: '$1,299', link: 'https://store.com/laptop' });
+      expect(String(card)).not.toBe('[object Object]');
+      expect(String(card)).toContain('"title":"Gaming Laptop"');
+      expect(`${card}`).toContain('"price":"$1,299"');
+      expect(card.title).toBe('Gaming Laptop');
+      expect(card.price).toBe('$1,299');
+      expect(card.link).toBe('https://store.com/laptop');
+    });
+
+    it('updates unpacked fields across every iteration without stale values', async () => {
+      document.body.innerHTML = `
+        <div class="card"><h3 class="name">Product 1</h3><span class="price">$10</span></div>
+        <div class="card"><h3 class="name">Product 2</h3><span class="price">$20</span></div>
+      `;
+
+      const seenShortcuts: string[] = [];
+      const engine = new WorkflowEngine(
+        {
+          id: 'test-wf-shortcuts',
+          name: 'Shortcut Variables Test',
+          nodes: [
+            {
+              id: 'scrape-node',
+              type: 'scrape_elements',
+              position: { x: 0, y: 0 },
+              data: {
+                label: 'Scrape Products',
+                type: 'scrape_elements',
+                category: 'extraction',
+                properties: {
+                  containerSelector: '.card',
+                  fields: [
+                    { name: 'title', selector: '.name', attribute: 'text' },
+                    { name: 'price', selector: '.price', attribute: 'text' },
+                  ],
+                  outputVariable: 'scrapedProducts',
+                  itemVariable: 'currentProduct',
+                },
+              },
+            },
+            {
+              id: 'log-node',
+              type: 'set_variable',
+              position: { x: 200, y: 0 },
+              data: {
+                label: 'Log Shortcut',
+                type: 'set_variable',
+                category: 'data',
+                properties: {
+                  name: 'shortcutVal',
+                  value: '{{title}}',
+                },
+              },
+            },
+          ],
+          edges: [
+            {
+              id: 'edge-loop',
+              source: 'scrape-node',
+              target: 'log-node',
+              sourceHandle: 'loop_body',
+            },
+          ],
+          variables: {},
+        },
+        {
+          onVariablesChange: (vars) => {
+            if (vars.shortcutVal && !seenShortcuts.includes(vars.shortcutVal)) {
+              seenShortcuts.push(vars.shortcutVal);
+            }
+          },
+        }
+      );
+
+      await engine.run();
+      expect(seenShortcuts).toEqual(['Item Alpha', 'Item Beta', 'Item Gamma']);
+    });
+
+    it('extracts single field directly into currentProduct when itemExtractField is configured', async () => {
+      document.body.innerHTML = `
+        <div class="card"><h3 class="name">Product A</h3><a class="url" href="https://example.com/a">Link A</a></div>
+        <div class="card"><h3 class="name">Product B</h3><a class="url" href="https://example.com/b">Link B</a></div>
+      `;
+
+      const capturedLinks: string[] = [];
+      const capturedObjects: any[] = [];
+
+      const engine = new WorkflowEngine(
+        {
+          id: 'test-wf-extract-field',
+          name: 'Extract Link Test',
+          nodes: [
+            {
+              id: 'scrape-node',
+              type: 'scrape_elements',
+              position: { x: 0, y: 0 },
+              data: {
+                label: 'Scrape Products',
+                type: 'scrape_elements',
+                category: 'extraction',
+                properties: {
+                  containerSelector: '.card',
+                  fields: [
+                    { name: 'title', selector: '.name', attribute: 'text' },
+                    { name: 'link', selector: '.url', attribute: 'href' },
+                  ],
+                  itemVariable: 'currentProduct',
+                  itemExtractField: 'link', // Extract only the link URL!
+                },
+              },
+            },
+            {
+              id: 'log-node',
+              type: 'set_variable',
+              position: { x: 200, y: 0 },
+              data: {
+                label: 'Log Link',
+                type: 'set_variable',
+                category: 'data',
+                properties: {
+                  name: 'capturedLink',
+                  value: '{{currentProduct}}',
+                },
+              },
+            },
+          ],
+          edges: [
+            {
+              id: 'edge-loop',
+              source: 'scrape-node',
+              target: 'log-node',
+              sourceHandle: 'loop_body',
+            },
+          ],
+          variables: {},
+        },
+        {
+          onVariablesChange: (vars) => {
+            if (vars.capturedLink && !capturedLinks.includes(vars.capturedLink)) {
+              capturedLinks.push(vars.capturedLink);
+            }
+            if (vars.currentProduct_object && !capturedObjects.includes(vars.currentProduct_object.title)) {
+              capturedObjects.push(vars.currentProduct_object.title);
+            }
+          },
+        }
+      );
+
+      await engine.run();
+      expect(capturedLinks).toEqual(['/alpha', '/beta', '/gamma']);
+      expect(capturedObjects).toEqual(['Item Alpha', 'Item Beta', 'Item Gamma']);
+    });
+  });
+
+  describe('Intelligent Object Fallbacks for Navigate and TypeText', () => {
+    it('executeNavigate extracts link/url when passed an object or JSON string', async () => {
+      const mockCtx: any = {
+        variables: {
+          currentProduct: { title: 'Headphones', link: 'https://store.com/item/100' },
+        },
+        log: vi.fn(),
+      };
+
+      const node: any = {
+        id: 'nav-1',
+        data: {
+          label: 'Navigate to Item',
+          properties: {
+            url: '{{currentProduct}}',
+          },
+        },
+      };
+
+      const result = await executeNavigate(node, mockCtx);
+      expect(result.success).toBe(true);
+      expect(result.output.url).toBe('https://store.com/item/100');
+    });
+
+    it('executeTypeText extracts text/title when passed an object', async () => {
+      const mockCtx: any = {
+        variables: {
+          currentProduct: { title: 'Sony Headphones', price: '$299' },
+        },
+        log: vi.fn(),
+      };
+
+      const node: any = {
+        id: 'type-1',
+        data: {
+          label: 'Type Item Title',
+          properties: {
+            selector: '#search-box',
+            text: '{{currentProduct}}',
+          },
+        },
+      };
+
+      const result = await executeTypeText(node, mockCtx);
+      expect(result.success).toBe(true);
+      expect(mockCtx.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Sony Headphones'),
+        })
+      );
+    });
+  });
+
+  describe('Transform extractField / getProperty Operation', () => {
+    it('extracts property from a JavaScript object variable', async () => {
+      const mockCtx: any = {
+        variables: {
+          product: { title: 'Mechanical Keyboard', link: 'https://keebs.com/q1', specs: { switches: 'Gateron Brown' } },
+        },
+        log: vi.fn(),
+      };
+
+      const node: any = {
+        id: 't-1',
+        data: {
+          properties: {
+            input: '{{product}}',
+            operation: 'extractField',
+            field: 'link',
+            outputVariable: 'extractedLink',
+          },
+        },
+      };
+
+      const res = await executeTransform(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(res.variables?.extractedLink).toBe('https://keebs.com/q1');
+    });
+
+    it('extracts property from a JSON string input', async () => {
+      const mockCtx: any = {
+        variables: {
+          productJson: JSON.stringify({ id: 'SKU-491', title: 'Curved Monitor', price: '$450' }),
+        },
+        log: vi.fn(),
+      };
+
+      const node: any = {
+        id: 't-2',
+        data: {
+          properties: {
+            input: '{{productJson}}',
+            operation: 'extractField',
+            field: 'title',
+            outputVariable: 'monitorTitle',
+          },
+        },
+      };
+
+      const res = await executeTransform(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(res.variables?.monitorTitle).toBe('Curved Monitor');
+    });
+  });
+
+  describe('Smart Scroll Speed Options', () => {
+    it('configures scrollSpeed presets and smooth flag in executeSmartScroll', async () => {
+      const mockCtx: any = {
+        variables: {},
+        log: vi.fn(),
+        updateNodeState: vi.fn(),
+      };
+
+      const nodeInstant: any = {
+        id: 'scroll-instant',
+        data: {
+          label: 'Instant Scroll',
+          properties: {
+            mode: 'to_bottom',
+            maxScrolls: 2,
+            scrollSpeed: 'instant',
+          },
+        },
+      };
+
+      const resInstant = await executeSmartScroll(nodeInstant, mockCtx);
+      expect(resInstant.success).toBe(true);
+      expect(resInstant.output.scrollSpeed).toBe('instant');
+      expect(resInstant.output.totalScrolls).toBe(2);
+
+      const nodeFast: any = {
+        id: 'scroll-fast',
+        data: {
+          label: 'Fast Scroll',
+          properties: {
+            mode: 'distance',
+            maxScrolls: 1,
+            scrollSpeed: 'fast',
+          },
+        },
+      };
+
+      const resFast = await executeSmartScroll(nodeFast, mockCtx);
+      expect(resFast.success).toBe(true);
+      expect(resFast.output.scrollSpeed).toBe('fast');
     });
   });
 });

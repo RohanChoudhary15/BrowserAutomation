@@ -1148,21 +1148,83 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Collection Iterator: Item Variable Name */}
+        {/* Collection Iterator: Item Variable Name */}
         {['extract_image', 'extract_all_images', 'extract_multiple', 'crawl_pagination', 'scrape_elements'].includes(selectedNode.data.type) && (
-          <div className="pt-2 border-t border-[#1c2230]">
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">
-              Loop Body Item Variable Name
-            </label>
-            <input
-              type="text"
-              value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}
-              onChange={(e) => handlePropChange('itemVariable', e.target.value)}
-              placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
-            />
-            <p className="text-[10px] text-gray-500 mt-1">
-              When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}&#125;&#125;
-            </p>
+          <div className="pt-2 border-t border-[#1c2230] space-y-2">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Loop Body Item Variable Name
+              </label>
+              <input
+                type="text"
+                value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}
+                onChange={(e) => handlePropChange('itemVariable', e.target.value)}
+                placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}&#125;&#125;
+              </p>
+            </div>
+
+            {/* Field Extraction / Item Extract Mode for Scrape Elements */}
+            {selectedNode.data.type === 'scrape_elements' && (
+              <div className="p-2.5 rounded-lg bg-[#141924] border border-[#202738] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-gray-300">
+                    Expose / Extract Item Part
+                  </label>
+                  <span className="text-[10px] text-indigo-400 font-mono">
+                    &#123;&#123;{props.itemVariable || 'currentProduct'}&#125;&#125;
+                  </span>
+                </div>
+                <select
+                  value={props.itemExtractField || 'all'}
+                  onChange={(e) => handlePropChange('itemExtractField', e.target.value)}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] text-xs outline-none"
+                >
+                  <option value="all">📦 Full Product Object (JSON string or object)</option>
+                  {(Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : [
+                    { name: 'link' }, { name: 'title' }, { name: 'price' }, { name: 'image' }, { name: 'description' }
+                  ]).map((f: any) => (
+                    <option key={f.name} value={f.name}>
+                      🔗 Extract "{f.name}" only (string value)
+                    </option>
+                  ))}
+                  <option value="custom">⚙️ Custom property...</option>
+                </select>
+
+                {props.itemExtractField === 'custom' && (
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Custom Property Path</label>
+                    <input
+                      type="text"
+                      value={props.itemExtractCustomField || ''}
+                      onChange={(e) => handlePropChange('itemExtractCustomField', e.target.value)}
+                      placeholder="e.g. link, title, nested.prop"
+                      className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                    />
+                  </div>
+                )}
+
+                <div className="text-[10px] text-gray-400 space-y-1 pt-1 border-t border-[#1e2433]">
+                  <p className="font-medium text-gray-300">Loop variables available inside loop body:</p>
+                  <div className="flex flex-wrap gap-1">
+                    <span className="px-1.5 py-0.5 rounded bg-black/40 border border-gray-700 font-mono text-[9px] text-amber-300" title="Primary loop variable">
+                      &#123;&#123;{props.itemVariable || 'currentProduct'}&#125;&#125;
+                    </span>
+                    {(Array.isArray(props.fields) ? props.fields : []).map((f: any) => (
+                      <span key={f.name} className="px-1.5 py-0.5 rounded bg-black/40 border border-gray-700 font-mono text-[9px] text-cyan-300" title={`Direct field shortcut: {{${f.name}}} or dot notation: {{${props.itemVariable || 'currentProduct'}.${f.name}}}`}>
+                        &#123;&#123;{f.name}&#125;&#125;
+                      </span>
+                    ))}
+                    <span className="px-1.5 py-0.5 rounded bg-black/40 border border-gray-700 font-mono text-[9px] text-emerald-300" title="Full object backup if extracting single field">
+                      &#123;&#123;{props.itemVariable || 'currentProduct'}_object&#125;&#125;
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2011,6 +2073,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <option value="distance">Scroll Fixed Distance in Steps</option>
               </select>
             </div>
+
+            {/* Scrolling Speed Selector */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Scrolling Speed</label>
+              <div className="grid grid-cols-4 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
+                {[
+                  { id: 'slow', label: '🐢 Slow', delay: 1500, desc: '1.5s delay, smooth' },
+                  { id: 'normal', label: '🚶 Normal', delay: 800, desc: '800ms delay, smooth' },
+                  { id: 'fast', label: '⚡ Fast', delay: 300, desc: '300ms delay, smooth' },
+                  { id: 'instant', label: '🚀 Instant', delay: 50, desc: '50ms jump, immediate' },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      handlePropChange('scrollSpeed', s.id);
+                      handlePropChange('scrollDelay', s.delay);
+                      if (s.id === 'instant') handlePropChange('smooth', false);
+                      else handlePropChange('smooth', true);
+                    }}
+                    className={`py-1 px-1.5 text-center rounded-lg text-[11px] font-medium transition-all ${
+                      (props.scrollSpeed || 'normal') === s.id
+                        ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                    }`}
+                    title={s.desc}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[11px] font-medium text-gray-400 mb-1">Max Passes</label>
@@ -2027,10 +2122,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <label className="block text-[11px] font-medium text-gray-400 mb-1">Delay (ms)</label>
                 <input
                   type="number"
-                  value={props.scrollDelay ?? 1000}
-                  onChange={(e) => handlePropChange('scrollDelay', Number(e.target.value))}
-                  min={200}
-                  step={100}
+                  value={props.scrollDelay ?? 800}
+                  onChange={(e) => {
+                    handlePropChange('scrollDelay', Number(e.target.value));
+                    handlePropChange('scrollSpeed', 'custom');
+                  }}
+                  min={20}
+                  step={50}
                   className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
                 />
               </div>
@@ -2046,6 +2144,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
               />
             </div>
+
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={props.smooth !== false && props.scrollSpeed !== 'instant'}
+                onChange={(e) => handlePropChange('smooth', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[11px]">Smooth scroll animation</span>
+            </label>
           </div>
         )}
 
@@ -3353,6 +3461,117 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               />
             </div>
+          </div>
+        )}
+
+        {/* Transform Node */}
+        {selectedNode.data.type === 'transform' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Input Text or Object</label>
+              <input
+                type="text"
+                value={props.input || ''}
+                onChange={(e) => handlePropChange('input', e.target.value)}
+                placeholder="e.g. {{currentProduct}}, {{title}}, {{scrapedProducts}}"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Operation</label>
+              <select
+                value={props.operation || 'trim'}
+                onChange={(e) => handlePropChange('operation', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="extractField">Extract Property / Field (e.g. link, title, price)</option>
+                <option value="trim">Trim Whitespace</option>
+                <option value="lowercase">To Lowercase</option>
+                <option value="uppercase">To Uppercase</option>
+                <option value="replace">Replace Text</option>
+                <option value="substring">Substring (Slice)</option>
+                <option value="split">Split to Array</option>
+                <option value="join">Join Array to String</option>
+                <option value="parseNumber">Extract / Parse Number</option>
+                <option value="parseJSON">Parse JSON String</option>
+              </select>
+            </div>
+            {props.operation === 'extractField' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Field / Property Name</label>
+                <input
+                  type="text"
+                  value={props.field || ''}
+                  onChange={(e) => handlePropChange('field', e.target.value)}
+                  placeholder="e.g. link, title, price, image"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Extracts a specific property from an object or JSON string (e.g. from &#123;&#123;currentProduct&#125;&#125;).
+                </p>
+              </div>
+            )}
+            {props.operation === 'replace' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Search</label>
+                  <input
+                    type="text"
+                    value={props.search || ''}
+                    onChange={(e) => handlePropChange('search', e.target.value)}
+                    placeholder="Search string"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Replace With</label>
+                  <input
+                    type="text"
+                    value={props.replaceWith || ''}
+                    onChange={(e) => handlePropChange('replaceWith', e.target.value)}
+                    placeholder="Replacement"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+            {props.operation === 'substring' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Start Index</label>
+                  <input
+                    type="number"
+                    value={props.start ?? 0}
+                    onChange={(e) => handlePropChange('start', Number(e.target.value))}
+                    min={0}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Length</label>
+                  <input
+                    type="number"
+                    value={props.length ?? ''}
+                    onChange={(e) => handlePropChange('length', e.target.value === '' ? undefined : Number(e.target.value))}
+                    min={1}
+                    placeholder="all"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+            {(props.operation === 'split' || props.operation === 'join') && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Delimiter</label>
+                <input
+                  type="text"
+                  value={props.delimiter ?? (props.operation === 'split' ? ',' : ', ')}
+                  onChange={(e) => handlePropChange('delimiter', e.target.value)}
+                  placeholder="Delimiter string"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
           </div>
         )}
 

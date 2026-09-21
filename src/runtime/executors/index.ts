@@ -1,6 +1,6 @@
 import { ExecutionContext, NodeResult, ActiveTimer } from '../../types/execution';
 import { WorkflowNode } from '../../types/workflow';
-import { interpolateVariables } from '../interpolator';
+import { interpolateVariables, getNestedValue } from '../interpolator';
 import {
   evaluateCondition,
   LogicalGate,
@@ -177,7 +177,13 @@ async function sendDomAction(
 
 export const executeNavigate: NodeExecutor = async (node, ctx) => {
   const rawUrl = node.data.properties.url || 'https://example.com';
-  const url = interpolateVariables(rawUrl, ctx.variables);
+  const resolvedUrl = interpolateVariables(rawUrl, ctx.variables);
+  let url: string;
+  if (typeof resolvedUrl === 'object' && resolvedUrl !== null) {
+    url = String(resolvedUrl.link || resolvedUrl.url || resolvedUrl.href || resolvedUrl.src || resolvedUrl.target || JSON.stringify(resolvedUrl)).trim();
+  } else {
+    url = String(resolvedUrl || '').trim();
+  }
   const waitUntil = node.data.properties.waitUntil || 'load';
 
   ctx.log({
@@ -293,7 +299,13 @@ export const executeClick: NodeExecutor = async (node, ctx) => {
 export const executeTypeText: NodeExecutor = async (node, ctx) => {
   const selector = interpolateVariables(node.data.properties.selector, ctx.variables);
   const rawText = node.data.properties.text ?? '';
-  const text = String(interpolateVariables(rawText, ctx.variables));
+  const resolvedText = interpolateVariables(rawText, ctx.variables);
+  let text: string;
+  if (typeof resolvedText === 'object' && resolvedText !== null) {
+    text = String(resolvedText.text ?? resolvedText.title ?? resolvedText.name ?? resolvedText.value ?? resolvedText.link ?? JSON.stringify(resolvedText));
+  } else {
+    text = String(resolvedText ?? '');
+  }
   const clearExisting = node.data.properties.clearExisting !== false;
   const typingDelay = Number(node.data.properties.typingDelay) || 0;
   const timeout = Number(node.data.properties.timeout) || 10000;
@@ -1211,6 +1223,24 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
     }
     case 'parseJSON': {
       result = JSON.parse(str);
+      break;
+    }
+    case 'extractField':
+    case 'getProperty': {
+      const field = node.data.properties.field || node.data.properties.fieldName || node.data.properties.property || '';
+      let targetObj = input;
+      if (typeof targetObj === 'string') {
+        try {
+          targetObj = JSON.parse(targetObj);
+        } catch {
+          // not JSON
+        }
+      }
+      if (targetObj && typeof targetObj === 'object') {
+        result = field ? getNestedValue(targetObj, field) : targetObj;
+      } else {
+        result = '';
+      }
       break;
     }
   }
@@ -2651,12 +2681,33 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
   const selector = node.data.properties.selector ? interpolateVariables(node.data.properties.selector, ctx.variables) : undefined;
   const maxScrolls = Math.min(Number(node.data.properties.maxScrolls) || 5, 50);
   const distance = Number(node.data.properties.distance) || 600;
-  const scrollDelay = Number(node.data.properties.scrollDelay) || 800;
+  const scrollSpeed = node.data.properties.scrollSpeed || 'normal';
+
+  let scrollDelay = Number(node.data.properties.scrollDelay);
+  let smooth = node.data.properties.smooth !== undefined ? !!node.data.properties.smooth : true;
+
+  if (scrollSpeed === 'slow') {
+    if (!node.data.properties.scrollDelay) scrollDelay = 1500;
+    smooth = true;
+  } else if (scrollSpeed === 'fast') {
+    if (!node.data.properties.scrollDelay) scrollDelay = 300;
+    smooth = true;
+  } else if (scrollSpeed === 'instant') {
+    if (!node.data.properties.scrollDelay) scrollDelay = 50;
+    smooth = false;
+  } else if (scrollSpeed === 'normal') {
+    if (!node.data.properties.scrollDelay) scrollDelay = 800;
+    smooth = true;
+  } else {
+    // custom or unhandled
+    if (!scrollDelay || isNaN(scrollDelay)) scrollDelay = 800;
+  }
+
   const outputVariable = node.data.properties.outputVariable || 'scrollResult';
 
   ctx.log({
     level: 'info',
-    message: `Starting Smart Scroll (${mode}, max ${maxScrolls} passes)`,
+    message: `Starting Smart Scroll (${mode}, ${scrollSpeed} speed, max ${maxScrolls} passes)`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -2664,7 +2715,7 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
   ctx.updateNodeState(node.id, {
     status: 'running',
     dynamicState: {
-      message: `Scrolling (${mode})...`,
+      message: `Scrolling (${mode}, ${scrollSpeed})...`,
       currentIteration: 0,
       totalIterations: maxScrolls,
       progress: 0,
@@ -2678,7 +2729,7 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
     ctx.updateNodeState(node.id, {
       status: 'running',
       dynamicState: {
-        message: `Scroll pass ${pass}/${maxScrolls}`,
+        message: `Scroll pass ${pass}/${maxScrolls} (${scrollSpeed})`,
         currentIteration: pass,
         totalIterations: maxScrolls,
         progress: Math.round((pass / maxScrolls) * 100),
@@ -2691,7 +2742,7 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
         direction: 'down',
         amount: distance,
         selector,
-        smooth: true,
+        smooth,
       },
       ctx
     );
@@ -2703,7 +2754,7 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
     }
   }
 
-  const result = { totalScrolls, mode, maxScrolls };
+  const result = { totalScrolls, mode, maxScrolls, scrollSpeed };
 
   ctx.updateNodeState(node.id, {
     status: 'success',

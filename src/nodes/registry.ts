@@ -158,7 +158,8 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       selector: '',
       distance: 600,
       maxScrolls: 5,
-      scrollDelay: 1000,
+      scrollSpeed: 'normal', // 'slow' | 'normal' | 'fast' | 'instant' | 'custom'
+      scrollDelay: 800,
       outputVariable: 'scrollResult',
     },
   },
@@ -406,6 +407,8 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
         { name: 'description', selector: 'p', attribute: 'paragraphs' },
       ],
       itemVariable: 'currentProduct',
+      itemExtractField: 'all', // 'all' (whole card object) | 'link' | 'title' | 'price' | 'image' | 'description' | custom field
+      itemExtractCustomField: '',
       outputVariable: 'scrapedProducts',
       exportToFile: false,
       exportFormat: 'csv',
@@ -647,6 +650,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     defaultProperties: {
       input: '',
       operation: 'trim',
+      field: '',
       outputVariable: 'transformedText',
     },
   },

@@ -28,7 +28,7 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
 
   // Summary of primary configuration
   let summary = '';
-  if (data.type === 'smart_scroll') summary = `${data.properties?.mode || 'to_bottom'} (${data.properties?.maxScrolls || 5} passes)`;
+  if (data.type === 'smart_scroll') summary = `${data.properties?.mode || 'to_bottom'} • ${data.properties?.scrollSpeed || 'normal'} (${data.properties?.maxScrolls || 5} passes)`;
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
   else if (data.type === 'math_calculate') summary = `${data.properties?.outputVariable || 'counter'} (${data.properties?.operation || 'add'})`;

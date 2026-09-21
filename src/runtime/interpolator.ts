@@ -6,6 +6,11 @@ export function getNestedValue(obj: any, path: string): any {
   if (obj === null || obj === undefined) return undefined;
   if (!path || path.trim() === '') return obj;
 
+  // If the object directly contains the key (e.g. obj["currentProduct.title"]), return it directly
+  if (typeof obj === 'object' && path in obj && obj[path] !== undefined) {
+    return obj[path];
+  }
+
   // Normalize array syntax: items[0].name -> items.0.name
   const normalizedPath = path
     .replace(/\[(\d+)\]/g, '.$1')
