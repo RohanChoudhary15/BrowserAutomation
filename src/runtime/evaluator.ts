@@ -17,15 +17,69 @@ export type ConditionOperator =
 
 export type LogicalGate = 'AND' | 'OR' | 'NAND' | 'NOR';
 
+export type ConditionType =
+  | 'variable'
+  | 'element_presence'
+  | 'page_text'
+  | 'wait_complete'
+  | 'javascript';
+
 export interface ConditionRule {
-  leftValue: any;
-  operator: ConditionOperator;
+  type?: ConditionType;
+  leftValue?: any;
+  operator?: ConditionOperator;
   rightValue?: any;
+  selector?: string;
+  presenceMode?: 'present' | 'not_present' | 'visible' | 'hidden';
+  timeout?: number;
+  visibleOnly?: boolean;
+  text?: string;
+  textMode?: 'contains' | 'does_not_contain';
+  caseSensitive?: boolean;
+  waitDurationMs?: number;
+  expression?: string;
 }
 
 export interface ConditionItem extends ConditionRule {
   id?: string;
   gate?: LogicalGate;
+}
+
+/**
+ * Generates a human-friendly string summary for any condition rule
+ */
+export function formatRuleDescription(rule: ConditionRule): string {
+  const type = rule.type || 'variable';
+  switch (type) {
+    case 'element_presence': {
+      const mode = rule.presenceMode || 'present';
+      const label =
+        mode === 'not_present'
+          ? 'not present'
+          : mode === 'visible'
+          ? 'visible'
+          : mode === 'hidden'
+          ? 'hidden'
+          : 'present';
+      return `Element "${rule.selector || '...'}" is ${label}`;
+    }
+    case 'page_text': {
+      const mode = rule.textMode === 'does_not_contain' ? 'does not contain' : 'contains';
+      return `Webpage ${mode} "${rule.text || '...'}"`;
+    }
+    case 'wait_complete': {
+      const sec = (Number(rule.waitDurationMs || rule.timeout) || 1000) / 1000;
+      return `Wait ${sec}s complete`;
+    }
+    case 'javascript': {
+      return `JS: ${rule.expression || '...'}`;
+    }
+    case 'variable':
+    default: {
+      const isUnary = ['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(rule.operator || '');
+      return `${rule.leftValue || 'val'} ${rule.operator || '=='}${isUnary ? '' : ` ${rule.rightValue || "''"}`}`.trim();
+    }
+  }
 }
 
 /**

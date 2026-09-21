@@ -38,6 +38,7 @@ export type NodeType =
   | 'extract_html'
   | 'extract_table'
   | 'extract_multiple'
+  | 'crawl_pagination'
   | 'extract_links'
   | 'extract_image'
   | 'extract_all_images'

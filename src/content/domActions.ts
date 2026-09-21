@@ -1753,4 +1753,160 @@ export async function typeIntoElement(params: {
   });
 }
 
+/**
+ * Automatically discovers or uses custom selector to find and click the Next Page trigger.
+ * Detects disabled state, aria-disabled, or end of pagination.
+ */
+export async function findAndClickNextPage(
+  params: {
+    nextButtonSelector?: string;
+    nextSelector?: string;
+    selector?: string;
+    human?: HumanConfig;
+  } = {},
+  signal?: AbortSignal
+): Promise<{ clicked: boolean; reachedEnd: boolean; selector?: string; selectorFound?: string; reason?: string; matchedText?: string }> {
+  let target: Element | null = null;
+  const preferredSelector = params.nextButtonSelector || params.nextSelector || params.selector;
+  let usedSelector = preferredSelector;
+  let matchedText: string | undefined;
+
+  // 1. If explicit selector was provided, try it first
+  if (preferredSelector) {
+    try {
+      target = queryElement(preferredSelector) || document.querySelector(preferredSelector);
+    } catch {
+      target = null;
+    }
+    if (target) {
+      matchedText = target.textContent?.trim();
+    }
+  }
+
+  // 2. Auto-detect if no target found or no selector given
+  if (!target) {
+    const candidateSelectors = [
+      'a[rel="next"]',
+      'button[rel="next"]',
+      '[aria-label*="next page" i]',
+      '[aria-label="next" i]',
+      '[aria-label*="next" i]',
+      '[title*="next page" i]',
+      '[title*="next" i]',
+      '.pagination-next a',
+      '.pagination-next button',
+      '.pagination-next',
+      '.next-page a',
+      '.next-page button',
+      '.next-page',
+      '.pagination .next a',
+      '.pagination .next',
+      'li.next a',
+      'li.next button',
+      'li.next',
+      'a.next',
+      'button.next',
+      '[data-testid*="next" i]',
+      '[data-action*="next" i]',
+      '.pager-next a',
+    ];
+
+    for (const sel of candidateSelectors) {
+      try {
+        const found = document.querySelector(sel);
+        if (found && isElementVisible(found)) {
+          target = found;
+          usedSelector = sel;
+          matchedText = found.textContent?.trim() || found.getAttribute('aria-label') || undefined;
+          break;
+        }
+      } catch {}
+    }
+
+    // 3. Fallback text search for Next buttons
+    if (!target) {
+      const clickableCandidates = Array.from(
+        document.querySelectorAll(
+          'a, button, [role="button"], [role="link"], input[type="button"], input[type="submit"], [class*="btn"], [class*="button"], [class*="pager"], [class*="page"], [class*="pagination"]'
+        )
+      );
+      for (const el of clickableCandidates) {
+        if (!isElementVisible(el)) continue;
+        const text = (el.textContent || '').trim().toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const normalized = text.replace(/[\s\u00A0]+/g, ' ').trim();
+
+        if (
+          normalized === 'next' ||
+          normalized === 'next page' ||
+          normalized.startsWith('next ') ||
+          normalized.startsWith('next>') ||
+          normalized.startsWith('next›') ||
+          normalized.startsWith('next»') ||
+          normalized === '>' ||
+          normalized === '»' ||
+          normalized === '›' ||
+          normalized === 'older' ||
+          normalized === 'older posts' ||
+          aria === 'next' ||
+          aria.includes('next page')
+        ) {
+          target = el;
+          usedSelector = `${el.tagName.toLowerCase()}:has-text("${text}")`;
+          matchedText = el.textContent?.trim();
+          break;
+        }
+      }
+    }
+  }
+
+  if (!target) {
+    return { clicked: false, reachedEnd: true, reason: 'not_found' };
+  }
+
+  // Check if disabled
+  const isDisabled =
+    target.hasAttribute('disabled') ||
+    target.getAttribute('aria-disabled') === 'true' ||
+    target.classList.contains('disabled') ||
+    target.classList.contains('cursor-not-allowed') ||
+    target.getAttribute('tabindex') === '-1';
+
+  if (isDisabled) {
+    return {
+      clicked: false,
+      reachedEnd: true,
+      selector: usedSelector,
+      selectorFound: usedSelector,
+      reason: 'disabled',
+    };
+  }
+
+  // Scroll into view if needed
+  try {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch {}
+
+  flashHighlight(target);
+
+  // Human mode pause and click
+  if (params.human) {
+    await approachElement(target, params.human, signal);
+  }
+
+  if (target instanceof HTMLElement) {
+    target.click();
+  } else {
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  }
+
+  return {
+    clicked: true,
+    reachedEnd: false,
+    selector: usedSelector,
+    selectorFound: usedSelector,
+    matchedText,
+  };
+}
+
 

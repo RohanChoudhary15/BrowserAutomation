@@ -29,6 +29,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
+import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
 import { ModelOption, AiProvider } from '../../ai/types';
 import { BotCredentialsModal } from '../modals/BotCredentialsModal';
 import {
@@ -258,12 +259,35 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const currentOutput = runtimeState?.output ?? (props.outputVariable ? variables[props.outputVariable] : undefined);
   const imagePreviews = getImagePreviews(currentOutput);
 
+  const [pickingConditionRuleIndex, setPickingConditionRuleIndex] = useState<number | null>(null);
+
   const handlePropChange = (key: string, value: any) => {
     onUpdateProperties(selectedNode.id, {
       ...props,
       [key]: value,
     });
   };
+
+  useEffect(() => {
+    if (pickingConditionRuleIndex !== null && props.selector) {
+      const conditions = Array.isArray(props.conditions) ? [...props.conditions] : [];
+      if (conditions[pickingConditionRuleIndex]) {
+        conditions[pickingConditionRuleIndex] = {
+          ...conditions[pickingConditionRuleIndex],
+          selector: props.selector,
+        };
+        handlePropChange('conditions', conditions);
+      }
+      setPickingConditionRuleIndex(null);
+    }
+  }, [props.selector]);
+
+  useEffect(() => {
+    if (!isPickingElement && pickingConditionRuleIndex !== null) {
+      const timer = setTimeout(() => setPickingConditionRuleIndex(null), 350);
+      return () => clearTimeout(timer);
+    }
+  }, [isPickingElement]);
 
   const availableVars = Object.keys(variables);
 
@@ -326,16 +350,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Element Selector with Picker Button (Click, Type, Extract, Hover, etc.) */}
-        {['click', 'type_text', 'clear_input', 'hover', 'wait_for_element', 'extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'extract_links', 'extract_image', 'contains'].includes(selectedNode.data.type) && (
+        {['click', 'type_text', 'clear_input', 'hover', 'wait_for_element', 'extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'contains'].includes(selectedNode.data.type) && (
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-[11px] font-medium text-gray-400">
-                {selectedNode.data.type === 'extract_multiple' ? 'Repeating List Selector' : 'Element Selector'}
+                {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) ? 'Repeating List / Items Selector' : 'Element Selector'}
               </label>
 
-              {selectedNode.data.type === 'extract_multiple' ? (
+              {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) ? (
                 <div className="flex items-center gap-1.5">
                   <button
+                    type="button"
                     onClick={() => onStartElementPicker('pattern_2click')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-semibold transition-all shadow-sm ${
                       isPickingElement
@@ -348,6 +373,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     <span>2-Click Pattern</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => onStartElementPicker('single')}
                     className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-[#161a24] text-gray-400 hover:text-white hover:bg-[#1c2230] border border-[#232a3b] transition-colors"
                     title="Pick single element"
@@ -358,6 +384,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </div>
               ) : (
                 <button
+                  type="button"
                   onClick={() => onStartElementPicker('single')}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
                     isPickingElement
@@ -374,14 +401,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
             <input
               type="text"
-              value={props.selector || ''}
-              onChange={(e) => handlePropChange('selector', e.target.value)}
+              value={props.itemSelector || props.selector || ''}
+              onChange={(e) => {
+                handlePropChange('selector', e.target.value);
+                if (selectedNode.data.type === 'crawl_pagination') {
+                  handlePropChange('itemSelector', e.target.value);
+                }
+              }}
               placeholder="#button, [data-testid='...'], //button"
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
             />
 
             {/* Visual 2-Click Pattern Results Card */}
-            {selectedNode.data.type === 'extract_multiple' && props.patternMatchCount !== undefined && (
+            {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && props.patternMatchCount !== undefined && (
               <div className="mt-2 p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-800/40 space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-semibold text-emerald-300">
                   <div className="flex items-center gap-1.5">
@@ -670,7 +702,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -689,21 +721,153 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Collection Iterator: Item Variable Name */}
-        {['extract_image', 'extract_all_images', 'extract_multiple'].includes(selectedNode.data.type) && (
+        {['extract_image', 'extract_all_images', 'extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && (
           <div className="pt-2 border-t border-[#1c2230]">
             <label className="block text-[11px] font-medium text-gray-400 mb-1">
               Loop Body Item Variable Name
             </label>
             <input
               type="text"
-              value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : 'currentElement')}
+              value={props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}
               onChange={(e) => handlePropChange('itemVariable', e.target.value)}
-              placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : 'currentElement'}
+              placeholder={['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')}
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
             />
             <p className="text-[10px] text-gray-500 mt-1">
-              When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : 'currentElement')}&#125;&#125;
+              When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement'))}&#125;&#125;
             </p>
+          </div>
+        )}
+
+        {/* Crawl Pagination Node Settings */}
+        {selectedNode.data.type === 'crawl_pagination' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider">
+                Pagination Crawl Mode
+              </label>
+              <span className="text-[10px] text-indigo-400 font-mono font-bold">Auto-Crawler</span>
+            </div>
+
+            {/* Mode selection buttons */}
+            <div className="grid grid-cols-3 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
+              <button
+                type="button"
+                onClick={() => handlePropChange('mode', 'auto_detect')}
+                className={`py-1.5 px-2 text-center rounded-lg text-[11px] font-medium transition-all ${
+                  (props.mode || 'auto_detect') === 'auto_detect'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                }`}
+                title="Automatically discovers next page buttons via rel=next, aria-label, classes, or Next text"
+              >
+                ✨ Auto-Detect
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePropChange('mode', 'next_button')}
+                className={`py-1.5 px-2 text-center rounded-lg text-[11px] font-medium transition-all ${
+                  props.mode === 'next_button'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                }`}
+                title="Clicks a specified Next Page button on each iteration"
+              >
+                👆 Next Button
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePropChange('mode', 'infinite_scroll')}
+                className={`py-1.5 px-2 text-center rounded-lg text-[11px] font-medium transition-all ${
+                  props.mode === 'infinite_scroll'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                }`}
+                title="Scrolls down to trigger infinite feed loading"
+              >
+                📜 Infinite Scroll
+              </button>
+            </div>
+
+            {/* Next Button Selector (if mode !== 'infinite_scroll') */}
+            {props.mode !== 'infinite_scroll' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">
+                    Next Page Button Selector {props.mode === 'auto_detect' && '(optional override)'}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => onStartElementPicker('single')}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                      isPickingElement
+                        ? 'bg-rose-600 text-white animate-pulse'
+                        : 'bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white border border-indigo-500/30'
+                    }`}
+                    title="Select the next page button or link"
+                  >
+                    <Crosshair className="w-3 h-3" />
+                    <span>Pick Button</span>
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={props.nextButtonSelector || ''}
+                  onChange={(e) => handlePropChange('nextButtonSelector', e.target.value)}
+                  placeholder={props.mode === 'auto_detect' ? 'Auto-detected (or e.g. a.next, button:has-text("Next"))' : 'e.g. .pagination-next, a[rel="next"], button:has-text("Next")'}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
+                />
+              </div>
+            )}
+
+            {/* Max Pages and Delay Grid */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Max Pages to Crawl</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={props.maxPages ?? 5}
+                  onChange={(e) => handlePropChange('maxPages', Math.max(1, Number(e.target.value)))}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Page Load Delay (ms)</label>
+                <input
+                  type="number"
+                  min={300}
+                  step={200}
+                  value={props.pageDelay ?? 1500}
+                  onChange={(e) => handlePropChange('pageDelay', Math.max(300, Number(e.target.value)))}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Checkboxes: Deduplicate and Stop on No New Items */}
+            <div className="space-y-1.5 pt-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.deduplicate !== false}
+                  onChange={(e) => handlePropChange('deduplicate', e.target.checked)}
+                  className="rounded border-[#232a3b] text-indigo-600 focus:ring-0 bg-[#0e1118]"
+                />
+                <span className="text-[11px] text-gray-300">Deduplicate repeating items across pages</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.stopOnNoNewItems !== false}
+                  onChange={(e) => handlePropChange('stopOnNoNewItems', e.target.checked)}
+                  className="rounded border-[#232a3b] text-indigo-600 focus:ring-0 bg-[#0e1118]"
+                />
+                <span className="text-[11px] text-gray-300">Stop crawling when no new items appear</span>
+              </label>
+            </div>
           </div>
         )}
 
@@ -906,11 +1070,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* Attribute Name (Extract Attribute / Extract Multiple) */}
-        {['extract_attribute', 'extract_multiple'].includes(selectedNode.data.type) && (
+        {/* Attribute Name (Extract Attribute / Extract Multiple / Crawl Pagination) */}
+        {['extract_attribute', 'extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && (
           <div>
             <label className="block text-[11px] font-medium text-gray-400 mb-1">
-              Attribute Name {selectedNode.data.type === 'extract_multiple' && '(optional, leave blank for text)'}
+              Attribute Name {['extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && '(optional, leave blank for text)'}
             </label>
             <input
               type="text"
@@ -1461,44 +1625,45 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {/* Condition Node Rules */}
         {selectedNode.data.type === 'condition' && (() => {
           const logicalGate = (props.logicalGate || 'AND').toUpperCase();
-          const conditions: Array<{ id: string; leftValue: string; operator: string; rightValue: string }> =
+          const conditions: ConditionRule[] =
             Array.isArray(props.conditions) && props.conditions.length > 0
               ? props.conditions
               : [
                   {
                     id: 'rule_1',
+                    type: 'variable',
                     leftValue: props.leftValue || '',
-                    operator: props.operator || 'equals',
+                    operator: (props.operator || 'equals') as any,
                     rightValue: props.rightValue || '',
                   },
                 ];
 
-          const updateConditions = (newConditions: typeof conditions) => {
+          const updateConditions = (newConditions: ConditionRule[]) => {
             handlePropChange('conditions', newConditions);
             if (newConditions[0]) {
-              handlePropChange('leftValue', newConditions[0].leftValue);
-              handlePropChange('operator', newConditions[0].operator);
-              handlePropChange('rightValue', newConditions[0].rightValue);
+              handlePropChange('leftValue', newConditions[0].leftValue || '');
+              handlePropChange('operator', newConditions[0].operator || 'equals');
+              handlePropChange('rightValue', newConditions[0].rightValue || '');
             }
           };
 
-          const handleRuleChange = (index: number, field: string, value: string) => {
+          const handleRuleChange = (index: number, field: keyof ConditionRule, value: any) => {
             const updated = [...conditions];
             updated[index] = { ...updated[index], [field]: value };
             updateConditions(updated);
           };
 
-          const handleAddRule = () => {
-            const updated = [
-              ...conditions,
-              {
-                id: `rule_${Date.now()}_${conditions.length + 1}`,
-                leftValue: '',
-                operator: 'equals',
-                rightValue: '',
-              },
-            ];
-            updateConditions(updated);
+          const handleAddRule = (type: ConditionType = 'variable') => {
+            const newRule: ConditionRule = {
+              id: `rule_${Date.now()}_${conditions.length + 1}`,
+              type,
+              ...(type === 'variable' ? { leftValue: '', operator: 'equals', rightValue: '' } : {}),
+              ...(type === 'element_presence' ? { selector: '', presenceMode: 'present', timeout: 5000 } : {}),
+              ...(type === 'page_text' ? { text: '', textMode: 'contains', timeout: 5000 } : {}),
+              ...(type === 'wait_complete' ? { waitDurationMs: 5000 } : {}),
+              ...(type === 'javascript' ? { expression: '' } : {}),
+            };
+            updateConditions([...conditions, newRule]);
           };
 
           const handleRemoveRule = (index: number) => {
@@ -1516,7 +1681,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             OR: {
               active: 'bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm',
               border: 'border-purple-500/30',
-              desc: 'At least ONE condition must evaluate to TRUE.',
+              desc: 'At least ONE condition must evaluate to TRUE. Short-circuits concurrently when any condition completes or succeeds.',
             },
             NAND: {
               active: 'bg-rose-600/30 text-rose-300 border-rose-500/60 shadow-sm',
@@ -1570,113 +1735,323 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
               {/* Condition Rules List */}
               <div className="space-y-2.5">
-                <label className="text-[11px] font-semibold text-gray-300 block">Condition Rules</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-gray-300 block">Condition Rules</label>
+                </div>
 
-                {conditions.map((rule, idx) => (
-                  <div key={rule.id || idx}>
-                    <div className="bg-[#0e1118] p-2.5 rounded-xl border border-[#1c2230] space-y-2 relative group">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#161a24] text-indigo-300 border border-indigo-500/20">
-                          #{idx + 1}
-                        </span>
+                {conditions.map((rule, idx) => {
+                  const ruleType: ConditionType = rule.type || 'variable';
+                  return (
+                    <div key={rule.id || idx}>
+                      <div className="bg-[#0e1118] p-2.5 rounded-xl border border-[#1c2230] space-y-2 relative group">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#161a24] text-indigo-300 border border-indigo-500/20">
+                              #{idx + 1}
+                            </span>
+                            {/* Rule Type Dropdown */}
+                            <select
+                              value={ruleType}
+                              onChange={(e) => handleRuleChange(idx, 'type', e.target.value as ConditionType)}
+                              className="bg-[#151a24] text-gray-200 text-[10px] font-semibold py-0.5 px-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none"
+                            >
+                              <option value="variable">Variable / Value</option>
+                              <option value="element_presence">Webpage Element</option>
+                              <option value="page_text">Webpage Contains Text</option>
+                              <option value="wait_complete">Wait Duration / Timeout</option>
+                              <option value="javascript">JS Expression</option>
+                            </select>
+                          </div>
 
-                        {conditions.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRule(idx)}
-                            className="text-gray-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/20 transition-colors"
-                            title="Remove condition rule"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          {conditions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRule(idx)}
+                              className="text-gray-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/20 transition-colors"
+                              title="Remove condition rule"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* TYPE: Variable */}
+                        {ruleType === 'variable' && (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">Left Value / Variable</label>
+                              <input
+                                type="text"
+                                value={rule.leftValue || ''}
+                                onChange={(e) => handleRuleChange(idx, 'leftValue', e.target.value)}
+                                placeholder="{{price}}, {{status}}, or value"
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">Operator</label>
+                              <select
+                                value={rule.operator || 'equals'}
+                                onChange={(e) => handleRuleChange(idx, 'operator', e.target.value)}
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              >
+                                <option value="equals">equals (==)</option>
+                                <option value="not_equals">not equals (!=)</option>
+                                <option value="contains">contains</option>
+                                <option value="does_not_contain">does not contain</option>
+                                <option value="greater_than">greater than (&gt;)</option>
+                                <option value="less_than">less than (&lt;)</option>
+                                <option value="greater_equal">greater or equal (&gt;=)</option>
+                                <option value="less_equal">less or equal (&lt;=)</option>
+                                <option value="exists">exists (not null/empty)</option>
+                                <option value="does_not_exist">does not exist</option>
+                                <option value="is_empty">is empty</option>
+                                <option value="is_not_empty">is not empty</option>
+                                <option value="regex_matches">regex matches</option>
+                              </select>
+                            </div>
+
+                            {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(rule.operator || '') && (
+                              <div>
+                                <label className="block text-[10px] text-gray-400 mb-0.5">Right Value</label>
+                                <input
+                                  type="text"
+                                  value={rule.rightValue || ''}
+                                  onChange={(e) => handleRuleChange(idx, 'rightValue', e.target.value)}
+                                  placeholder="100, true, in stock..."
+                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* TYPE: Element Presence */}
+                        {ruleType === 'element_presence' && (
+                          <div className="space-y-2">
+                            <div>
+                              <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[10px] text-gray-400">Element CSS Selector</label>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPickingConditionRuleIndex(idx);
+                                    onStartElementPicker('single');
+                                  }}
+                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                    isPickingElement && pickingConditionRuleIndex === idx
+                                      ? 'bg-rose-600 text-white animate-pulse'
+                                      : 'bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white border border-indigo-500/30'
+                                  }`}
+                                >
+                                  <Crosshair className="w-3 h-3" />
+                                  <span>{isPickingElement && pickingConditionRuleIndex === idx ? 'Picking...' : 'Pick Element'}</span>
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={rule.selector || ''}
+                                onChange={(e) => handleRuleChange(idx, 'selector', e.target.value)}
+                                placeholder="button#checkout, .modal-success, etc."
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] text-gray-400 mb-0.5">Presence State</label>
+                                <select
+                                  value={rule.presenceMode || 'present'}
+                                  onChange={(e) => handleRuleChange(idx, 'presenceMode', e.target.value)}
+                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs"
+                                >
+                                  <option value="present">Present in DOM</option>
+                                  <option value="not_present">Not Present in DOM</option>
+                                  <option value="visible">Visible on Screen</option>
+                                  <option value="hidden">Hidden / Absent</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (ms)</label>
+                                <input
+                                  type="number"
+                                  value={rule.timeout ?? 5000}
+                                  onChange={(e) => handleRuleChange(idx, 'timeout', Number(e.target.value))}
+                                  min={0}
+                                  max={60000}
+                                  step={500}
+                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TYPE: Webpage Text */}
+                        {ruleType === 'page_text' && (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">Text to Check</label>
+                              <input
+                                type="text"
+                                value={rule.text || ''}
+                                onChange={(e) => handleRuleChange(idx, 'text', e.target.value)}
+                                placeholder="e.g. Order Confirmed, Out of Stock"
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] text-gray-400 mb-0.5">Match Condition</label>
+                                <select
+                                  value={rule.textMode || 'contains'}
+                                  onChange={(e) => handleRuleChange(idx, 'textMode', e.target.value)}
+                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs"
+                                >
+                                  <option value="contains">Page Contains</option>
+                                  <option value="does_not_contain">Page Does NOT Contain</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (ms)</label>
+                                <input
+                                  type="number"
+                                  value={rule.timeout ?? 5000}
+                                  onChange={(e) => handleRuleChange(idx, 'timeout', Number(e.target.value))}
+                                  min={0}
+                                  max={60000}
+                                  step={500}
+                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">Within Element (optional, default: entire page)</label>
+                              <input
+                                type="text"
+                                value={rule.selector || ''}
+                                onChange={(e) => handleRuleChange(idx, 'selector', e.target.value)}
+                                placeholder="body, #content, .alert-box..."
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TYPE: Wait Complete */}
+                        {ruleType === 'wait_complete' && (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">Wait Duration (milliseconds)</label>
+                              <input
+                                type="number"
+                                value={rule.waitDurationMs ?? rule.timeout ?? 5000}
+                                onChange={(e) => {
+                                  const ms = Number(e.target.value);
+                                  handleRuleChange(idx, 'waitDurationMs', ms);
+                                  handleRuleChange(idx, 'timeout', ms);
+                                }}
+                                min={100}
+                                max={300000}
+                                step={500}
+                                placeholder="5000"
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
+                              />
+                            </div>
+                            <p className="text-[10px] text-gray-400 bg-[#121622] p-2 rounded-lg border border-[#1c2230]">
+                              ⏱️ Resolves to <span className="text-emerald-300 font-semibold">TRUE</span> after duration. When used in an <span className="text-purple-300 font-bold">OR</span> gate (e.g. <em>Wait 5s OR Text Found</em>), whichever occurs first will trigger immediately!
+                            </p>
+                          </div>
+                        )}
+
+                        {/* TYPE: Javascript Expression */}
+                        {ruleType === 'javascript' && (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] text-gray-400 mb-0.5">JS Boolean Expression</label>
+                              <textarea
+                                value={rule.expression || ''}
+                                onChange={(e) => handleRuleChange(idx, 'expression', e.target.value)}
+                                placeholder="{{items.length}} > 0 && {{status}} === 'ready'"
+                                rows={2}
+                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono resize-none"
+                              />
+                            </div>
+                            <p className="text-[10px] text-gray-400 bg-[#121622] p-2 rounded-lg border border-[#1c2230]">
+                              Evaluates truthy/falsy with interpolated workflow variables.
+                            </p>
+                          </div>
                         )}
                       </div>
 
-                      {/* Left Value */}
-                      <div>
-                        <label className="block text-[10px] text-gray-400 mb-0.5">Left Value / Variable</label>
-                        <input
-                          type="text"
-                          value={rule.leftValue || ''}
-                          onChange={(e) => handleRuleChange(idx, 'leftValue', e.target.value)}
-                          placeholder="&#123;&#123;price&#125;&#125;, &#123;&#123;status&#125;&#125;, or value"
-                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                        />
-                      </div>
-
-                      {/* Operator */}
-                      <div>
-                        <label className="block text-[10px] text-gray-400 mb-0.5">Operator</label>
-                        <select
-                          value={rule.operator || 'equals'}
-                          onChange={(e) => handleRuleChange(idx, 'operator', e.target.value)}
-                          className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                        >
-                          <option value="equals">equals (==)</option>
-                          <option value="not_equals">not equals (!=)</option>
-                          <option value="contains">contains</option>
-                          <option value="does_not_contain">does not contain</option>
-                          <option value="greater_than">greater than (&gt;)</option>
-                          <option value="less_than">less than (&lt;)</option>
-                          <option value="greater_equal">greater or equal (&gt;=)</option>
-                          <option value="less_equal">less or equal (&lt;=)</option>
-                          <option value="exists">exists (not null/empty)</option>
-                          <option value="does_not_exist">does not exist</option>
-                          <option value="is_empty">is empty</option>
-                          <option value="is_not_empty">is not empty</option>
-                          <option value="regex_matches">regex matches</option>
-                        </select>
-                      </div>
-
-                      {/* Right Value (if non-unary) */}
-                      {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(rule.operator) && (
-                        <div>
-                          <label className="block text-[10px] text-gray-400 mb-0.5">Right Value</label>
-                          <input
-                            type="text"
-                            value={rule.rightValue || ''}
-                            onChange={(e) => handleRuleChange(idx, 'rightValue', e.target.value)}
-                            placeholder="100, true, in stock..."
-                            className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                          />
+                      {/* Connector Badge between items */}
+                      {idx < conditions.length - 1 && (
+                        <div className="flex items-center justify-center my-1.5">
+                          <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#151924] text-gray-300 border border-[#222a3d] font-bold">
+                            — {logicalGate} —
+                          </span>
                         </div>
                       )}
                     </div>
+                  );
+                })}
 
-                    {/* Connector Badge between items */}
-                    {idx < conditions.length - 1 && (
-                      <div className="flex items-center justify-center my-1.5">
-                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#151924] text-gray-300 border border-[#222a3d] font-bold">
-                          — {logicalGate} —
-                        </span>
-                      </div>
-                    )}
+                {/* Quick Add Rule Buttons */}
+                <div className="pt-1">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAddRule('variable')}
+                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-indigo-300 rounded-lg border border-indigo-500/30 text-[11px] font-semibold transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>+ Variable</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddRule('element_presence')}
+                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-emerald-300 rounded-lg border border-emerald-500/30 text-[11px] font-semibold transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>+ Element</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddRule('page_text')}
+                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-purple-300 rounded-lg border border-purple-500/30 text-[11px] font-semibold transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>+ Page Text</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddRule('wait_complete')}
+                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-amber-300 rounded-lg border border-amber-500/30 text-[11px] font-semibold transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>+ Wait Timeout</span>
+                    </button>
                   </div>
-                ))}
-
-                {/* Add Rule Button */}
-                <button
-                  type="button"
-                  onClick={handleAddRule}
-                  className="w-full flex items-center justify-center gap-1.5 py-2 bg-[#121622] hover:bg-[#192030] text-indigo-300 rounded-xl border border-indigo-500/30 text-xs font-semibold transition-all hover:border-indigo-400"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Condition Rule</span>
-                </button>
+                </div>
               </div>
 
               {/* Live Boolean Expression Preview */}
               <div>
                 <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Live Expression Formula</label>
-                <div className="bg-[#0b0e14] p-2 rounded-lg border border-[#1c2230] font-mono text-[11px] text-gray-300 overflow-x-auto">
-                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? `NOT ( ` : ''}
+                <div className="bg-[#0b0e14] p-2 rounded-lg border border-[#1c2230] font-mono text-[11px] text-gray-300 overflow-x-auto leading-relaxed">
+                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? <span className="text-rose-400 font-bold">NOT ( </span> : null}
                   {conditions.map((c, i) => (
                     <span key={i}>
                       {i > 0 && <span className="text-purple-400 font-bold"> {logicalGate === 'NAND' ? 'AND' : (logicalGate === 'NOR' ? 'OR' : logicalGate)} </span>}
-                      <span className="text-indigo-300">({c.leftValue || 'val'} {c.operator || '=='}{!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(c.operator) ? ` ${c.rightValue || "''"}` : ''})</span>
+                      <span className="text-indigo-300">({formatRuleDescription(c)})</span>
                     </span>
                   ))}
-                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? ` )` : ''}
+                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? <span className="text-rose-400 font-bold"> )</span> : null}
                 </div>
               </div>
             </div>

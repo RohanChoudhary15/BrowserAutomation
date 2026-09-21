@@ -4,6 +4,7 @@ import { Icon } from '../components/common/Icon';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
 import { Loader2, CheckCircle2, AlertCircle, Play, Trash2 } from 'lucide-react';
+import { formatRuleDescription } from '../runtime/evaluator';
 
 export interface ConditionNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -32,17 +33,21 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
   let summary = '';
   if (Array.isArray(conditions) && conditions.length > 0) {
     if (conditions.length === 1) {
-      const c = conditions[0];
-      summary = `${c.leftValue || 'val'} ${c.operator || '=='} ${c.rightValue || ''}`.trim();
+      summary = formatRuleDescription(conditions[0]);
     } else {
-      const first = conditions[0];
-      summary = `${first.leftValue || 'val'} ${first.operator} ... (${conditions.length} rules)`;
+      const first = formatRuleDescription(conditions[0]);
+      summary = `${first} ... (${conditions.length} rules)`;
     }
   } else {
-    const left = data.properties?.leftValue || 'val';
-    const op = data.properties?.operator || 'equals';
-    const right = data.properties?.rightValue || '';
-    summary = `${left} ${op} ${right}`.trim();
+    summary = formatRuleDescription({
+      type: data.properties?.type || 'variable',
+      leftValue: data.properties?.leftValue || 'val',
+      operator: data.properties?.operator || 'equals',
+      rightValue: data.properties?.rightValue || '',
+      selector: data.properties?.selector,
+      text: data.properties?.text,
+      waitDurationMs: data.properties?.waitDurationMs,
+    });
   }
 
   let borderClass = 'border-[#232a3b] hover:border-purple-500/60';

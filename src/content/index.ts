@@ -298,6 +298,16 @@ async function executeAction(
         waitForNavigation: params.waitForNavigation,
       });
 
+    case 'find_and_click_next_page':
+    case 'paginate_next':
+      return await domActions.findAndClickNextPage(
+        {
+          nextButtonSelector: params.nextButtonSelector || params.selector,
+          human,
+        },
+        undefined
+      );
+
     default:
       throw new Error(`Unsupported DOM action: ${action}`);
   }

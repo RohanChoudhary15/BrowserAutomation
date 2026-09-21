@@ -288,7 +288,7 @@ export class WorkflowEngine {
         }
 
         const isImageNode = node.data.type === 'extract_all_images' || node.data.type === 'extract_image';
-        const isElementNode = node.data.type === 'extract_multiple';
+        const isElementNode = node.data.type === 'extract_multiple' || node.data.type === 'crawl_pagination';
         const customVar = node.data.properties?.itemVariable;
 
         this.log({

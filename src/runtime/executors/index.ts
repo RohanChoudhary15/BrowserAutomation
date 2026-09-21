@@ -1,7 +1,13 @@
 import { ExecutionContext, NodeResult } from '../../types/execution';
 import { WorkflowNode } from '../../types/workflow';
 import { interpolateVariables } from '../interpolator';
-import { evaluateCondition, evaluateCompoundCondition, LogicalGate } from '../evaluator';
+import {
+  evaluateCondition,
+  evaluateCompoundCondition,
+  LogicalGate,
+  ConditionRule,
+  formatRuleDescription,
+} from '../evaluator';
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
@@ -448,36 +454,234 @@ export const executeExtractTable: NodeExecutor = async (node, ctx) => {
 
 // ----------------- LOGIC EXECUTORS -----------------
 
+async function evaluateSingleConditionRule(
+  rule: ConditionRule,
+  ctx: ExecutionContext
+): Promise<{ passed: boolean; desc: string }> {
+  const type = rule.type || 'variable';
+  const desc = formatRuleDescription(rule);
+
+  if (type === 'element_presence') {
+    const rawSel = rule.selector || rule.leftValue || '';
+    const selector = String(interpolateVariables(rawSel, ctx.variables)).trim();
+    if (!selector) return { passed: false, desc: `${desc} (missing selector)` };
+
+    const mode = rule.presenceMode || (rule.operator === 'does_not_exist' ? 'not_present' : 'present');
+    const timeout = Math.max(300, Number(rule.timeout) || 2000);
+    const visibleOnly = mode === 'visible' || rule.visibleOnly === true;
+
+    try {
+      const res = await sendDomAction(
+        'check_element_presence',
+        {
+          selector,
+          timeout,
+          visibleOnly,
+        },
+        ctx,
+        timeout + 1000
+      );
+
+      const isPresent = res?.present === true;
+      const passed =
+        mode === 'not_present' || mode === 'does_not_exist' || mode === 'hidden'
+          ? !isPresent
+          : isPresent;
+
+      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
+    } catch {
+      const passed = mode === 'not_present' || mode === 'does_not_exist';
+      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
+    }
+  }
+
+  if (type === 'page_text') {
+    const rawText = rule.text || rule.leftValue || '';
+    const text = String(interpolateVariables(rawText, ctx.variables)).trim();
+    if (!text) return { passed: false, desc: `${desc} (missing text)` };
+
+    const mode = rule.textMode || (rule.operator === 'does_not_contain' ? 'does_not_contain' : 'contains');
+    const selector = rule.selector ? interpolateVariables(rule.selector, ctx.variables) : undefined;
+    const timeout = Math.max(300, Number(rule.timeout) || 2000);
+
+    try {
+      const res = await sendDomAction(
+        'check_element_presence',
+        {
+          selector: selector || 'body',
+          text,
+          timeout,
+          visibleOnly: false,
+        },
+        ctx,
+        timeout + 1000
+      );
+
+      const found = res?.present === true;
+      const passed = mode === 'does_not_contain' ? !found : found;
+      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
+    } catch {
+      const passed = mode === 'does_not_contain';
+      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
+    }
+  }
+
+  if (type === 'wait_complete') {
+    const duration = Math.max(100, Number(rule.waitDurationMs || rule.timeout || rule.leftValue) || 1000);
+    await new Promise((r) => setTimeout(r, duration));
+    return { passed: true, desc: `${desc} -> COMPLETED` };
+  }
+
+  if (type === 'javascript') {
+    const rawExpr = rule.expression || rule.leftValue || '';
+    const expr = String(interpolateVariables(rawExpr, ctx.variables));
+    let passed = false;
+    try {
+      passed = Boolean(safeEvaluateMath(expr, ctx.variables));
+    } catch {
+      passed = false;
+    }
+    return { passed, desc: `${desc} -> ${passed ? 'TRUE' : 'FALSE'}` };
+  }
+
+  // Fallback: standard variable comparison
+  const passed = evaluateCondition(rule, ctx.variables);
+  return { passed, desc: `${desc} -> ${passed ? 'TRUE' : 'FALSE'}` };
+}
+
+async function concurrentEvaluateRules(
+  promises: Array<Promise<{ passed: boolean; desc: string }>>,
+  logicalGate: LogicalGate
+): Promise<{ result: boolean; details: string[] }> {
+  return new Promise((resolve) => {
+    let completedCount = 0;
+    const total = promises.length;
+    const results: Array<{ passed: boolean; desc: string } | null> = new Array(total).fill(null);
+    let resolved = false;
+
+    const checkEarlyResolve = (index: number, val: { passed: boolean; desc: string }) => {
+      if (resolved) return;
+      results[index] = val;
+      completedCount++;
+
+      // Early short-circuit checks
+      if (logicalGate === 'OR' && val.passed) {
+        resolved = true;
+        resolve({
+          result: true,
+          details: [`[OR Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
+        });
+        return;
+      }
+
+      if (logicalGate === 'AND' && !val.passed) {
+        resolved = true;
+        resolve({
+          result: false,
+          details: [`[AND Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
+        });
+        return;
+      }
+
+      if (logicalGate === 'NOR' && val.passed) {
+        resolved = true;
+        resolve({
+          result: false,
+          details: [`[NOR Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
+        });
+        return;
+      }
+
+      if (logicalGate === 'NAND' && !val.passed) {
+        resolved = true;
+        resolve({
+          result: true,
+          details: [`[NAND Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
+        });
+        return;
+      }
+
+      // If all completed
+      if (completedCount === total) {
+        resolved = true;
+        const validResults = results.map((r) => r || { passed: false, desc: 'unresolved' });
+        const passedList = validResults.map((r) => r.passed);
+        let finalResult = false;
+        if (logicalGate === 'AND') finalResult = passedList.every(Boolean);
+        else if (logicalGate === 'OR') finalResult = passedList.some(Boolean);
+        else if (logicalGate === 'NAND') finalResult = !passedList.every(Boolean);
+        else if (logicalGate === 'NOR') finalResult = !passedList.some(Boolean);
+        resolve({
+          result: finalResult,
+          details: validResults.map((r) => r.desc),
+        });
+      }
+    };
+
+    promises.forEach((p, idx) => {
+      p.then((res) => checkEarlyResolve(idx, res)).catch((err) => {
+        checkEarlyResolve(idx, { passed: false, desc: `Error: ${err.message || String(err)}` });
+      });
+    });
+  });
+}
+
 export const executeCondition: NodeExecutor = async (node, ctx) => {
   const conditions = node.data.properties.conditions;
   const logicalGate = (node.data.properties.logicalGate || 'AND') as LogicalGate;
 
-  let result = false;
-  let summary = '';
-
+  let rules: ConditionRule[] = [];
   if (Array.isArray(conditions) && conditions.length > 0) {
-    result = evaluateCompoundCondition(conditions, logicalGate, ctx.variables);
-    summary = `[${logicalGate}] ${conditions.length} rule${conditions.length > 1 ? 's' : ''}`;
+    rules = conditions;
   } else {
-    const leftValue = node.data.properties.leftValue;
-    const operator = node.data.properties.operator || 'equals';
-    const rightValue = node.data.properties.rightValue;
-    result = evaluateCondition({ leftValue, operator, rightValue }, ctx.variables);
-    summary = `${leftValue} ${operator} ${rightValue}`;
+    rules = [
+      {
+        type: node.data.properties.type || 'variable',
+        leftValue: node.data.properties.leftValue,
+        operator: node.data.properties.operator || 'equals',
+        rightValue: node.data.properties.rightValue,
+        selector: node.data.properties.selector,
+        presenceMode: node.data.properties.presenceMode,
+        text: node.data.properties.text,
+        textMode: node.data.properties.textMode,
+        waitDurationMs: node.data.properties.waitDurationMs,
+        expression: node.data.properties.expression,
+      },
+    ];
+  }
+
+  const hasAsyncRules = rules.some(
+    (r) => r.type === 'element_presence' || r.type === 'page_text' || r.type === 'wait_complete'
+  );
+
+  let result = false;
+  let details: string[] = [];
+
+  if (hasAsyncRules) {
+    const promises = rules.map((rule) => evaluateSingleConditionRule(rule, ctx));
+    const evalResult = await concurrentEvaluateRules(promises, logicalGate);
+    result = evalResult.result;
+    details = evalResult.details;
+  } else {
+    // Pure variable / synchronous rules
+    result = evaluateCompoundCondition(rules, logicalGate, ctx.variables);
+    details = rules.map((r) => formatRuleDescription(r));
   }
 
   const branch = result ? 'true' : 'false';
+  const outputVariable = node.data.properties.outputVariable || 'conditionResult';
+  ctx.variables[outputVariable] = result;
 
   ctx.log({
     level: 'info',
-    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} (${summary})`,
+    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} [${logicalGate}] (${details.join(' | ')})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
 
   return {
     success: true,
-    output: { result, branch },
+    output: { result, branch, details },
     nextBranch: branch,
   };
 };
@@ -776,6 +980,231 @@ export const executeExtractMultiple: NodeExecutor = async (node, ctx) => {
     success: true,
     output: res.items,
     variables: { [outputVariable]: res.items },
+  };
+};
+
+export const executeCrawlPagination: NodeExecutor = async (node, ctx) => {
+  const mode = node.data.properties.mode || 'auto_detect';
+  const rawItemSelector = node.data.properties.itemSelector || node.data.properties.selector || '';
+  const itemSelector = interpolateVariables(rawItemSelector, ctx.variables);
+  const rawNextSelector = node.data.properties.nextButtonSelector || node.data.properties.nextSelector || '';
+  const nextButtonSelector = rawNextSelector ? interpolateVariables(rawNextSelector, ctx.variables) : undefined;
+  const rawAttr = node.data.properties.attribute || '';
+  const attribute = rawAttr ? interpolateVariables(rawAttr, ctx.variables) : undefined;
+  const maxPages = Math.min(Math.max(1, Number(node.data.properties.maxPages) || 5), 100);
+  const pageDelay = Math.max(10, Number(node.data.properties.pageDelay ?? 1500));
+  const stopOnNoNewItems = node.data.properties.stopOnNoNewItems !== false;
+  const deduplicate = node.data.properties.deduplicate !== false;
+  const outputVariable = node.data.properties.outputVariable || 'crawledDataset';
+  const totalExtractedVariable = node.data.properties.totalExtractedVariable || 'totalCrawledItems';
+
+  if (!itemSelector) {
+    throw new Error('Auto-Crawler requires a repeating item selector (e.g. .product-item, .card, or list pattern).');
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Starting Auto-Crawler (${mode}, max ${maxPages} pages, selector: "${itemSelector}")`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Crawling page 1/${maxPages}...`,
+      currentIteration: 1,
+      totalIterations: maxPages,
+      progress: 0,
+    },
+  });
+
+  const aggregatedList: any[] = [];
+  const seenKeys = new Set<string>();
+  let consecutiveZeroNewCount = 0;
+  let pagesCrawled = 0;
+
+  for (let page = 1; page <= maxPages; page++) {
+    if (ctx.signal?.aborted) throw new Error('Auto-Crawler aborted by user.');
+    pagesCrawled = page;
+
+    ctx.updateNodeState(node.id, {
+      status: 'running',
+      dynamicState: {
+        message: `Scraping page ${page}/${maxPages} (${aggregatedList.length} items)...`,
+        currentIteration: page,
+        totalIterations: maxPages,
+        progress: Math.round(((page - 1) / maxPages) * 100),
+      },
+    });
+
+    // 1. Extract items on current page
+    let pageItems: any[] = [];
+    try {
+      const res = await sendDomAction(
+        'extract_multiple',
+        {
+          selector: itemSelector,
+          attribute,
+          timeout: 8000,
+        },
+        ctx,
+        9000
+      );
+      pageItems = Array.isArray(res?.items) ? res.items : [];
+    } catch (extractErr: any) {
+      ctx.log({
+        level: 'warn',
+        message: `Page ${page} item extraction warning: ${extractErr.message}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+    }
+
+    // 2. Accumulate items with optional deduplication
+    let newItemsThisPage = 0;
+    for (const item of pageItems) {
+      const key = typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item);
+      if (deduplicate) {
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          aggregatedList.push(item);
+          newItemsThisPage++;
+        }
+      } else {
+        aggregatedList.push(item);
+        newItemsThisPage++;
+      }
+    }
+
+    ctx.log({
+      level: 'info',
+      message: `Page ${page}/${maxPages}: Scraped ${pageItems.length} items (+${newItemsThisPage} new, total: ${aggregatedList.length})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    // Check stop condition: no new items
+    if (newItemsThisPage === 0 && page > 1 && stopOnNoNewItems) {
+      consecutiveZeroNewCount++;
+      if (consecutiveZeroNewCount >= 2) {
+        ctx.log({
+          level: 'info',
+          message: `Auto-Crawler stopping: No new items found across 2 consecutive passes.`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+        break;
+      }
+    } else {
+      consecutiveZeroNewCount = 0;
+    }
+
+    // Stop if maxPages reached
+    if (page >= maxPages) {
+      break;
+    }
+
+    // 3. Move to next page (via scroll or button click)
+    if (mode === 'infinite_scroll') {
+      ctx.log({
+        level: 'info',
+        message: `Infinite scroll pass: scrolling down...`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      await sendDomAction(
+        'scroll',
+        {
+          direction: 'down',
+          amount: 800,
+          smooth: true,
+        },
+        ctx
+      );
+      await new Promise((r) => setTimeout(r, pageDelay));
+    } else {
+      // 'next_button' or 'auto_detect'
+      ctx.log({
+        level: 'info',
+        message: `Navigating to next page (${nextButtonSelector || 'auto-detect'})...`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+
+      let navResult: any;
+      try {
+        navResult = await sendDomAction(
+          'find_and_click_next_page',
+          {
+            nextButtonSelector,
+          },
+          ctx,
+          10000
+        );
+      } catch (err: any) {
+        ctx.log({
+          level: 'info',
+          message: `Pagination navigation ended: ${err.message}`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+        break;
+      }
+
+      if (navResult?.reachedEnd || !navResult?.clicked) {
+        ctx.log({
+          level: 'info',
+          message: `Reached end of pagination: ${navResult?.reason || 'No further next button found'}`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+        break;
+      }
+
+      // Wait for page transition / delay
+      await new Promise((r) => setTimeout(r, pageDelay));
+    }
+  }
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `Crawled ${pagesCrawled} pages (${aggregatedList.length} items)`,
+      progress: 100,
+    },
+  });
+
+  ctx.log({
+    level: 'success',
+    message: `Auto-Crawler finished: aggregated ${aggregatedList.length} items across ${pagesCrawled} pages into {{${outputVariable}}}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.variables[outputVariable] = aggregatedList;
+  ctx.variables[totalExtractedVariable] = aggregatedList.length;
+  ctx.variables['crawlTotalCount'] = aggregatedList.length;
+  ctx.variables['crawlPageCount'] = pagesCrawled;
+  ctx.variables['totalPagesCrawled'] = pagesCrawled;
+
+  const output = Object.assign([...aggregatedList], {
+    items: aggregatedList,
+    pageCount: pagesCrawled,
+    totalCount: aggregatedList.length,
+  });
+
+  return {
+    success: true,
+    output,
+    items: aggregatedList,
+    variables: {
+      [outputVariable]: aggregatedList,
+      [totalExtractedVariable]: aggregatedList.length,
+      crawlTotalCount: aggregatedList.length,
+      crawlPageCount: pagesCrawled,
+      totalPagesCrawled: pagesCrawled,
+    },
   };
 };
 
@@ -1931,6 +2360,7 @@ export const executors: Record<string, NodeExecutor> = {
   extract_html: executeExtractHtml,
   extract_table: executeExtractTable,
   extract_multiple: executeExtractMultiple,
+  crawl_pagination: executeCrawlPagination,
   extract_links: executeExtractLinks,
   extract_image: executeExtractImage,
   extract_all_images: executeExtractAllImages,
