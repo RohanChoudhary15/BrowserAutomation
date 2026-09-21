@@ -3,10 +3,8 @@ import { WorkflowNode } from '../../types/workflow';
 import { interpolateVariables } from '../interpolator';
 import {
   evaluateCondition,
-  evaluateCompoundCondition,
   LogicalGate,
   ConditionRule,
-  formatRuleDescription,
 } from '../evaluator';
 import { queryLlm } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
@@ -454,235 +452,101 @@ export const executeExtractTable: NodeExecutor = async (node, ctx) => {
 
 // ----------------- LOGIC EXECUTORS -----------------
 
-async function evaluateSingleConditionRule(
-  rule: ConditionRule,
-  ctx: ExecutionContext
-): Promise<{ passed: boolean; desc: string }> {
-  const type = rule.type || 'variable';
-  const desc = formatRuleDescription(rule);
-
-  if (type === 'element_presence') {
-    const rawSel = rule.selector || rule.leftValue || '';
-    const selector = String(interpolateVariables(rawSel, ctx.variables)).trim();
-    if (!selector) return { passed: false, desc: `${desc} (missing selector)` };
-
-    const mode = rule.presenceMode || (rule.operator === 'does_not_exist' ? 'not_present' : 'present');
-    const timeout = Math.max(300, Number(rule.timeout) || 2000);
-    const visibleOnly = mode === 'visible' || rule.visibleOnly === true;
-
-    try {
-      const res = await sendDomAction(
-        'check_element_presence',
-        {
-          selector,
-          timeout,
-          visibleOnly,
-        },
-        ctx,
-        timeout + 1000
-      );
-
-      const isPresent = res?.present === true;
-      const passed =
-        mode === 'not_present' || mode === 'does_not_exist' || mode === 'hidden'
-          ? !isPresent
-          : isPresent;
-
-      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
-    } catch {
-      const passed = mode === 'not_present' || mode === 'does_not_exist';
-      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
-    }
-  }
-
-  if (type === 'page_text') {
-    const rawText = rule.text || rule.leftValue || '';
-    const text = String(interpolateVariables(rawText, ctx.variables)).trim();
-    if (!text) return { passed: false, desc: `${desc} (missing text)` };
-
-    const mode = rule.textMode || (rule.operator === 'does_not_contain' ? 'does_not_contain' : 'contains');
-    const selector = rule.selector ? interpolateVariables(rule.selector, ctx.variables) : undefined;
-    const timeout = Math.max(300, Number(rule.timeout) || 2000);
-
-    try {
-      const res = await sendDomAction(
-        'check_element_presence',
-        {
-          selector: selector || 'body',
-          text,
-          timeout,
-          visibleOnly: false,
-        },
-        ctx,
-        timeout + 1000
-      );
-
-      const found = res?.present === true;
-      const passed = mode === 'does_not_contain' ? !found : found;
-      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
-    } catch {
-      const passed = mode === 'does_not_contain';
-      return { passed, desc: `${desc} -> ${passed ? 'PASSED' : 'FAILED'}` };
-    }
-  }
-
-  if (type === 'wait_complete') {
-    const duration = Math.max(100, Number(rule.waitDurationMs || rule.timeout || rule.leftValue) || 1000);
-    await new Promise((r) => setTimeout(r, duration));
-    return { passed: true, desc: `${desc} -> COMPLETED` };
-  }
-
-  if (type === 'javascript') {
-    const rawExpr = rule.expression || rule.leftValue || '';
-    const expr = String(interpolateVariables(rawExpr, ctx.variables));
-    let passed = false;
-    try {
-      passed = Boolean(safeEvaluateMath(expr, ctx.variables));
-    } catch {
-      passed = false;
-    }
-    return { passed, desc: `${desc} -> ${passed ? 'TRUE' : 'FALSE'}` };
-  }
-
-  // Fallback: standard variable comparison
-  const passed = evaluateCondition(rule, ctx.variables);
-  return { passed, desc: `${desc} -> ${passed ? 'TRUE' : 'FALSE'}` };
-}
-
-async function concurrentEvaluateRules(
-  promises: Array<Promise<{ passed: boolean; desc: string }>>,
-  logicalGate: LogicalGate
-): Promise<{ result: boolean; details: string[] }> {
-  return new Promise((resolve) => {
-    let completedCount = 0;
-    const total = promises.length;
-    const results: Array<{ passed: boolean; desc: string } | null> = new Array(total).fill(null);
-    let resolved = false;
-
-    const checkEarlyResolve = (index: number, val: { passed: boolean; desc: string }) => {
-      if (resolved) return;
-      results[index] = val;
-      completedCount++;
-
-      // Early short-circuit checks
-      if (logicalGate === 'OR' && val.passed) {
-        resolved = true;
-        resolve({
-          result: true,
-          details: [`[OR Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
-        });
-        return;
-      }
-
-      if (logicalGate === 'AND' && !val.passed) {
-        resolved = true;
-        resolve({
-          result: false,
-          details: [`[AND Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
-        });
-        return;
-      }
-
-      if (logicalGate === 'NOR' && val.passed) {
-        resolved = true;
-        resolve({
-          result: false,
-          details: [`[NOR Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
-        });
-        return;
-      }
-
-      if (logicalGate === 'NAND' && !val.passed) {
-        resolved = true;
-        resolve({
-          result: true,
-          details: [`[NAND Short-Circuit] ${val.desc}`, ...results.filter(Boolean).map((r) => r!.desc)],
-        });
-        return;
-      }
-
-      // If all completed
-      if (completedCount === total) {
-        resolved = true;
-        const validResults = results.map((r) => r || { passed: false, desc: 'unresolved' });
-        const passedList = validResults.map((r) => r.passed);
-        let finalResult = false;
-        if (logicalGate === 'AND') finalResult = passedList.every(Boolean);
-        else if (logicalGate === 'OR') finalResult = passedList.some(Boolean);
-        else if (logicalGate === 'NAND') finalResult = !passedList.every(Boolean);
-        else if (logicalGate === 'NOR') finalResult = !passedList.some(Boolean);
-        resolve({
-          result: finalResult,
-          details: validResults.map((r) => r.desc),
-        });
-      }
-    };
-
-    promises.forEach((p, idx) => {
-      p.then((res) => checkEarlyResolve(idx, res)).catch((err) => {
-        checkEarlyResolve(idx, { passed: false, desc: `Error: ${err.message || String(err)}` });
-      });
-    });
-  });
-}
-
 export const executeCondition: NodeExecutor = async (node, ctx) => {
-  const conditions = node.data.properties.conditions;
-  const logicalGate = (node.data.properties.logicalGate || 'AND') as LogicalGate;
+  const leftValue = interpolateVariables(node.data.properties.leftValue || '', ctx.variables);
+  const operator = node.data.properties.operator || 'equals';
+  const rightValue = interpolateVariables(node.data.properties.rightValue || '', ctx.variables);
 
-  let rules: ConditionRule[] = [];
-  if (Array.isArray(conditions) && conditions.length > 0) {
-    rules = conditions;
-  } else {
-    rules = [
-      {
-        type: node.data.properties.type || 'variable',
-        leftValue: node.data.properties.leftValue,
-        operator: node.data.properties.operator || 'equals',
-        rightValue: node.data.properties.rightValue,
-        selector: node.data.properties.selector,
-        presenceMode: node.data.properties.presenceMode,
-        text: node.data.properties.text,
-        textMode: node.data.properties.textMode,
-        waitDurationMs: node.data.properties.waitDurationMs,
-        expression: node.data.properties.expression,
-      },
-    ];
-  }
+  const rule: ConditionRule = {
+    type: 'variable',
+    leftValue,
+    operator,
+    rightValue,
+  };
 
-  const hasAsyncRules = rules.some(
-    (r) => r.type === 'element_presence' || r.type === 'page_text' || r.type === 'wait_complete'
-  );
-
-  let result = false;
-  let details: string[] = [];
-
-  if (hasAsyncRules) {
-    const promises = rules.map((rule) => evaluateSingleConditionRule(rule, ctx));
-    const evalResult = await concurrentEvaluateRules(promises, logicalGate);
-    result = evalResult.result;
-    details = evalResult.details;
-  } else {
-    // Pure variable / synchronous rules
-    result = evaluateCompoundCondition(rules, logicalGate, ctx.variables);
-    details = rules.map((r) => formatRuleDescription(r));
-  }
-
+  const result = evaluateCondition(rule, ctx.variables);
   const branch = result ? 'true' : 'false';
   const outputVariable = node.data.properties.outputVariable || 'conditionResult';
   ctx.variables[outputVariable] = result;
 
+  const desc = `${leftValue} ${operator} ${rightValue}`;
   ctx.log({
     level: 'info',
-    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} [${logicalGate}] (${details.join(' | ')})`,
+    message: `Condition evaluated: ${result ? 'TRUE' : 'FALSE'} (${desc})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
 
   return {
     success: true,
-    output: { result, branch, details },
+    output: { result, branch, desc },
     nextBranch: branch,
+  };
+};
+
+/**
+ * Logic Gate executor for AND, OR, NAND, NOR nodes.
+ * Combines multiple incoming branches into 1 branch according to boolean logic.
+ */
+export const executeLogicGate: NodeExecutor = async (node, ctx) => {
+  const rawType = String(node.data.type || '').toLowerCase();
+  let gate = String(node.data.properties.gate || '').toUpperCase() as LogicalGate;
+  if (!gate) {
+    if (rawType.includes('and') && !rawType.includes('nand')) gate = 'AND';
+    else if (rawType.includes('nand')) gate = 'NAND';
+    else if (rawType.includes('nor')) gate = 'NOR';
+    else gate = 'OR';
+  }
+
+  const incomingInputs: Array<{ id: string; name?: string; result: boolean; output?: any }> =
+    ctx._gateInputs?.[node.id] || node.data.properties._evaluatedInputs || [];
+
+  let result = false;
+  let summary = '';
+
+  if (incomingInputs.length > 0) {
+    const inputBools = incomingInputs.map((i) => Boolean(i.result));
+    if (gate === 'AND') {
+      result = inputBools.every((b) => b === true);
+      summary = `All ${inputBools.length} branches: [${inputBools.join(', ')}]`;
+    } else if (gate === 'OR') {
+      result = inputBools.some((b) => b === true);
+      summary = `Any of ${inputBools.length} branches: [${inputBools.join(', ')}]`;
+    } else if (gate === 'NAND') {
+      result = !inputBools.every((b) => b === true);
+      summary = `NOT (${inputBools.join(' AND ')})`;
+    } else if (gate === 'NOR') {
+      result = !inputBools.some((b) => b === true);
+      summary = `NOT (${inputBools.join(' OR ')})`;
+    }
+  } else {
+    // If executed standalone (e.g. debugging without connected edges)
+    result = gate === 'AND' || gate === 'OR';
+    summary = 'Standalone execution (no incoming branches attached)';
+  }
+
+  const outputVariable = node.data.properties.outputVariable || `${gate.toLowerCase()}Result`;
+  ctx.variables[outputVariable] = result;
+
+  const branch = result ? 'true' : 'false';
+
+  ctx.log({
+    level: 'info',
+    message: `${gate} Gate evaluated: ${result ? 'TRUE' : 'FALSE'} (${summary}) -> Combining branches to 1 output`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: {
+      result,
+      gate,
+      branch,
+      inputs: incomingInputs,
+      summary,
+    },
+    nextBranch: 'output',
   };
 };
 
@@ -2366,6 +2230,15 @@ export const executors: Record<string, NodeExecutor> = {
   extract_all_images: executeExtractAllImages,
   condition: executeCondition,
   contains: executeContains,
+  and: executeLogicGate,
+  or: executeLogicGate,
+  nand: executeLogicGate,
+  nor: executeLogicGate,
+  logic_and: executeLogicGate,
+  logic_or: executeLogicGate,
+  logic_nand: executeLogicGate,
+  logic_nor: executeLogicGate,
+  logic_gate: executeLogicGate,
   break: executeBreak,
   continue: executeContinue,
   set_variable: executeSetVariable,

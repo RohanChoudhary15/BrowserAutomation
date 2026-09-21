@@ -259,35 +259,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const currentOutput = runtimeState?.output ?? (props.outputVariable ? variables[props.outputVariable] : undefined);
   const imagePreviews = getImagePreviews(currentOutput);
 
-  const [pickingConditionRuleIndex, setPickingConditionRuleIndex] = useState<number | null>(null);
-
   const handlePropChange = (key: string, value: any) => {
     onUpdateProperties(selectedNode.id, {
       ...props,
       [key]: value,
     });
   };
-
-  useEffect(() => {
-    if (pickingConditionRuleIndex !== null && props.selector) {
-      const conditions = Array.isArray(props.conditions) ? [...props.conditions] : [];
-      if (conditions[pickingConditionRuleIndex]) {
-        conditions[pickingConditionRuleIndex] = {
-          ...conditions[pickingConditionRuleIndex],
-          selector: props.selector,
-        };
-        handlePropChange('conditions', conditions);
-      }
-      setPickingConditionRuleIndex(null);
-    }
-  }, [props.selector]);
-
-  useEffect(() => {
-    if (!isPickingElement && pickingConditionRuleIndex !== null) {
-      const timer = setTimeout(() => setPickingConditionRuleIndex(null), 350);
-      return () => clearTimeout(timer);
-    }
-  }, [isPickingElement]);
 
   const availableVars = Object.keys(variables);
 
@@ -1622,437 +1599,185 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* Condition Node Rules */}
-        {selectedNode.data.type === 'condition' && (() => {
-          const logicalGate = (props.logicalGate || 'AND').toUpperCase();
-          const conditions: ConditionRule[] =
-            Array.isArray(props.conditions) && props.conditions.length > 0
-              ? props.conditions
-              : [
-                  {
-                    id: 'rule_1',
-                    type: 'variable',
-                    leftValue: props.leftValue || '',
-                    operator: (props.operator || 'equals') as any,
-                    rightValue: props.rightValue || '',
-                  },
-                ];
+        {/* Condition Node (Clean single-comparison) */}
+        {selectedNode.data.type === 'condition' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Left Value / Variable
+              </label>
+              <input
+                type="text"
+                value={props.leftValue || ''}
+                onChange={(e) => handlePropChange('leftValue', e.target.value)}
+                placeholder="{{price}}, {{status}}, or value"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
 
-          const updateConditions = (newConditions: ConditionRule[]) => {
-            handlePropChange('conditions', newConditions);
-            if (newConditions[0]) {
-              handlePropChange('leftValue', newConditions[0].leftValue || '');
-              handlePropChange('operator', newConditions[0].operator || 'equals');
-              handlePropChange('rightValue', newConditions[0].rightValue || '');
-            }
-          };
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Comparison Operator
+              </label>
+              <select
+                value={props.operator || 'equals'}
+                onChange={(e) => handlePropChange('operator', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="equals">equals (==)</option>
+                <option value="not_equals">not equals (!=)</option>
+                <option value="contains">contains</option>
+                <option value="does_not_contain">does not contain</option>
+                <option value="greater_than">greater than (&gt;)</option>
+                <option value="less_than">less than (&lt;)</option>
+                <option value="greater_equal">greater or equal (&gt;=)</option>
+                <option value="less_equal">less or equal (&lt;=)</option>
+                <option value="exists">exists (not null/empty)</option>
+                <option value="does_not_exist">does not exist</option>
+                <option value="is_empty">is empty</option>
+                <option value="is_not_empty">is not empty</option>
+                <option value="regex_matches">regex matches</option>
+              </select>
+            </div>
 
-          const handleRuleChange = (index: number, field: keyof ConditionRule, value: any) => {
-            const updated = [...conditions];
-            updated[index] = { ...updated[index], [field]: value };
-            updateConditions(updated);
-          };
+            {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(props.operator || '') && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                  Right Value
+                </label>
+                <input
+                  type="text"
+                  value={props.rightValue || ''}
+                  onChange={(e) => handlePropChange('rightValue', e.target.value)}
+                  placeholder="100, true, in stock..."
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
 
-          const handleAddRule = (type: ConditionType = 'variable') => {
-            const newRule: ConditionRule = {
-              id: `rule_${Date.now()}_${conditions.length + 1}`,
-              type,
-              ...(type === 'variable' ? { leftValue: '', operator: 'equals', rightValue: '' } : {}),
-              ...(type === 'element_presence' ? { selector: '', presenceMode: 'present', timeout: 5000 } : {}),
-              ...(type === 'page_text' ? { text: '', textMode: 'contains', timeout: 5000 } : {}),
-              ...(type === 'wait_complete' ? { waitDurationMs: 5000 } : {}),
-              ...(type === 'javascript' ? { expression: '' } : {}),
-            };
-            updateConditions([...conditions, newRule]);
-          };
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Output Variable (optional)
+              </label>
+              <input
+                type="text"
+                value={props.outputVariable || 'conditionResult'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="conditionResult"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
 
-          const handleRemoveRule = (index: number) => {
-            if (conditions.length <= 1) return;
-            const updated = conditions.filter((_, idx) => idx !== index);
-            updateConditions(updated);
-          };
+        {/* Logic Gate Nodes (AND, OR, NAND, NOR) */}
+        {['and', 'or', 'nand', 'nor', 'logic_and', 'logic_or', 'logic_nand', 'logic_nor'].includes(selectedNode.data.type) && (() => {
+          const rawType = String(selectedNode.data.type || '').toLowerCase();
+          let currentGate = String(props.gate || '').toUpperCase();
+          if (!currentGate) {
+            if (rawType.includes('and') && !rawType.includes('nand')) currentGate = 'AND';
+            else if (rawType.includes('nand')) currentGate = 'NAND';
+            else if (rawType.includes('nor')) currentGate = 'NOR';
+            else currentGate = 'OR';
+          }
 
-          const gateColors: Record<string, { active: string; border: string; desc: string }> = {
+          const gateMeta: Record<string, { label: string; desc: string; color: string; badge: string }> = {
             AND: {
-              active: 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60 shadow-sm',
-              border: 'border-emerald-500/30',
-              desc: 'All conditions must evaluate to TRUE.',
+              label: 'AND Logic Gate',
+              desc: 'Combines multiple incoming branches into 1 branch. Requires ALL connected branches to evaluate to TRUE / complete before proceeding.',
+              color: 'text-emerald-300 border-emerald-500/50 bg-emerald-500/10',
+              badge: 'bg-emerald-600',
             },
             OR: {
-              active: 'bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm',
-              border: 'border-purple-500/30',
-              desc: 'At least ONE condition must evaluate to TRUE. Short-circuits concurrently when any condition completes or succeeds.',
+              label: 'OR Logic Gate',
+              desc: 'Combines multiple incoming branches into 1 branch. Continues as soon as ANY connected branch is TRUE / completes (race condition / fallback).',
+              color: 'text-purple-300 border-purple-500/50 bg-purple-500/10',
+              badge: 'bg-purple-600',
             },
             NAND: {
-              active: 'bg-rose-600/30 text-rose-300 border-rose-500/60 shadow-sm',
-              border: 'border-rose-500/30',
-              desc: 'Negated AND: Evaluates to TRUE unless ALL conditions are met.',
+              label: 'NAND Logic Gate',
+              desc: 'Negated AND: Combines multiple incoming branches into 1 branch. Continues unless ALL connected branches are TRUE.',
+              color: 'text-rose-300 border-rose-500/50 bg-rose-500/10',
+              badge: 'bg-rose-600',
             },
             NOR: {
-              active: 'bg-amber-600/30 text-amber-300 border-amber-500/60 shadow-sm',
-              border: 'border-amber-500/30',
-              desc: 'Negated OR: Evaluates to TRUE only when ALL conditions are false.',
+              label: 'NOR Logic Gate',
+              desc: 'Negated OR: Combines multiple incoming branches into 1 branch. Continues only when ALL connected branches are FALSE.',
+              color: 'text-amber-300 border-amber-500/50 bg-amber-500/10',
+              badge: 'bg-amber-600',
             },
           };
 
-          return (
-            <div className="space-y-3.5">
-              {/* Logic Gate Segmented Selector */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider">
-                    Logic Gate Mode
-                  </label>
-                  <span className="text-[10px] text-gray-500 font-mono">
-                    {conditions.length} {conditions.length === 1 ? 'Rule' : 'Rules'}
-                  </span>
-                </div>
+          const meta = gateMeta[currentGate] || gateMeta.AND;
 
+          return (
+            <div className="space-y-4">
+              {/* Gate Switcher */}
+              <div>
+                <label className="text-[11px] font-semibold text-gray-300 uppercase tracking-wider block mb-1.5">
+                  Logic Gate Type
+                </label>
                 <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
-                  {(['AND', 'OR', 'NAND', 'NOR'] as const).map((gate) => {
-                    const isSelected = logicalGate === gate;
+                  {(['AND', 'OR', 'NAND', 'NOR'] as const).map((g) => {
+                    const isSel = currentGate === g;
                     return (
                       <button
-                        key={gate}
+                        key={g}
                         type="button"
-                        onClick={() => handlePropChange('logicalGate', gate)}
+                        onClick={() => {
+                          handlePropChange('gate', g);
+                          handlePropChange('outputVariable', `${g.toLowerCase()}Result`);
+                        }}
                         className={`py-1.5 text-center rounded-lg text-xs font-mono font-bold transition-all border ${
-                          isSelected
-                            ? gateColors[gate].active
+                          isSel
+                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm'
                             : 'text-gray-400 border-transparent hover:text-gray-200 hover:bg-[#151a26]'
                         }`}
                       >
-                        {gate}
+                        {g}
                       </button>
                     );
                   })}
                 </div>
+              </div>
 
-                <p className="mt-1.5 text-[10px] text-gray-400 bg-[#121622] px-2.5 py-1.5 rounded-lg border border-[#1a202c]">
-                  <span className="text-gray-200 font-semibold">{logicalGate}:</span> {gateColors[logicalGate]?.desc}
+              {/* Combining Explanation Banner */}
+              <div className={`p-3 rounded-xl border ${meta.color} space-y-1.5`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${meta.badge} animate-pulse`} />
+                  <span className="font-bold text-xs text-white">{meta.label}</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-gray-300">
+                  {meta.desc}
                 </p>
               </div>
 
-              {/* Condition Rules List */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold text-gray-300 block">Condition Rules</label>
+              {/* Visual Branch Combiner Diagram */}
+              <div className="p-3 bg-[#0e1118] rounded-xl border border-[#1c2230] space-y-2">
+                <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block">
+                  Branch Combining Mode
+                </label>
+                <div className="flex items-center justify-between text-[11px] bg-[#141824] p-2.5 rounded-lg border border-[#232b40]">
+                  <span className="text-gray-300 font-mono">Multiple Branches In</span>
+                  <span className="text-indigo-400 font-bold font-mono">➔ 1 Combined Out</span>
                 </div>
-
-                {conditions.map((rule, idx) => {
-                  const ruleType: ConditionType = rule.type || 'variable';
-                  return (
-                    <div key={rule.id || idx}>
-                      <div className="bg-[#0e1118] p-2.5 rounded-xl border border-[#1c2230] space-y-2 relative group">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#161a24] text-indigo-300 border border-indigo-500/20">
-                              #{idx + 1}
-                            </span>
-                            {/* Rule Type Dropdown */}
-                            <select
-                              value={ruleType}
-                              onChange={(e) => handleRuleChange(idx, 'type', e.target.value as ConditionType)}
-                              className="bg-[#151a24] text-gray-200 text-[10px] font-semibold py-0.5 px-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none"
-                            >
-                              <option value="variable">Variable / Value</option>
-                              <option value="element_presence">Webpage Element</option>
-                              <option value="page_text">Webpage Contains Text</option>
-                              <option value="wait_complete">Wait Duration / Timeout</option>
-                              <option value="javascript">JS Expression</option>
-                            </select>
-                          </div>
-
-                          {conditions.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveRule(idx)}
-                              className="text-gray-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/20 transition-colors"
-                              title="Remove condition rule"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* TYPE: Variable */}
-                        {ruleType === 'variable' && (
-                          <div className="space-y-2">
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">Left Value / Variable</label>
-                              <input
-                                type="text"
-                                value={rule.leftValue || ''}
-                                onChange={(e) => handleRuleChange(idx, 'leftValue', e.target.value)}
-                                placeholder="{{price}}, {{status}}, or value"
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">Operator</label>
-                              <select
-                                value={rule.operator || 'equals'}
-                                onChange={(e) => handleRuleChange(idx, 'operator', e.target.value)}
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              >
-                                <option value="equals">equals (==)</option>
-                                <option value="not_equals">not equals (!=)</option>
-                                <option value="contains">contains</option>
-                                <option value="does_not_contain">does not contain</option>
-                                <option value="greater_than">greater than (&gt;)</option>
-                                <option value="less_than">less than (&lt;)</option>
-                                <option value="greater_equal">greater or equal (&gt;=)</option>
-                                <option value="less_equal">less or equal (&lt;=)</option>
-                                <option value="exists">exists (not null/empty)</option>
-                                <option value="does_not_exist">does not exist</option>
-                                <option value="is_empty">is empty</option>
-                                <option value="is_not_empty">is not empty</option>
-                                <option value="regex_matches">regex matches</option>
-                              </select>
-                            </div>
-
-                            {!['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(rule.operator || '') && (
-                              <div>
-                                <label className="block text-[10px] text-gray-400 mb-0.5">Right Value</label>
-                                <input
-                                  type="text"
-                                  value={rule.rightValue || ''}
-                                  onChange={(e) => handleRuleChange(idx, 'rightValue', e.target.value)}
-                                  placeholder="100, true, in stock..."
-                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* TYPE: Element Presence */}
-                        {ruleType === 'element_presence' && (
-                          <div className="space-y-2">
-                            <div>
-                              <div className="flex items-center justify-between mb-0.5">
-                                <label className="text-[10px] text-gray-400">Element CSS Selector</label>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPickingConditionRuleIndex(idx);
-                                    onStartElementPicker('single');
-                                  }}
-                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                                    isPickingElement && pickingConditionRuleIndex === idx
-                                      ? 'bg-rose-600 text-white animate-pulse'
-                                      : 'bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white border border-indigo-500/30'
-                                  }`}
-                                >
-                                  <Crosshair className="w-3 h-3" />
-                                  <span>{isPickingElement && pickingConditionRuleIndex === idx ? 'Picking...' : 'Pick Element'}</span>
-                                </button>
-                              </div>
-                              <input
-                                type="text"
-                                value={rule.selector || ''}
-                                onChange={(e) => handleRuleChange(idx, 'selector', e.target.value)}
-                                placeholder="button#checkout, .modal-success, etc."
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-[10px] text-gray-400 mb-0.5">Presence State</label>
-                                <select
-                                  value={rule.presenceMode || 'present'}
-                                  onChange={(e) => handleRuleChange(idx, 'presenceMode', e.target.value)}
-                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs"
-                                >
-                                  <option value="present">Present in DOM</option>
-                                  <option value="not_present">Not Present in DOM</option>
-                                  <option value="visible">Visible on Screen</option>
-                                  <option value="hidden">Hidden / Absent</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (ms)</label>
-                                <input
-                                  type="number"
-                                  value={rule.timeout ?? 5000}
-                                  onChange={(e) => handleRuleChange(idx, 'timeout', Number(e.target.value))}
-                                  min={0}
-                                  max={60000}
-                                  step={500}
-                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* TYPE: Webpage Text */}
-                        {ruleType === 'page_text' && (
-                          <div className="space-y-2">
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">Text to Check</label>
-                              <input
-                                type="text"
-                                value={rule.text || ''}
-                                onChange={(e) => handleRuleChange(idx, 'text', e.target.value)}
-                                placeholder="e.g. Order Confirmed, Out of Stock"
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-[10px] text-gray-400 mb-0.5">Match Condition</label>
-                                <select
-                                  value={rule.textMode || 'contains'}
-                                  onChange={(e) => handleRuleChange(idx, 'textMode', e.target.value)}
-                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs"
-                                >
-                                  <option value="contains">Page Contains</option>
-                                  <option value="does_not_contain">Page Does NOT Contain</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (ms)</label>
-                                <input
-                                  type="number"
-                                  value={rule.timeout ?? 5000}
-                                  onChange={(e) => handleRuleChange(idx, 'timeout', Number(e.target.value))}
-                                  min={0}
-                                  max={60000}
-                                  step={500}
-                                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                                />
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">Within Element (optional, default: entire page)</label>
-                              <input
-                                type="text"
-                                value={rule.selector || ''}
-                                onChange={(e) => handleRuleChange(idx, 'selector', e.target.value)}
-                                placeholder="body, #content, .alert-box..."
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* TYPE: Wait Complete */}
-                        {ruleType === 'wait_complete' && (
-                          <div className="space-y-2">
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">Wait Duration (milliseconds)</label>
-                              <input
-                                type="number"
-                                value={rule.waitDurationMs ?? rule.timeout ?? 5000}
-                                onChange={(e) => {
-                                  const ms = Number(e.target.value);
-                                  handleRuleChange(idx, 'waitDurationMs', ms);
-                                  handleRuleChange(idx, 'timeout', ms);
-                                }}
-                                min={100}
-                                max={300000}
-                                step={500}
-                                placeholder="5000"
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono"
-                              />
-                            </div>
-                            <p className="text-[10px] text-gray-400 bg-[#121622] p-2 rounded-lg border border-[#1c2230]">
-                              ⏱️ Resolves to <span className="text-emerald-300 font-semibold">TRUE</span> after duration. When used in an <span className="text-purple-300 font-bold">OR</span> gate (e.g. <em>Wait 5s OR Text Found</em>), whichever occurs first will trigger immediately!
-                            </p>
-                          </div>
-                        )}
-
-                        {/* TYPE: Javascript Expression */}
-                        {ruleType === 'javascript' && (
-                          <div className="space-y-2">
-                            <div>
-                              <label className="block text-[10px] text-gray-400 mb-0.5">JS Boolean Expression</label>
-                              <textarea
-                                value={rule.expression || ''}
-                                onChange={(e) => handleRuleChange(idx, 'expression', e.target.value)}
-                                placeholder="{{items.length}} > 0 && {{status}} === 'ready'"
-                                rows={2}
-                                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1f2638] focus:border-indigo-500 outline-none text-xs font-mono resize-none"
-                              />
-                            </div>
-                            <p className="text-[10px] text-gray-400 bg-[#121622] p-2 rounded-lg border border-[#1c2230]">
-                              Evaluates truthy/falsy with interpolated workflow variables.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Connector Badge between items */}
-                      {idx < conditions.length - 1 && (
-                        <div className="flex items-center justify-center my-1.5">
-                          <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#151924] text-gray-300 border border-[#222a3d] font-bold">
-                            — {logicalGate} —
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Quick Add Rule Buttons */}
-                <div className="pt-1">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleAddRule('variable')}
-                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-indigo-300 rounded-lg border border-indigo-500/30 text-[11px] font-semibold transition-all"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>+ Variable</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAddRule('element_presence')}
-                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-emerald-300 rounded-lg border border-emerald-500/30 text-[11px] font-semibold transition-all"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>+ Element</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAddRule('page_text')}
-                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-purple-300 rounded-lg border border-purple-500/30 text-[11px] font-semibold transition-all"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>+ Page Text</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAddRule('wait_complete')}
-                      className="flex items-center justify-center gap-1 py-1.5 px-2 bg-[#121622] hover:bg-[#192030] text-amber-300 rounded-lg border border-amber-500/30 text-[11px] font-semibold transition-all"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>+ Wait Timeout</span>
-                    </button>
-                  </div>
-                </div>
+                <p className="text-[10px] text-gray-400 leading-normal">
+                  Connect multiple nodes (Wait, Webpage checks, Conditions) to the top handle of this node. Their branches will be merged according to {currentGate} logic into a single combined outgoing branch.
+                </p>
               </div>
 
-              {/* Live Boolean Expression Preview */}
+              {/* Output Variable */}
               <div>
-                <label className="block text-[10px] text-gray-400 mb-1 font-semibold">Live Expression Formula</label>
-                <div className="bg-[#0b0e14] p-2 rounded-lg border border-[#1c2230] font-mono text-[11px] text-gray-300 overflow-x-auto leading-relaxed">
-                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? <span className="text-rose-400 font-bold">NOT ( </span> : null}
-                  {conditions.map((c, i) => (
-                    <span key={i}>
-                      {i > 0 && <span className="text-purple-400 font-bold"> {logicalGate === 'NAND' ? 'AND' : (logicalGate === 'NOR' ? 'OR' : logicalGate)} </span>}
-                      <span className="text-indigo-300">({formatRuleDescription(c)})</span>
-                    </span>
-                  ))}
-                  {logicalGate === 'NAND' || logicalGate === 'NOR' ? <span className="text-rose-400 font-bold"> )</span> : null}
-                </div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                  Output Variable (stores TRUE / FALSE)
+                </label>
+                <input
+                  type="text"
+                  value={props.outputVariable || `${currentGate.toLowerCase()}Result`}
+                  onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                  placeholder={`${currentGate.toLowerCase()}Result`}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
               </div>
             </div>
           );

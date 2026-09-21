@@ -3,6 +3,7 @@ import { ConditionNode } from './ConditionNode';
 import { ContainsNode } from './ContainsNode';
 import { LoopNode } from './LoopNode';
 import { IteratorNode } from './IteratorNode';
+import { LogicGateNode } from './LogicGateNode';
 
 export const nodeTypes = {
   customNode: BaseNode,
@@ -10,5 +11,6 @@ export const nodeTypes = {
   containsNode: ContainsNode,
   loopNode: LoopNode,
   iteratorNode: IteratorNode,
+  logicGateNode: LogicGateNode,
 };
 

@@ -86,4 +86,6 @@ export interface ExecutionContext {
   human?: HumanConfig;
   log: (log: Omit<ExecutionLog, 'id' | 'timestamp'>) => void;
   updateNodeState: (nodeId: string, state: Partial<NodeRuntimeState>) => void;
+  /** Internal tracking for inputs delivered to logic gates when merging branches */
+  _gateInputs?: Record<string, any[]>;
 }

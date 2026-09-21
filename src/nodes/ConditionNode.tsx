@@ -4,7 +4,6 @@ import { Icon } from '../components/common/Icon';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
 import { Loader2, CheckCircle2, AlertCircle, Play, Trash2 } from 'lucide-react';
-import { formatRuleDescription } from '../runtime/evaluator';
 
 export interface ConditionNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -18,37 +17,18 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
   const runtime = data.runtimeState;
   const status = runtime?.status || (data.disabled ? 'disabled' : 'idle');
 
-  const conditions = data.properties?.conditions;
-  const logicalGate = String(data.properties?.logicalGate || 'AND').toUpperCase();
+  const leftValue = data.properties?.leftValue || '';
+  const operator = data.properties?.operator || 'equals';
+  const rightValue = data.properties?.rightValue || '';
 
-  let gateBadgeColor = 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
-  if (logicalGate === 'OR') {
-    gateBadgeColor = 'bg-purple-500/20 text-purple-300 border-purple-500/40';
-  } else if (logicalGate === 'NAND') {
-    gateBadgeColor = 'bg-rose-500/20 text-rose-300 border-rose-500/40';
-  } else if (logicalGate === 'NOR') {
-    gateBadgeColor = 'bg-amber-500/20 text-amber-300 border-amber-500/40';
-  }
+  const isUnary = ['exists', 'does_not_exist', 'is_empty', 'is_not_empty'].includes(operator);
+  const summary = leftValue
+    ? `${leftValue} ${operator}${isUnary ? '' : ` ${rightValue}`}`.trim()
+    : 'Configure condition...';
 
-  let summary = '';
-  if (Array.isArray(conditions) && conditions.length > 0) {
-    if (conditions.length === 1) {
-      summary = formatRuleDescription(conditions[0]);
-    } else {
-      const first = formatRuleDescription(conditions[0]);
-      summary = `${first} ... (${conditions.length} rules)`;
-    }
-  } else {
-    summary = formatRuleDescription({
-      type: data.properties?.type || 'variable',
-      leftValue: data.properties?.leftValue || 'val',
-      operator: data.properties?.operator || 'equals',
-      rightValue: data.properties?.rightValue || '',
-      selector: data.properties?.selector,
-      text: data.properties?.text,
-      waitDurationMs: data.properties?.waitDurationMs,
-    });
-  }
+  // Live TRUE/FALSE result badge after run
+  const outResult = runtime?.output?.result ?? runtime?.output;
+  const hasResult = typeof outResult === 'boolean';
 
   let borderClass = 'border-[#232a3b] hover:border-purple-500/60';
   let glowClass = '';
@@ -57,7 +37,7 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
     borderClass = 'border-purple-500 ring-2 ring-purple-500/40';
     glowClass = 'shadow-[0_0_15px_rgba(168,85,247,0.4)]';
   } else if (status === 'success') {
-    borderClass = 'border-emerald-500 ring-1 ring-emerald-500/40';
+    borderClass = hasResult && !outResult ? 'border-amber-500 ring-1 ring-amber-500/40' : 'border-emerald-500 ring-1 ring-emerald-500/40';
   } else if (status === 'error') {
     borderClass = 'border-rose-500 ring-2 ring-rose-500/40';
   } else if (selected) {
@@ -85,9 +65,6 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
             <Icon name="GitBranch" className="w-3.5 h-3.5" />
           </div>
           <div className="truncate font-semibold text-gray-100">{data.label || 'Condition'}</div>
-          <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border font-bold shrink-0 ${gateBadgeColor}`}>
-            {logicalGate}
-          </span>
         </div>
 
         <div className="shrink-0 flex items-center gap-1">
@@ -120,11 +97,8 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
       </div>
 
       {/* Expression Summary */}
-      <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3 flex items-center justify-between gap-1">
-        <span className="truncate">{summary || 'Configure condition...'}</span>
-        {Array.isArray(conditions) && conditions.length > 1 && (
-          <span className="text-[9px] text-gray-500 shrink-0 font-sans">({conditions.length})</span>
-        )}
+      <div className="bg-[#161a24] rounded-md px-2 py-1 text-[11px] text-gray-400 font-mono truncate border border-[#1c2230] mb-3">
+        {summary}
       </div>
 
       {/* Branch Labels and Handles */}
@@ -155,3 +129,5 @@ export const ConditionNode: React.FC<ConditionNodeProps> = memo(({ id, data, sel
     </div>
   );
 });
+
+ConditionNode.displayName = 'ConditionNode';

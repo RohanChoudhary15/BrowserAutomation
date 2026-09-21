@@ -23,6 +23,10 @@ export class WorkflowEngine {
   private resumeResolve: (() => void) | null = null;
   /** Resolved Human Mode config — undefined unless the workflow enables it. */
   private human: HumanConfig | undefined;
+  /** Tracks input arrivals for converging gate nodes: gateNodeId -> Map(sourceNodeId -> inputData) */
+  private gateInputsState = new Map<string, Map<string, { result: boolean; output: any; nodeName: string }>>();
+  /** Tracks which gate nodes have already fired during this execution pass */
+  private triggeredGates = new Set<string>();
 
   constructor(workflow: Workflow, events: EngineEvents = {}) {
     this.workflow = workflow;
@@ -141,6 +145,8 @@ export class WorkflowEngine {
     this.setStatus('running');
     this.variables = { ...this.workflow.variables };
     this.events.onVariablesChange?.(this.variables);
+    this.gateInputsState.clear();
+    this.triggeredGates.clear();
 
     this.log({
       level: 'info',
@@ -189,10 +195,7 @@ export class WorkflowEngine {
         startNodes = [this.workflow.nodes[0]];
       }
 
-      for (const startNode of startNodes) {
-        if (ctx.signal.aborted) break;
-        await this.traverseAndExecute(startNode, ctx);
-      }
+      await Promise.all(startNodes.map((startNode) => this.traverseAndExecute(startNode, ctx)));
 
       if (this.status === 'running') {
         this.setStatus('completed');
@@ -366,17 +369,11 @@ export class WorkflowEngine {
           ? doneNodes
           : this.getNextNodes(node.id).filter(n => !bodyNodes.some(bn => bn.id === n.id));
 
-        for (const next of continuationNodes) {
-          if (ctx.signal.aborted) break;
-          await this.traverseAndExecute(next, ctx);
-        }
+        await this.proceedToNextNodes(node, result, continuationNodes, ctx);
       } else {
         // Standard branch execution
         const nextNodes = this.getNextNodes(node.id, result.nextBranch);
-        for (const next of nextNodes) {
-          if (ctx.signal.aborted) break;
-          await this.traverseAndExecute(next, ctx);
-        }
+        await this.proceedToNextNodes(node, result, nextNodes, ctx);
       }
     } catch (err: any) {
       const durationMs = Date.now() - startTime;
@@ -532,11 +529,141 @@ export class WorkflowEngine {
   }
 
   /**
+   * Forwards execution from sourceNode along outgoing branches to nextNodes.
+   * Handles multi-branch merging and synchronization for logic gates (AND, OR, NAND, NOR).
+   */
+  private async proceedToNextNodes(
+    sourceNode: WorkflowNode,
+    sourceResult: any,
+    nextNodes: WorkflowNode[],
+    ctx: ExecutionContext
+  ): Promise<void> {
+    if (ctx.signal.aborted) return;
+
+    const handleNext = async (next: WorkflowNode) => {
+      if (ctx.signal.aborted) return;
+
+      const incomingEdges = this.workflow.edges.filter((e) => e.target === next.id);
+      const isLogicGate =
+        ['and', 'or', 'nand', 'nor', 'logic_and', 'logic_or', 'logic_nand', 'logic_nor'].includes(
+          next.data.type
+        ) ||
+        next.type === 'logicGateNode' ||
+        incomingEdges.length > 1;
+
+      if (!isLogicGate || incomingEdges.length <= 1) {
+        // Standard single-input node
+        await this.traverseAndExecute(next, ctx);
+        return;
+      }
+
+      // Logic Gate or multi-input converge point:
+      if (!this.gateInputsState.has(next.id)) {
+        this.gateInputsState.set(next.id, new Map());
+      }
+      const arrivals = this.gateInputsState.get(next.id)!;
+
+      const isBranchTrue =
+        sourceResult.nextBranch === 'true' ||
+        sourceResult.output?.result === true ||
+        sourceResult.output?.present === true ||
+        (sourceResult.nextBranch !== 'false' && sourceResult.output !== false && sourceResult.success);
+
+      arrivals.set(sourceNode.id, {
+        result: isBranchTrue,
+        output: sourceResult.output,
+        nodeName: sourceNode.data.label,
+      });
+
+      const totalExpected = incomingEdges.length;
+      const rawType = String(next.data.type || '').toLowerCase();
+      let gate = String(next.data.properties?.gate || '').toUpperCase();
+      if (!gate) {
+        if (rawType.includes('and') && !rawType.includes('nand')) gate = 'AND';
+        else if (rawType.includes('nand')) gate = 'NAND';
+        else if (rawType.includes('nor')) gate = 'NOR';
+        else gate = 'OR';
+      }
+
+      let shouldTrigger = false;
+
+      if (gate === 'OR') {
+        // OR Gate: Triggers on first TRUE branch, or after all arrived if none TRUE
+        if (isBranchTrue && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        } else if (arrivals.size === totalExpected && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        }
+      } else if (gate === 'NAND') {
+        // NAND Gate: Short-circuit to TRUE on first FALSE branch, or after all arrived
+        if (!isBranchTrue && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        } else if (arrivals.size === totalExpected && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        }
+      } else if (gate === 'NOR') {
+        // NOR Gate: Short-circuit to FALSE on first TRUE branch, or after all arrived
+        if (isBranchTrue && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        } else if (arrivals.size === totalExpected && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        }
+      } else {
+        // AND Gate: Requires ALL incoming branches to arrive!
+        if (arrivals.size === totalExpected && !this.triggeredGates.has(next.id)) {
+          shouldTrigger = true;
+        }
+      }
+
+      if (shouldTrigger) {
+        this.triggeredGates.add(next.id);
+        ctx._gateInputs = {
+          ...(ctx._gateInputs || {}),
+          [next.id]: Array.from(arrivals.values()),
+        };
+
+        this.log({
+          level: 'info',
+          message: `${gate} Gate combining ${arrivals.size}/${totalExpected} incoming branches into 1 output`,
+          nodeId: next.id,
+          nodeName: next.data.label,
+        });
+
+        await this.traverseAndExecute(next, ctx);
+      }
+    };
+
+    await Promise.all(nextNodes.map((n) => handleNext(n)));
+  }
+
+  /**
    * Finds subsequent nodes connected by outgoing edges
    */
   private getNextNodes(sourceId: string, branchHandle?: string): WorkflowNode[] {
-    const edges = this.workflow.edges.filter(e => {
+    const sourceNode = this.workflow.nodes.find((n) => n.id === sourceId);
+    const isLogicGate =
+      sourceNode &&
+      (['and', 'or', 'nand', 'nor', 'logic_and', 'logic_or', 'logic_nand', 'logic_nor'].includes(
+        sourceNode.data.type
+      ) ||
+        sourceNode.type === 'logicGateNode');
+
+    if (isLogicGate && (branchHandle === 'loop_body' || branchHandle === 'loop_done')) {
+      return [];
+    }
+
+    const edges = this.workflow.edges.filter((e) => {
       if (e.source !== sourceId) return false;
+      if (isLogicGate) {
+        // Combined output branch:
+        if (e.sourceHandle === 'output' || !e.sourceHandle) {
+          if (branchHandle && branchHandle !== 'output') return false;
+          return true;
+        }
+        // Auxiliary 'true' or 'false' handle matching
+        if (branchHandle) return e.sourceHandle === branchHandle;
+        return true;
+      }
       if (branchHandle) {
         return e.sourceHandle === branchHandle;
       }
@@ -544,7 +671,7 @@ export class WorkflowEngine {
     });
 
     return edges
-      .map(e => this.workflow.nodes.find(n => n.id === e.target))
+      .map((e) => this.workflow.nodes.find((n) => n.id === e.target))
       .filter((n): n is WorkflowNode => n !== undefined);
   }
 }
