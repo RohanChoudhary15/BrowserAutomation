@@ -1622,7 +1622,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   type="button"
                   onClick={() => {
                     handlePropChange('fields', [
-                      { name: 'title', selector: 'h2, .title, [class*="title"]', attribute: 'text' },
+                      { name: 'title', selector: 'h2, h3, h4, .title, [class*="title"]', attribute: 'text' },
                       { name: 'price', selector: '.price, [class*="price"]', attribute: 'text' },
                       { name: 'image', selector: 'img', attribute: 'src' },
                       { name: 'link', selector: 'a', attribute: 'href' },
@@ -1637,7 +1637,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   type="button"
                   onClick={() => {
                     handlePropChange('fields', [
-                      { name: 'headline', selector: 'h2, h3, a', attribute: 'text' },
+                      { name: 'headline', selector: 'h2, h3, h4, a', attribute: 'text' },
                       { name: 'author', selector: '.author, [rel="author"]', attribute: 'text' },
                       { name: 'date', selector: 'time, .date', attribute: 'text' },
                       { name: 'paragraphs', selector: 'p', attribute: 'paragraphs' },
@@ -1653,7 +1653,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   type="button"
                   onClick={() => {
                     handlePropChange('fields', [
-                      { name: 'name', selector: 'h3, .name, strong', attribute: 'text' },
+                      { name: 'name', selector: 'h3, h4, .name, strong', attribute: 'text' },
                       { name: 'role', selector: '.role, .title', attribute: 'text' },
                       { name: 'company', selector: '.company', attribute: 'text' },
                       { name: 'email', selector: 'a[href^="mailto:"]', attribute: 'href' },

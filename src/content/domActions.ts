@@ -856,25 +856,79 @@ export function toAbsoluteUrl(raw: string): string {
  * - HTML ('innerHTML', 'outerHTML')
  * - Standard and custom attributes ('data-*', 'title', 'alt', 'aria-label', etc.)
  */
+/**
+ * Cleans and extracts visible human-readable text from an element,
+ * stripping internal scripts/styles/SVGs, checking innerText, and falling back
+ * to aria-label, title, or child alt attributes if text is empty.
+ */
+export function extractCleanText(el: Element): string {
+  if (!el) return '';
+
+  // Direct textContent
+  let raw = (el.textContent || '').trim();
+
+  // If element contains script, style, noscript, or svg, strip them using a clone to get pure text
+  if (el.querySelector('script, style, noscript, svg')) {
+    try {
+      const clone = el.cloneNode(true) as Element;
+      const junk = clone.querySelectorAll('script, style, noscript, svg');
+      junk.forEach((j) => j.remove());
+      raw = (clone.textContent || '').trim();
+    } catch {}
+  }
+
+  // Fallback 1: innerText if textContent is empty or whitespace
+  if (!raw && 'innerText' in el) {
+    raw = String((el as HTMLElement).innerText || '').trim();
+  }
+
+  // Fallback 2: aria-label, title, or alt on the element itself
+  if (!raw) {
+    raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '';
+  }
+
+  // Fallback 3: check child elements with aria-label, title, or img[alt]
+  if (!raw) {
+    const childWithText = el.querySelector('[aria-label], [title], img[alt]');
+    if (childWithText) {
+      raw = childWithText.getAttribute('aria-label') ||
+            childWithText.getAttribute('title') ||
+            childWithText.getAttribute('alt') || '';
+    }
+  }
+
+  // Clean up whitespace: normalize internal newlines/spaces
+  return raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * Smart attribute resolver that handles:
+ * - Image URLs ('src', 'image', 'image_url', 'img'): handles <img> (currentSrc, src, data-src, data-lazy-src, data-original, srcset), nested <img> in container, CSS background-image
+ * - Link URLs ('href', 'link', 'url'): resolves absolute URLs, checks nested <a>
+ * - Paragraphs / multi-text ('paragraphs', 'all_text', 'text_all'): aggregates all <p> or child text
+ * - Form values ('value'): input, textarea, select
+ * - HTML ('innerHTML', 'outerHTML')
+ * - Standard and custom attributes ('data-*', 'title', 'alt', 'aria-label', etc.)
+ */
 export function resolveElementAttribute(el: Element, attributeType?: string): string {
   if (!el) return '';
   const attr = (attributeType || 'text').trim().toLowerCase();
 
   // 1. Text & Paragraphs
   if (attr === 'text' || attr === 'innertext' || attr === 'textcontent' || !attributeType) {
-    return (el.textContent || '').trim();
+    return extractCleanText(el);
   }
 
   if (attr === 'paragraphs' || attr === 'all_paragraphs' || attr === 'all_text' || attr === 'text_all') {
     const pEls = Array.from(el.querySelectorAll('p'));
     if (pEls.length > 0) {
-      return pEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
+      return pEls.map(p => extractCleanText(p)).filter(Boolean).join('\n\n');
     }
     const liEls = Array.from(el.querySelectorAll('li'));
     if (liEls.length > 0) {
-      return liEls.map(li => `• ${(li.textContent || '').trim()}`).filter(Boolean).join('\n');
+      return liEls.map(li => `• ${extractCleanText(li)}`).filter(Boolean).join('\n');
     }
-    return (el.textContent || '').trim();
+    return extractCleanText(el);
   }
 
   // 2. Image URL (Smart fallback for lazy loading, data-src, srcset, background-image)
@@ -977,7 +1031,19 @@ export function resolveElementAttribute(el: Element, attributeType?: string): st
 export async function extractText(selector: string, timeout = 10000, signal?: AbortSignal): Promise<{ text: string }> {
   const el = await waitForElement(selector, { timeout }, signal);
   flashHighlight(el);
-  const text = (el.textContent || '').trim();
+  let text = resolveElementAttribute(el, 'text');
+  // If first matched element is empty, check other elements matching selector for non-empty text
+  if (!text) {
+    const allMatches = safeQueryElements(document, selector);
+    for (const candidate of allMatches) {
+      const candidateText = resolveElementAttribute(candidate, 'text');
+      if (candidateText && candidateText.trim() !== '') {
+        flashHighlight(candidate);
+        text = candidateText;
+        break;
+      }
+    }
+  }
   return { text };
 }
 
@@ -1118,35 +1184,167 @@ export interface ExtractDatasetField {
   attribute?: string;
 }
 
-function safeQueryElements(root: ParentNode, sel: string): Element[] {
-  if (!sel || !sel.trim()) return [];
+function matchesSafe(el: Element, sel: string): boolean {
+  if (!el || !sel || !sel.trim()) return false;
   try {
-    return Array.from(root.querySelectorAll(sel));
+    return el.matches(sel);
+  } catch {
+    return false;
+  }
+}
+
+export function safeQueryElements(root: ParentNode, sel: string): Element[] {
+  if (!sel || !sel.trim()) return [];
+  const results: Element[] = [];
+
+  // If root is itself an Element matching the selector, include it as candidate
+  if (root instanceof Element && matchesSafe(root, sel)) {
+    results.push(root);
+  }
+
+  try {
+    const queried = Array.from(root.querySelectorAll(sel));
+    for (const q of queried) {
+      if (!results.includes(q)) {
+        results.push(q);
+      }
+    }
+    return results;
   } catch {
     try {
       if (sel.startsWith('//') || sel.startsWith('(')) {
         const doc = root instanceof Document ? root : root.ownerDocument || document;
         const res = doc.evaluate(sel, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        const list: Element[] = [];
         for (let i = 0; i < res.snapshotLength; i++) {
           const item = res.snapshotItem(i);
-          if (item instanceof Element) list.push(item);
+          if (item instanceof Element && !results.includes(item)) {
+            results.push(item);
+          }
         }
-        return list;
+        return results;
       }
     } catch {}
-    return [];
+    return results;
   }
 }
 
-function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
+export function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
   if (!sel || !sel.trim()) return null;
-  try {
-    return root.querySelector(sel);
-  } catch {
-    const list = safeQueryElements(root, sel);
-    return list[0] || null;
+  const list = safeQueryElements(root, sel);
+  return list[0] || null;
+}
+
+/**
+ * Robustly extracts a field from a card container element.
+ * - Iterates through all matching elements, finding the first that yields a non-empty value.
+ * - If selector is a bare heading tag (h3, h4, etc.) or title field and returns empty,
+ *   smartly falls back to sibling headings (h1-h6, [role="heading"], .title) with text.
+ * - Handles nested links and images when extracted attribute is href/src.
+ */
+export function extractFieldFromElement(
+  container: Element,
+  field: ExtractDatasetField
+): string {
+  if (!container) return '';
+  const attrType = (field.attribute || 'text').trim().toLowerCase();
+  const rawSel = (field.selector || '').trim();
+
+  // Paragraphs / multi-text aggregation mode
+  if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
+    const pEls = safeQueryElements(container, rawSel || 'p');
+    if (pEls.length > 0) {
+      const texts = pEls.map(p => resolveElementAttribute(p, 'text')).filter(Boolean);
+      if (texts.length > 0) return texts.join('\n\n');
+    }
+    const liEls = safeQueryElements(container, 'li');
+    if (liEls.length > 0) {
+      const texts = liEls.map(li => `• ${resolveElementAttribute(li, 'text')}`).filter(Boolean);
+      if (texts.length > 0) return texts.join('\n');
+    }
   }
+
+  // If no selector provided, extract directly from container
+  if (!rawSel) {
+    return resolveElementAttribute(container, attrType);
+  }
+
+  // 1. Direct query within container
+  const candidateEls = safeQueryElements(container, rawSel);
+
+  // Check candidate elements in order, finding the first that yields a non-empty value
+  for (const el of candidateEls) {
+    const val = resolveElementAttribute(el, attrType);
+    if (val && val.trim() !== '') {
+      return val;
+    }
+  }
+
+  // 2. Heading fallback for text fields (handles h3, h4, h2, h1, etc.)
+  const isHeadingTarget =
+    /\b(h1|h2|h3|h4|h5|h6)\b/i.test(rawSel) ||
+    /^(title|headline|name|heading|product|header)/i.test(field.name || '');
+
+  if (isHeadingTarget && (attrType === 'text' || attrType === 'innertext' || attrType === 'textcontent')) {
+    const headingFallbacks = [
+      'h3',
+      'h4',
+      'h2',
+      'h1',
+      'h5',
+      'h6',
+      'h3 a',
+      'h4 a',
+      'h2 a',
+      '[role="heading"]',
+      'header',
+      '.title',
+      '[class*="title" i]',
+      '[class*="name" i]',
+      '[class*="heading" i]',
+      'strong',
+      'b',
+    ];
+
+    for (const hSel of headingFallbacks) {
+      if (hSel.toLowerCase() === rawSel.toLowerCase()) continue;
+      const fallbackEls = safeQueryElements(container, hSel);
+      for (const el of fallbackEls) {
+        const val = resolveElementAttribute(el, 'text');
+        if (val && val.trim() !== '') {
+          return val;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback for link/href when selector targeted a heading or container
+  if ((attrType === 'href' || attrType === 'link' || attrType === 'url') && candidateEls.length > 0) {
+    for (const el of candidateEls) {
+      const aEl = el.querySelector('a[href]');
+      if (aEl) {
+        const href = resolveElementAttribute(aEl, 'href');
+        if (href && href.trim() !== '') return href;
+      }
+    }
+  }
+
+  // 4. Fallback for image/src when selector targeted a container
+  if ((attrType === 'src' || attrType === 'image' || attrType === 'image_url') && candidateEls.length > 0) {
+    for (const el of candidateEls) {
+      const imgEl = el.querySelector('img, picture source');
+      if (imgEl) {
+        const src = resolveElementAttribute(imgEl, 'src');
+        if (src && src.trim() !== '') return src;
+      }
+    }
+  }
+
+  // 5. If candidates were found but returned empty string, return the first candidate's raw result
+  if (candidateEls.length > 0) {
+    return resolveElementAttribute(candidateEls[0], attrType) || '';
+  }
+
+  return '';
 }
 
 export async function extractDataset(
@@ -1193,21 +1391,7 @@ export async function extractDataset(
           const items: Record<string, any>[] = containers.map((container) => {
             const row: Record<string, any> = {};
             for (const field of fields) {
-              const attrType = field.attribute || 'text';
-              // Check if extracting paragraphs or multiple sub-elements
-              if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
-                const subEls = safeQueryElements(container, field.selector || 'p');
-                if (subEls.length > 0) {
-                  row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
-                  continue;
-                }
-              }
-              const targetEl = field.selector ? safeQuerySingleElement(container, field.selector) : container;
-              if (targetEl) {
-                row[field.name] = resolveElementAttribute(targetEl, attrType);
-              } else {
-                row[field.name] = '';
-              }
+              row[field.name] = extractFieldFromElement(container, field);
             }
             return row;
           });

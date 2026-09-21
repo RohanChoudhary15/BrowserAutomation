@@ -400,8 +400,8 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     defaultProperties: {
       containerSelector: '.product-card',
       fields: [
-        { name: 'title', selector: 'h2', attribute: 'text' },
-        { name: 'price', selector: '.price', attribute: 'text' },
+        { name: 'title', selector: 'h2, h3, h4, .title, [class*="title"]', attribute: 'text' },
+        { name: 'price', selector: '.price, [class*="price"]', attribute: 'text' },
         { name: 'image', selector: 'img', attribute: 'src' },
         { name: 'link', selector: 'a', attribute: 'href' },
         { name: 'description', selector: 'p', attribute: 'paragraphs' },

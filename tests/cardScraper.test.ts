@@ -174,6 +174,105 @@ describe('Card & Multi-Field Scraper System (scrape_elements)', () => {
       expect(res.items[0].title).toBe('Product Complete');
       expect(res.items[1].title).toBe('Product Complete 2');
     });
+
+    it('extracts h3 and h4 text fields with no class or other specifics even when first element is empty', async () => {
+      document.body.innerHTML = `
+        <div class="cards">
+          <div class="card">
+            <h3 class="badge"></h3> <!-- empty first h3 -->
+            <h3>Wireless Noise-Canceling Headphones</h3>
+            <h4 class="category">Electronics</h4>
+          </div>
+          <div class="card">
+            <h4></h4> <!-- empty first h4 -->
+            <h4>Mechanical Gaming Keyboard</h4>
+            <h3>Keyboards</h3>
+          </div>
+        </div>
+      `;
+
+      // Selectors have NO classes or specifics: just bare 'h3' and 'h4'
+      const res = await extractDataset({
+        containerSelector: '.card',
+        fields: [
+          { name: 'title', selector: 'h3', attribute: 'text' },
+          { name: 'subtitle', selector: 'h4', attribute: 'text' },
+        ],
+      });
+
+      expect(res.items.length).toBe(2);
+      expect(res.items[0].title).toBe('Wireless Noise-Canceling Headphones');
+      expect(res.items[0].subtitle).toBe('Electronics');
+
+      expect(res.items[1].title).toBe('Keyboards');
+      expect(res.items[1].subtitle).toBe('Mechanical Gaming Keyboard');
+    });
+
+    it('gracefully falls back to sibling heading tag when specified heading tag is not present in container', async () => {
+      document.body.innerHTML = `
+        <div class="product-item">
+          <!-- Card only has h4, user requested h3 -->
+          <h4>Logitech MX Master 3S</h4>
+          <span class="price">$99.99</span>
+        </div>
+        <div class="product-item">
+          <!-- Card only has h2, user requested h3 -->
+          <h2>Apple Magic Mouse</h2>
+          <span class="price">$79.99</span>
+        </div>
+      `;
+
+      const res = await extractDataset({
+        containerSelector: '.product-item',
+        fields: [
+          { name: 'title', selector: 'h3', attribute: 'text' },
+          { name: 'price', selector: '.price', attribute: 'text' },
+        ],
+      });
+
+      expect(res.items.length).toBe(2);
+      expect(res.items[0].title).toBe('Logitech MX Master 3S');
+      expect(res.items[1].title).toBe('Apple Magic Mouse');
+    });
+
+    it('extracts clean text from h3/h4 with nested elements, svgs, styles, or aria-labels', async () => {
+      document.body.innerHTML = `
+        <div class="list">
+          <div class="entry">
+            <!-- Nested span and link inside bare h3 -->
+            <h3>
+              <a href="/item/1">
+                <span>Sony Alpha A7 IV Full-Frame Camera</span>
+              </a>
+            </h3>
+          </div>
+          <div class="entry">
+            <!-- h4 with SVG icon and style tag that should be stripped -->
+            <h4>
+              <style>.icon { color: blue; }</style>
+              <svg><path d="M0 0h24v24H0z" /></svg>
+              Canon EOS R6 Mark II
+            </h4>
+          </div>
+          <div class="entry">
+            <!-- h3 with empty text but descriptive aria-label -->
+            <h3 aria-label="Fujifilm X-T5 Mirrorless Camera"></h3>
+          </div>
+        </div>
+      `;
+
+      const res = await extractDataset({
+        containerSelector: '.entry',
+        fields: [
+          { name: 'cameraTitle', selector: 'h3, h4', attribute: 'text' },
+        ],
+      });
+
+      expect(res.items.length).toBe(3);
+      expect(res.items[0].cameraTitle).toBe('Sony Alpha A7 IV Full-Frame Camera');
+      expect(res.items[1].cameraTitle).toBe('Canon EOS R6 Mark II');
+      expect(res.items[2].cameraTitle).toBe('Fujifilm X-T5 Mirrorless Camera');
+    });
   });
 
   describe('executeScrapeElements (Runtime Node Executor)', () => {

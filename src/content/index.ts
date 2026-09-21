@@ -260,6 +260,8 @@ async function executeAction(
         containerSelector: params.containerSelector,
         fields: params.fields || [],
         timeout: params.timeout || timeout,
+        excludeEmpty: params.excludeEmpty,
+        filterEmptyMode: params.filterEmptyMode,
       });
 
     case 'extract_links':
