@@ -21,6 +21,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     defaultProperties: {
       url: 'https://example.com',
       waitUntil: 'load',
+      openInNewTab: false,
       timeout: 30000,
     },
   },
@@ -64,7 +65,11 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     category: 'browser',
     description: 'Close the current or target tab',
     icon: 'XSquare',
-    defaultProperties: {},
+    defaultProperties: {
+      closeTarget: 'current',
+      tabIndex: 0,
+      urlPattern: '',
+    },
   },
   switch_tab: {
     type: 'switch_tab',
@@ -72,7 +77,12 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     category: 'browser',
     description: 'Switch active browser tab',
     icon: 'Layers',
-    defaultProperties: {},
+    defaultProperties: {
+      tabTarget: 'next',
+      tabIndex: 0,
+      urlPattern: '',
+      titlePattern: '',
+    },
   },
 
   // Interaction

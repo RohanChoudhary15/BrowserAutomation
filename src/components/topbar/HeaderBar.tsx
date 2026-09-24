@@ -21,6 +21,7 @@ import {
   ChevronDown,
   Key,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 import { WorkflowExecutionStatus } from '../../types/execution';
 import { HumanIntensity } from '../../types/workflow';
@@ -139,8 +140,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink">
         {/* Logo */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-md shadow-indigo-500/20 text-white font-bold text-sm sm:text-base">
-            ⚡
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-md shadow-indigo-500/20 text-white">
+            <Zap className="w-4 h-4 text-white fill-white/20" />
           </div>
           <span className="font-bold text-sm tracking-tight text-white hidden md:inline">AutoFlow</span>
           <span className="text-[9px] uppercase font-mono px-1 py-0.5 rounded bg-[#1c2230] text-gray-400 border border-[#232a3b] hidden lg:inline">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Circle, ExternalLink, Columns, Layers, Sparkles } from 'lucide-react';
+import { Play, Circle, ExternalLink, Columns, Layers, Sparkles, Zap } from 'lucide-react';
 import { loadAllWorkflows } from '../storage/workflowStore';
 import { Workflow } from '../types/workflow';
 
@@ -47,7 +47,7 @@ export const Popup: React.FC = () => {
       <div className="flex items-center justify-between pb-3 border-b border-[#1c2230]">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center font-bold text-sm shadow-md">
-            ⚡
+            <Zap className="w-4 h-4 text-white fill-white/20" />
           </div>
           <div>
             <h1 className="font-bold text-sm leading-none">AutoFlow</h1>

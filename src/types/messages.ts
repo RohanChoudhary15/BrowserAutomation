@@ -12,8 +12,11 @@ export type ExtensionMessage =
   // Tab Management
   | { type: 'GET_ACTIVE_TAB' }
   | { type: 'OPEN_SIDE_PANEL'; payload?: { tabId?: number } }
-  | { type: 'NAVIGATE_TAB'; payload: { tabId?: number; url: string; waitUntil?: string } }
+  | { type: 'NAVIGATE_TAB'; payload: { tabId?: number; url: string; waitUntil?: string; openInNewTab?: boolean } }
   | { type: 'CAPTURE_SCREENSHOT'; payload?: { tabId?: number; format?: 'png' | 'jpeg'; quality?: number } }
+  | { type: 'SWITCH_TAB'; payload: { target?: 'next' | 'previous' | 'first' | 'last' | 'by_index' | 'by_id' | 'by_pattern'; tabId?: number; tabIndex?: number; urlPattern?: string; titlePattern?: string } }
+  | { type: 'CLOSE_TAB'; payload?: { tabId?: number; target?: 'current' | 'specific' | 'by_index' | 'by_pattern'; tabIndex?: number; urlPattern?: string } }
+  | { type: 'LIST_TABS' }
 
   // Element Picker
   | { type: 'START_ELEMENT_PICKER'; payload?: { tabId?: number; mode?: 'single' | 'pattern_2click' } }

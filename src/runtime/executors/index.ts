@@ -191,10 +191,11 @@ export const executeNavigate: NodeExecutor = async (node, ctx) => {
     url = String(resolvedUrl || '').trim();
   }
   const waitUntil = node.data.properties.waitUntil || 'load';
+  const openInNewTab = !!node.data.properties.openInNewTab;
 
   ctx.log({
     level: 'info',
-    message: `Navigating to ${url}`,
+    message: `Navigating to ${url}${openInNewTab ? ' (new tab)' : ''}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -204,7 +205,7 @@ export const executeNavigate: NodeExecutor = async (node, ctx) => {
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     const response = await chrome.runtime.sendMessage({
       type: 'NAVIGATE_TAB',
-      payload: { tabId: ctx.currentTabId, url, waitUntil },
+      payload: { tabId: ctx.currentTabId, url, waitUntil, openInNewTab },
     });
     if (!response?.success) throw new Error(response?.error || 'Navigation failed.');
     ctx.currentUrl = url;
@@ -271,14 +272,60 @@ export const executeNewTab: NodeExecutor = async (node, ctx) => {
 };
 
 export const executeCloseTab: NodeExecutor = async (node, ctx) => {
-  ctx.log({ level: 'info', message: 'Closing current tab', nodeId: node.id, nodeName: node.data.label });
-  if (typeof chrome !== 'undefined' && chrome.tabs && ctx.currentTabId) {
-    await chrome.tabs.remove(ctx.currentTabId).catch(() => {});
+  const closeTarget = node.data.properties.closeTarget || 'current';
+  const tabId = node.data.properties.tabId ? Number(node.data.properties.tabId) : (closeTarget === 'current' ? ctx.currentTabId : undefined);
+  const tabIndex = node.data.properties.tabIndex !== undefined && node.data.properties.tabIndex !== '' ? Number(node.data.properties.tabIndex) : undefined;
+  const urlPattern = node.data.properties.urlPattern ? String(interpolateVariables(node.data.properties.urlPattern, ctx.variables)) : undefined;
+
+  ctx.log({ level: 'info', message: `Closing tab (${closeTarget})`, nodeId: node.id, nodeName: node.data.label });
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    const response = await chrome.runtime.sendMessage({
+      type: 'CLOSE_TAB',
+      payload: { tabId, target: closeTarget, tabIndex, urlPattern },
+    });
+    if (!response?.success) throw new Error(response?.error || 'Failed to close tab.');
+    if (response.newActiveTabId) {
+      ctx.currentTabId = response.newActiveTabId;
+    } else if (response.closedTabId && response.closedTabId === ctx.currentTabId) {
+      ctx.currentTabId = undefined;
+    }
+    ctx.log({ level: 'success', message: 'Tab closed successfully', nodeId: node.id, nodeName: node.data.label });
+    return { success: true, output: { closedTabId: response.closedTabId, activeTabId: ctx.currentTabId } };
   }
   return { success: true };
 };
 
 export const executeSwitchTab: NodeExecutor = async (node, ctx) => {
+  const tabTarget = node.data.properties.tabTarget || 'next';
+  const tabIndex = node.data.properties.tabIndex !== undefined && node.data.properties.tabIndex !== '' ? Number(node.data.properties.tabIndex) : 0;
+  const tabId = node.data.properties.tabId ? Number(node.data.properties.tabId) : undefined;
+  const urlPattern = node.data.properties.urlPattern ? String(interpolateVariables(node.data.properties.urlPattern, ctx.variables)) : (node.data.properties.tabUrl || undefined);
+  const titlePattern = node.data.properties.titlePattern ? String(interpolateVariables(node.data.properties.titlePattern, ctx.variables)) : (node.data.properties.tabTitle || undefined);
+
+  ctx.log({
+    level: 'info',
+    message: `Switching tab (${tabTarget}${node.data.properties.tabTitle ? `: ${node.data.properties.tabTitle}` : ''})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    const response = await chrome.runtime.sendMessage({
+      type: 'SWITCH_TAB',
+      payload: { target: tabTarget, tabId, tabIndex, urlPattern, titlePattern },
+    });
+    if (!response?.success) throw new Error(response?.error || 'Failed to switch tab.');
+    if (response.tabId) {
+      ctx.currentTabId = response.tabId;
+    }
+    ctx.log({
+      level: 'success',
+      message: `Switched to tab: ${response.title || response.url || tabTarget}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+    return { success: true, output: { tabId: response.tabId, url: response.url, title: response.title } };
+  }
   return { success: true };
 };
 
@@ -873,16 +920,38 @@ export const executeExtractText: NodeExecutor = async (node, ctx) => {
   const selector = interpolateVariables(node.data.properties.selector, ctx.variables);
   const outputVariable = node.data.properties.outputVariable || 'extractedText';
   const timeout = Number(node.data.properties.timeout) || 10000;
+  const regexPattern = node.data.properties.regexPattern ? interpolateVariables(node.data.properties.regexPattern, ctx.variables) : undefined;
+  const regexFlags = node.data.properties.regexFlags || 'g';
+  const extractGroup = node.data.properties.extractGroup;
 
   if (!selector) throw new Error('Extract Text requires a selector.');
 
   ctx.log({ level: 'info', message: `Extracting text from ${selector}`, nodeId: node.id, nodeName: node.data.label });
   const res = await sendDomAction('extract_text', { selector, timeout }, ctx, timeout);
+  let text = res.text || '';
+
+  if (regexPattern) {
+    try {
+      const reg = new RegExp(regexPattern, regexFlags);
+      const matches = Array.from(text.matchAll(reg));
+      if (extractGroup != null && extractGroup !== '' && extractGroup !== 'full') {
+        const groupIdx = Number(extractGroup);
+        const groupMatches = matches.map((m: any) => m[groupIdx] ?? m[0]).filter((v: any) => v != null);
+        text = groupMatches.length === 1 ? groupMatches[0] : (groupMatches.length > 0 ? groupMatches.join(', ') : '');
+      } else {
+        const fullMatches = matches.map((m: any) => m[0]);
+        text = fullMatches.length === 1 ? fullMatches[0] : (fullMatches.length > 0 ? fullMatches.join(', ') : '');
+      }
+      ctx.log({ level: 'info', message: `Applied regex /${regexPattern}/ on extracted text: "${text}"`, nodeId: node.id });
+    } catch (e: any) {
+      ctx.log({ level: 'warn', message: `Regex match on extracted text failed: ${e.message}`, nodeId: node.id });
+    }
+  }
 
   return {
     success: true,
-    output: res.text,
-    variables: { [outputVariable]: res.text },
+    output: text,
+    variables: { [outputVariable]: text },
   };
 };
 
@@ -1279,18 +1348,74 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
 };
 
 export const executeRegex: NodeExecutor = async (node, ctx) => {
-  const text = String(interpolateVariables(node.data.properties.text, ctx.variables) ?? '');
-  const pattern = node.data.properties.pattern || '';
-  const flags = node.data.properties.flags || 'g';
-  const outputVariable = node.data.properties.outputVariable || 'regexMatch';
+  let text = String(interpolateVariables(node.data.properties.text ?? '', ctx.variables) ?? '');
+  if (!text) {
+    if (ctx.variables.extractedText != null) text = String(ctx.variables.extractedText);
+    else if (ctx.variables.text != null) text = String(ctx.variables.text);
+    else if (ctx.variables.transformedText != null) text = String(ctx.variables.transformedText);
+  }
 
-  const reg = new RegExp(pattern, flags);
-  const matches = Array.from(text.matchAll(reg)).map(m => m[0]);
+  let pattern = String(node.data.properties.pattern || '').trim();
+  let flags = String(node.data.properties.flags || 'g').trim();
+  const outputVariable = node.data.properties.outputVariable || 'regexMatches';
+  const extractGroup = node.data.properties.extractGroup; // undefined/'full' = full match, number = capture group index
+
+  if (!pattern) throw new Error('Regex node requires a pattern.');
+
+  // If user pasted regex literal like /abc/gi, extract pattern and flags
+  const literalMatch = pattern.match(/^\/(.+)\/([a-z]*)$/);
+  if (literalMatch) {
+    pattern = literalMatch[1];
+    if (literalMatch[2]) flags = literalMatch[2];
+  }
+
+  // Ensure 'g' flag is present so matchAll works, or handle single-match
+  const hasGlobal = flags.includes('g');
+  const safeFlags = hasGlobal ? flags : flags + 'g';
+
+  ctx.log({ level: 'info', message: `Regex: /${pattern}/${safeFlags} on text (${text.length} chars)`, nodeId: node.id, nodeName: node.data.label });
+
+  let reg: RegExp;
+  try {
+    reg = new RegExp(pattern, safeFlags);
+  } catch (e: any) {
+    throw new Error(`Invalid regex pattern "/${pattern}/${safeFlags}": ${e.message}`);
+  }
+
+  const rawMatches = Array.from(text.matchAll(reg));
+  let matches: any[];
+
+  if (extractGroup != null && extractGroup !== '' && extractGroup !== 'full') {
+    const groupIdx = Number(extractGroup);
+    matches = rawMatches.map((m: any) => m[groupIdx] ?? m[0]).filter((v: any) => v != null);
+  } else {
+    matches = rawMatches.map((m: any) => m[0]);
+  }
+
+  const firstMatch = matches.length > 0 ? matches[0] : '';
+
+  ctx.log({
+    level: 'success',
+    message: `Regex matched ${matches.length} result(s)`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: `${matches.length} match(es)`,
+      detail: matches.slice(0, 5).join(', ') + (matches.length > 5 ? '...' : ''),
+    },
+  });
 
   return {
     success: true,
-    output: matches,
-    variables: { [outputVariable]: matches },
+    output: hasGlobal ? matches : (matches.length === 1 ? firstMatch : matches),
+    variables: {
+      [outputVariable]: matches,
+      [`${outputVariable}_first`]: firstMatch,
+    },
   };
 };
 
@@ -2771,24 +2896,25 @@ export const executeSmartScroll: NodeExecutor = async (node, ctx) => {
   const distance = Number(node.data.properties.distance) || 600;
   const scrollSpeed = node.data.properties.scrollSpeed || 'normal';
 
-  let scrollDelay = Number(node.data.properties.scrollDelay);
-  let smooth = node.data.properties.smooth !== undefined ? !!node.data.properties.smooth : true;
+  let scrollDelay: number;
+  let smooth: boolean;
 
   if (scrollSpeed === 'slow') {
-    if (!node.data.properties.scrollDelay) scrollDelay = 1500;
+    scrollDelay = 1500;
     smooth = true;
   } else if (scrollSpeed === 'fast') {
-    if (!node.data.properties.scrollDelay) scrollDelay = 300;
+    scrollDelay = 300;
     smooth = true;
   } else if (scrollSpeed === 'instant') {
-    if (!node.data.properties.scrollDelay) scrollDelay = 50;
+    scrollDelay = 50;
     smooth = false;
   } else if (scrollSpeed === 'normal') {
-    if (!node.data.properties.scrollDelay) scrollDelay = 800;
+    scrollDelay = 800;
     smooth = true;
   } else {
-    // custom or unhandled
-    if (!scrollDelay || isNaN(scrollDelay)) scrollDelay = 800;
+    // 'custom' or manual delay
+    scrollDelay = Number(node.data.properties.scrollDelay) || 800;
+    smooth = node.data.properties.smooth !== undefined ? !!node.data.properties.smooth : true;
   }
 
   const outputVariable = node.data.properties.outputVariable || 'scrollResult';

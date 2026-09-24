@@ -189,6 +189,32 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const panelWidthRef = React.useRef(panelWidth);
   panelWidthRef.current = panelWidth;
 
+  // Open tabs list state for switch_tab and close_tab
+  const [openTabs, setOpenTabs] = useState<Array<{ id: number; title: string; url: string; index: number; active: boolean }>>([]);
+  const [isLoadingTabs, setIsLoadingTabs] = useState(false);
+
+  const refreshOpenTabs = React.useCallback(async () => {
+    setIsLoadingTabs(true);
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        const res = await chrome.runtime.sendMessage({ type: 'LIST_TABS' });
+        if (res?.success && Array.isArray(res.tabs)) {
+          setOpenTabs(res.tabs);
+        }
+      }
+    } catch (err) {
+      console.warn('[AutoFlow] Failed to query open tabs:', err);
+    } finally {
+      setIsLoadingTabs(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedNode && ['switch_tab', 'close_tab'].includes(selectedNode.data.type)) {
+      refreshOpenTabs();
+    }
+  }, [selectedNode?.id, selectedNode?.data?.type, refreshOpenTabs]);
+
   const handleMouseDownResize = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
@@ -451,6 +477,244 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               placeholder="https://example.com or {{url}}"
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
             />
+          </div>
+        )}
+
+        {/* Navigate: Open in New Tab */}
+        {selectedNode.data.type === 'navigate' && (
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!props.openInNewTab}
+              onChange={(e) => handlePropChange('openInNewTab', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+            />
+            <span className="text-[11px]">Open in new tab</span>
+          </label>
+        )}
+
+        {/* Switch Tab */}
+        {selectedNode.data.type === 'switch_tab' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-medium text-gray-400">Target Tab to Switch</label>
+              <button
+                type="button"
+                onClick={refreshOpenTabs}
+                disabled={isLoadingTabs}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                title="Refresh open browser tabs list"
+              >
+                <RefreshCw className={`w-3 h-3 ${isLoadingTabs ? 'animate-spin' : ''}`} />
+                <span>Refresh Tabs</span>
+              </button>
+            </div>
+
+            <div>
+              <select
+                value={
+                  props.tabTarget === 'by_id' && props.tabId
+                    ? `id_${props.tabId}`
+                    : (props.tabTarget || 'next')
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val.startsWith('id_')) {
+                    const id = Number(val.replace('id_', ''));
+                    const matchedTab = openTabs.find((t) => t.id === id);
+                    onUpdateProperties(selectedNode.id, {
+                      ...props,
+                      tabTarget: 'by_id',
+                      tabId: id,
+                      tabTitle: matchedTab?.title || '',
+                      tabUrl: matchedTab?.url || '',
+                    });
+                  } else {
+                    onUpdateProperties(selectedNode.id, {
+                      ...props,
+                      tabTarget: val,
+                      tabId: undefined,
+                    });
+                  }
+                }}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                {openTabs.length > 0 && (
+                  <optgroup label="Open Browser Tabs">
+                    {openTabs.map((t) => {
+                      let host = '';
+                      try { host = new URL(t.url).hostname; } catch {}
+                      const displayTitle = (t.title || 'Untitled').slice(0, 32);
+                      return (
+                        <option key={t.id} value={`id_${t.id}`}>
+                          Tab #{t.index + 1}: {displayTitle} {host ? `(${host})` : ''} {t.active ? '[Active]' : ''}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                <optgroup label="Relative Navigation">
+                  <option value="next">Next Tab (Right)</option>
+                  <option value="previous">Previous Tab (Left)</option>
+                  <option value="first">First Tab (Index 0)</option>
+                  <option value="last">Last Tab</option>
+                </optgroup>
+                <optgroup label="Match Criteria">
+                  <option value="by_index">By Tab Index (0, 1, 2...)</option>
+                  <option value="by_pattern">By URL or Title Pattern...</option>
+                </optgroup>
+              </select>
+            </div>
+
+            {props.tabTarget === 'by_id' && (props.tabTitle || props.tabUrl) && (
+              <div className="p-2 rounded bg-[#161a24] border border-[#232a3b] text-[11px] text-gray-300 space-y-0.5">
+                <div className="text-[10px] text-gray-500 font-mono">Selected Tab Target:</div>
+                {props.tabTitle && <div className="font-semibold text-white truncate">{props.tabTitle}</div>}
+                {props.tabUrl && <div className="text-[10px] text-indigo-400 truncate">{props.tabUrl}</div>}
+              </div>
+            )}
+
+            {props.tabTarget === 'by_index' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Tab Index (0-based)</label>
+                <input
+                  type="number"
+                  value={props.tabIndex ?? 0}
+                  onChange={(e) => handlePropChange('tabIndex', Number(e.target.value))}
+                  min={0}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
+
+            {props.tabTarget === 'by_pattern' && (
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">URL Pattern (contains or regex)</label>
+                  <input
+                    type="text"
+                    value={props.urlPattern || ''}
+                    onChange={(e) => handlePropChange('urlPattern', e.target.value)}
+                    placeholder="e.g. amazon.com or .*checkout.*"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Title Pattern (optional)</label>
+                  <input
+                    type="text"
+                    value={props.titlePattern || ''}
+                    onChange={(e) => handlePropChange('titlePattern', e.target.value)}
+                    placeholder="e.g. Shopping Cart"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Close Tab */}
+        {selectedNode.data.type === 'close_tab' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-medium text-gray-400">Target Tab to Close</label>
+              <button
+                type="button"
+                onClick={refreshOpenTabs}
+                disabled={isLoadingTabs}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                title="Refresh open browser tabs list"
+              >
+                <RefreshCw className={`w-3 h-3 ${isLoadingTabs ? 'animate-spin' : ''}`} />
+                <span>Refresh Tabs</span>
+              </button>
+            </div>
+
+            <div>
+              <select
+                value={
+                  props.closeTarget === 'specific' && props.tabId
+                    ? `id_${props.tabId}`
+                    : (props.closeTarget || 'current')
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val.startsWith('id_')) {
+                    const id = Number(val.replace('id_', ''));
+                    const matchedTab = openTabs.find((t) => t.id === id);
+                    onUpdateProperties(selectedNode.id, {
+                      ...props,
+                      closeTarget: 'specific',
+                      tabId: id,
+                      tabTitle: matchedTab?.title || '',
+                      tabUrl: matchedTab?.url || '',
+                    });
+                  } else {
+                    onUpdateProperties(selectedNode.id, {
+                      ...props,
+                      closeTarget: val,
+                      tabId: undefined,
+                    });
+                  }
+                }}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="current">Current Active Tab</option>
+                {openTabs.length > 0 && (
+                  <optgroup label="Open Browser Tabs">
+                    {openTabs.map((t) => {
+                      let host = '';
+                      try { host = new URL(t.url).hostname; } catch {}
+                      const displayTitle = (t.title || 'Untitled').slice(0, 32);
+                      return (
+                        <option key={t.id} value={`id_${t.id}`}>
+                          Tab #{t.index + 1}: {displayTitle} {host ? `(${host})` : ''} {t.active ? '[Active]' : ''}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                <optgroup label="Custom">
+                  <option value="by_index">By Tab Index (0, 1, 2...)</option>
+                  <option value="by_pattern">By URL Pattern...</option>
+                </optgroup>
+              </select>
+            </div>
+
+            {props.closeTarget === 'specific' && (props.tabTitle || props.tabUrl) && (
+              <div className="p-2 rounded bg-[#161a24] border border-[#232a3b] text-[11px] text-gray-300 space-y-0.5">
+                <div className="text-[10px] text-gray-500 font-mono">Will Close Tab:</div>
+                {props.tabTitle && <div className="font-semibold text-white truncate">{props.tabTitle}</div>}
+                {props.tabUrl && <div className="text-[10px] text-indigo-400 truncate">{props.tabUrl}</div>}
+              </div>
+            )}
+
+            {props.closeTarget === 'by_index' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Tab Index (0-based)</label>
+                <input
+                  type="number"
+                  value={props.tabIndex ?? 0}
+                  onChange={(e) => handlePropChange('tabIndex', Number(e.target.value))}
+                  min={0}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
+
+            {props.closeTarget === 'by_pattern' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">URL Pattern (contains)</label>
+                <input
+                  type="text"
+                  value={props.urlPattern || ''}
+                  onChange={(e) => handlePropChange('urlPattern', e.target.value)}
+                  placeholder="e.g. ad.doubleclick.net or popup"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -1243,7 +1507,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   )}
 
                   <p className="text-[10px] text-emerald-400/90 leading-tight">
-                    ✨ If this condition becomes true while waiting, the timer immediately finishes early and proceeds downstream!
+                    If this condition becomes true while waiting, the timer immediately finishes early and proceeds downstream!
                   </p>
                 </div>
               )}
@@ -1306,15 +1570,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onChange={(e) => handlePropChange('itemExtractField', e.target.value)}
                   className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] text-xs outline-none"
                 >
-                  <option value="all">📦 Full Product Object (JSON string or object)</option>
+                  <option value="all">Full Product Object (JSON string or object)</option>
                   {(Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : [
                     { name: 'link' }, { name: 'title' }, { name: 'price' }, { name: 'image' }, { name: 'description' }
                   ]).map((f: any) => (
                     <option key={f.name} value={f.name}>
-                      🔗 Extract "{f.name}" only (string value)
+                      Extract "{f.name}" only (string value)
                     </option>
                   ))}
-                  <option value="custom">⚙️ Custom property...</option>
+                  <option value="custom">Custom property...</option>
                 </select>
 
                 {props.itemExtractField === 'custom' && (
@@ -1373,7 +1637,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 }`}
                 title="Automatically discovers next page buttons via rel=next, aria-label, classes, or Next text"
               >
-                ✨ Auto-Detect
+                Auto-Detect
               </button>
               <button
                 type="button"
@@ -1385,7 +1649,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 }`}
                 title="Clicks a specified Next Page button on each iteration"
               >
-                👆 Next Button
+                Next Button
               </button>
               <button
                 type="button"
@@ -1397,7 +1661,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 }`}
                 title="Scrolls down to trigger infinite feed loading"
               >
-                📜 Infinite Scroll
+                Infinite Scroll
               </button>
             </div>
 
@@ -1494,7 +1758,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
               />
               <span className="text-[11px] font-medium text-indigo-300">
-                💾 Direct Export Items to File (CSV / XLSX / JSON)
+                Direct Export Items to File (CSV / XLSX / JSON)
               </span>
             </label>
 
@@ -1541,7 +1805,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
               />
               <span className="text-[11px] font-medium text-indigo-300">
-                💾 Direct Export Crawled Dataset (CSV / XLSX / JSON)
+                Direct Export Crawled Dataset (CSV / XLSX / JSON)
               </span>
             </label>
 
@@ -1615,7 +1879,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             {/* Quick Schema Presets */}
             <div>
               <span className="text-[10px] font-medium text-gray-400 block mb-1">
-                ⚡ Quick Schema Presets:
+                Quick Schema Presets:
               </span>
               <div className="grid grid-cols-3 gap-1">
                 <button
@@ -1631,7 +1895,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   }}
                   className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
                 >
-                  🛒 E-Commerce
+                  E-Commerce
                 </button>
                 <button
                   type="button"
@@ -1647,7 +1911,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   }}
                   className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
                 >
-                  📰 Articles
+                  Articles
                 </button>
                 <button
                   type="button"
@@ -1662,7 +1926,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   }}
                   className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
                 >
-                  👤 Leads
+                  Leads
                 </button>
               </div>
             </div>
@@ -1768,7 +2032,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                 />
                 <span className="text-[11px] font-medium text-indigo-300">
-                  💾 Direct Export Scraped Cards to File (CSV / XLSX / JSON / TSV)
+                  Direct Export Scraped Cards to File (CSV / XLSX / JSON / TSV)
                 </span>
               </label>
 
@@ -1813,7 +2077,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                 />
                 <span className="text-[11px] font-medium text-amber-300 flex items-center gap-1.5">
-                  <span>🚫</span> Exclude entries with empty fields
+                  <span>Exclude:</span> Exclude entries with empty fields
                 </span>
               </label>
 
@@ -1835,11 +2099,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               )}
             </div>
 
-            {/* 🛠️ Data Post-Processing & Filtering */}
+            {/* Data Post-Processing & Filtering */}
             <div className="pt-3 border-t border-[#1c2230] space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
-                  <span>🛠️ Data Post-Processing &amp; Filtering</span>
+                  <span>Data Post-Processing &amp; Filtering</span>
                 </label>
                 <span className="text-[10px] text-teal-400 font-mono">Clean &amp; Filter</span>
               </div>
@@ -1847,7 +2111,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               {/* 1. URL & Link Normalization */}
               <div className="p-2.5 rounded-lg bg-[#0e121a] border border-[#1e2433] space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-gray-300">🔗 URL &amp; Link Processor</span>
+                  <span className="text-[11px] font-medium text-gray-300">URL &amp; Link Processor</span>
                   <span className="text-[10px] text-gray-500">Auto-fixes incomplete links</span>
                 </div>
                 <div>
@@ -1973,7 +2237,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       onChange={(e) => handlePropChange('cleanPrice', e.target.checked)}
                       className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                     />
-                    <span className="text-[11px] font-medium text-gray-200">💰 Price &amp; Number Cleaner</span>
+                    <span className="text-[11px] font-medium text-gray-200">Price &amp; Number Cleaner</span>
                   </label>
                   {props.cleanPrice && <span className="text-[10px] text-emerald-400 font-mono">Active</span>}
                 </div>
@@ -1987,8 +2251,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                         onChange={(e) => handlePropChange('priceMode', e.target.value)}
                         className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs outline-none"
                       >
-                        <option value="number_only">Number Only (e.g. "$1,299.99" or "₹1,299" ➔ "1299.99")</option>
-                        <option value="strip_symbols">Strip Currency Symbols (e.g. "$1,299.99" ➔ "1,299.99")</option>
+                        <option value="number_only">Number Only (e.g. "$1,299.99" or "₹1,299" &#8594; "1299.99")</option>
+                        <option value="strip_symbols">Strip Currency Symbols (e.g. "$1,299.99" &#8594; "1,299.99")</option>
                       </select>
                       <p className="text-[9px] text-gray-500 mt-1">
                         Extracts pure numbers and cleans thousand-separators or currencies (₹, $, €, £, etc.).
@@ -2008,7 +2272,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       onChange={(e) => handlePropChange('formatDate', e.target.checked)}
                       className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                     />
-                    <span className="text-[11px] font-medium text-gray-200">📅 Date &amp; Time Formatter</span>
+                    <span className="text-[11px] font-medium text-gray-200">Date &amp; Time Formatter</span>
                   </label>
                   {props.formatDate && <span className="text-[10px] text-teal-400 font-mono">Active</span>}
                 </div>
@@ -2044,7 +2308,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       onChange={(e) => handlePropChange('patternFilterEnabled', e.target.checked)}
                       className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                     />
-                    <span className="text-[11px] font-medium text-gray-200">🎯 Pattern Condition Filter</span>
+                    <span className="text-[11px] font-medium text-gray-200">Pattern Condition Filter</span>
                   </label>
                   {props.patternFilterEnabled && (
                     <span className="text-[10px] text-amber-400 font-mono">Filtering Rows</span>
@@ -2319,6 +2583,54 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
+        {/* Extract Text: Optional Regex Filter */}
+        {selectedNode.data.type === 'extract_text' && (
+          <div className="space-y-2 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Regex Filter / Extraction Pattern (optional)
+              </label>
+              <input
+                type="text"
+                value={props.regexPattern || ''}
+                onChange={(e) => handlePropChange('regexPattern', e.target.value)}
+                placeholder="e.g. \\$([0-9,.]+) or ID-\\d+"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
+              />
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                Leave blank to extract full text, or specify a regex pattern to extract only the matching part.
+              </p>
+            </div>
+            {props.regexPattern && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Flags</label>
+                  <input
+                    type="text"
+                    value={props.regexFlags || 'g'}
+                    onChange={(e) => handlePropChange('regexFlags', e.target.value)}
+                    placeholder="g, gi, etc."
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Extract Group</label>
+                  <select
+                    value={props.extractGroup ?? 'full'}
+                    onChange={(e) => handlePropChange('extractGroup', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs"
+                  >
+                    <option value="full">Full Match</option>
+                    <option value="1">Group 1</option>
+                    <option value="2">Group 2</option>
+                    <option value="3">Group 3</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Attribute Name (Extract Attribute / Extract Multiple / Crawl Pagination) */}
         {['extract_attribute', 'extract_multiple', 'crawl_pagination'].includes(selectedNode.data.type) && (
           <div className="space-y-1.5">
@@ -2357,7 +2669,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               ))}
             </div>
             <p className="text-[10px] text-gray-500">
-              💡 <span className="text-indigo-400 font-mono">src</span> auto-resolves lazy images (<code>data-src</code>, <code>srcset</code>, background-image); <span className="text-indigo-400 font-mono">href</span> returns full absolute URLs.
+              Tip: <span className="text-indigo-400 font-mono">src</span> auto-resolves lazy images (<code>data-src</code>, <code>srcset</code>, background-image); <span className="text-indigo-400 font-mono">href</span> returns full absolute URLs.
             </p>
           </div>
         )}
@@ -2485,19 +2797,21 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <label className="block text-[11px] font-medium text-gray-400 mb-1">Scrolling Speed</label>
               <div className="grid grid-cols-4 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
                 {[
-                  { id: 'slow', label: '🐢 Slow', delay: 1500, desc: '1.5s delay, smooth' },
-                  { id: 'normal', label: '🚶 Normal', delay: 800, desc: '800ms delay, smooth' },
-                  { id: 'fast', label: '⚡ Fast', delay: 300, desc: '300ms delay, smooth' },
-                  { id: 'instant', label: '🚀 Instant', delay: 50, desc: '50ms jump, immediate' },
+                  { id: 'slow', label: 'Slow', delay: 1500, desc: '1.5s delay, smooth' },
+                  { id: 'normal', label: 'Normal', delay: 800, desc: '800ms delay, smooth' },
+                  { id: 'fast', label: 'Fast', delay: 300, desc: '300ms delay, smooth' },
+                  { id: 'instant', label: 'Instant', delay: 50, desc: '50ms jump, immediate' },
                 ].map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => {
-                      handlePropChange('scrollSpeed', s.id);
-                      handlePropChange('scrollDelay', s.delay);
-                      if (s.id === 'instant') handlePropChange('smooth', false);
-                      else handlePropChange('smooth', true);
+                      onUpdateProperties(selectedNode.id, {
+                        ...props,
+                        scrollSpeed: s.id,
+                        scrollDelay: s.delay,
+                        smooth: s.id !== 'instant',
+                      });
                     }}
                     className={`py-1 px-1.5 text-center rounded-lg text-[11px] font-medium transition-all ${
                       (props.scrollSpeed || 'normal') === s.id
@@ -2692,11 +3006,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </label>
               <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433]">
                 {[
-                  { id: 'csv', label: 'CSV', ext: '.csv', icon: '📄' },
-                  { id: 'xlsx', label: 'Excel', ext: '.xlsx', icon: '📊' },
-                  { id: 'json', label: 'JSON', ext: '.json', icon: '🗄️' },
-                  { id: 'tsv', label: 'TSV', ext: '.tsv', icon: '📑' },
-                  { id: 'html_table', label: 'HTML', ext: '.html', icon: '🌐' },
+                  { id: 'csv', label: 'CSV', ext: '.csv', icon: '' },
+                  { id: 'xlsx', label: 'Excel', ext: '.xlsx', icon: '' },
+                  { id: 'json', label: 'JSON', ext: '.json', icon: '' },
+                  { id: 'tsv', label: 'TSV', ext: '.tsv', icon: '' },
+                  { id: 'html_table', label: 'HTML', ext: '.html', icon: '' },
                 ].map((fmt) => (
                   <button
                     key={fmt.id}
@@ -3018,7 +3332,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
                     />
                     <span className="text-[11px] font-medium text-amber-300 flex items-center gap-1.5">
-                      <span>🚫</span> Exclude entries with empty fields
+                      <span>Exclude:</span> Exclude entries with empty fields
                     </span>
                   </label>
 
@@ -3477,7 +3791,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </label>
                 <div className="flex items-center justify-between text-[11px] bg-[#141824] p-2.5 rounded-lg border border-[#232b40]">
                   <span className="text-gray-300 font-mono">Multiple Branches In</span>
-                  <span className="text-indigo-400 font-bold font-mono">➔ 1 Combined Out</span>
+                  <span className="text-indigo-400 font-bold font-mono">&#8594; 1 Combined Out</span>
                 </div>
                 <p className="text-[10px] text-gray-400 leading-normal">
                   Connect multiple nodes (Wait, Webpage checks, Conditions) to the top handle of this node. Their branches will be merged according to {currentGate} logic into a single combined outgoing branch.
@@ -3521,7 +3835,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(e) => handlePropChange('targetTimer', e.target.value)}
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               >
-                <option value="all">⚡ All Active Wait Timers</option>
+                <option value="all">All Active Wait Timers</option>
                 {(allNodes || [])
                   .filter((n) => n && n.data && n.data.type === 'wait' && n.id !== selectedNode.id)
                   .map((n) => (
@@ -3619,7 +3933,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(e) => handlePropChange('targetTimer', e.target.value)}
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               >
-                <option value="all">⚡ All Active Wait Timers</option>
+                <option value="all">All Active Wait Timers</option>
                 {(allNodes || [])
                   .filter((n) => n && n.data && n.data.type === 'wait' && n.id !== selectedNode.id)
                   .map((n) => (
@@ -3870,6 +4184,75 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
+        {/* Regex Node */}
+        {selectedNode.data.type === 'regex' && (
+          <div className="space-y-3 pt-2 border-t border-[#1c2230]">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Input Text / Variable</label>
+              <input
+                type="text"
+                value={props.text || ''}
+                onChange={(e) => handlePropChange('text', e.target.value)}
+                placeholder="{{extractedText}} or raw text"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
+              />
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                Text to run the regex against. Supports &#123;&#123;variable&#125;&#125; interpolation.
+              </p>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Regex Pattern</label>
+              <input
+                type="text"
+                value={props.pattern || ''}
+                onChange={(e) => handlePropChange('pattern', e.target.value)}
+                placeholder="e.g. \\d+\\.\\d{2} or (https?://[^\\s]+)"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-[11px]"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Flags</label>
+              <div className="flex items-center gap-1.5">
+                {[
+                  { id: 'g', label: 'g (global)' },
+                  { id: 'gi', label: 'gi (global, case-insensitive)' },
+                  { id: 'gm', label: 'gm (global, multiline)' },
+                  { id: 'gmi', label: 'gmi (all)' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => handlePropChange('flags', f.id)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-mono transition-all ${
+                      (props.flags || 'g') === f.id
+                        ? 'bg-indigo-600 text-white font-semibold'
+                        : 'bg-[#11141c] text-gray-400 hover:text-gray-200 border border-[#1c2230]'
+                    }`}
+                  >
+                    {f.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Extract</label>
+              <select
+                value={props.extractGroup ?? 'full'}
+                onChange={(e) => handlePropChange('extractGroup', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="full">Full Match (match[0])</option>
+                <option value="1">Capture Group 1 (match[1])</option>
+                <option value="2">Capture Group 2 (match[2])</option>
+                <option value="3">Capture Group 3 (match[3])</option>
+              </select>
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                Use capture groups with parentheses in your pattern, e.g. <code className="text-indigo-400">(\d+)</code>
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Transform Node */}
         {selectedNode.data.type === 'transform' && (
           <div className="space-y-3">
@@ -3951,8 +4334,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onChange={(e) => handlePropChange('priceMode', e.target.value)}
                   className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
                 >
-                  <option value="number_only">Number only (e.g. "$1,299.99" ➔ "1299.99")</option>
-                  <option value="strip_symbols">Strip currency symbols (e.g. "$1,299.99" ➔ "1,299.99")</option>
+                  <option value="number_only">Number only (e.g. "$1,299.99" &#8594; "1299.99")</option>
+                  <option value="strip_symbols">Strip currency symbols (e.g. "$1,299.99" &#8594; "1,299.99")</option>
                 </select>
               </div>
             )}
@@ -4238,8 +4621,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(e) => handlePropChange('message', e.target.value)}
                 placeholder={
                   props.messageType === 'photo'
-                    ? '📸 Captured page screenshot: {{pageTitle}}'
-                    : '🚨 Alert: New item found!&#10;Title: {{extractedTitle}}&#10;Link: {{pageUrl}}'
+                    ? 'Captured page screenshot: {{pageTitle}}'
+                    : 'Alert: New item found!&#10;Title: {{extractedTitle}}&#10;Link: {{pageUrl}}'
                 }
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
               />
@@ -4769,7 +5152,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   type="text"
                   value={props.headerText || ''}
                   onChange={(e) => handlePropChange('headerText', e.target.value)}
-                  placeholder="🚀 AutoFlow Job Notification"
+                  placeholder="AutoFlow Job Notification"
                   className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
                 />
               </div>

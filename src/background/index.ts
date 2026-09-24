@@ -153,18 +153,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
 
         case 'NAVIGATE_TAB': {
           let tab: chrome.tabs.Tab | null = null;
-          if (message.payload?.tabId) {
-            tab = await chrome.tabs.get(message.payload.tabId).catch(() => null);
-          }
-          if (!tab || isRestrictedUrl(tab.url)) {
-            tab = await getTargetTab();
-          }
 
-          // If no valid web tab exists, create a new one
-          if (!tab || isRestrictedUrl(tab.url)) {
+          // If openInNewTab is requested, always create a new tab
+          if (message.payload?.openInNewTab) {
             tab = await chrome.tabs.create({ url: message.payload.url, active: true });
           } else {
-            await chrome.tabs.update(tab.id!, { url: message.payload.url });
+            if (message.payload?.tabId) {
+              tab = await chrome.tabs.get(message.payload.tabId).catch(() => null);
+            }
+            if (!tab || isRestrictedUrl(tab.url)) {
+              tab = await getTargetTab();
+            }
+
+            // If no valid web tab exists, create a new one
+            if (!tab || isRestrictedUrl(tab.url)) {
+              tab = await chrome.tabs.create({ url: message.payload.url, active: true });
+            } else {
+              await chrome.tabs.update(tab.id!, { url: message.payload.url });
+            }
           }
 
           if (!tab?.id) throw new Error('Failed to create or navigate target tab.');
@@ -207,6 +213,111 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           }
 
           return { success: true, tabId: targetTabId, url: message.payload.url, dataUrl, screenshotUrl: dataUrl };
+        }
+
+        case 'SWITCH_TAB': {
+          const { target, tabId: requestedTabId, tabIndex, urlPattern, titlePattern } = message.payload || {};
+          const allTabs = await chrome.tabs.query({}).catch(() => []);
+          const webTabs = allTabs.filter(t => t.id != null && !isRestrictedUrl(t.url)).sort((a, b) => (a.windowId - b.windowId || a.index - b.index));
+          if (webTabs.length === 0) throw new Error('No open web tabs to switch to.');
+
+          let targetTab: chrome.tabs.Tab | undefined;
+
+          if (target === 'by_id' && requestedTabId) {
+            targetTab = webTabs.find(t => t.id === requestedTabId);
+            // Fallback to URL or title matching if tab ID changed after reload
+            if (!targetTab && urlPattern) {
+              targetTab = webTabs.find(t => t.url?.includes(urlPattern));
+            }
+            if (!targetTab && titlePattern) {
+              targetTab = webTabs.find(t => t.title?.toLowerCase().includes(titlePattern.toLowerCase()));
+            }
+            if (!targetTab) throw new Error(`Tab with ID ${requestedTabId} not found.`);
+          } else if ((target === 'by_pattern' || (!target && (urlPattern || titlePattern)))) {
+            if (urlPattern) {
+              targetTab = webTabs.find(t => {
+                if (!t.url) return false;
+                try {
+                  return t.url.includes(urlPattern) || new RegExp(urlPattern, 'i').test(t.url);
+                } catch {
+                  return t.url.includes(urlPattern);
+                }
+              });
+            }
+            if (!targetTab && titlePattern) {
+              targetTab = webTabs.find(t => t.title?.toLowerCase().includes(titlePattern.toLowerCase()));
+            }
+            if (!targetTab) throw new Error(`No open tab found matching pattern: ${urlPattern || titlePattern}`);
+          } else if (target === 'by_index' && tabIndex != null) {
+            const idx = Math.max(0, Math.min(tabIndex, webTabs.length - 1));
+            targetTab = webTabs[idx];
+          } else if (target === 'first') {
+            targetTab = webTabs[0];
+          } else if (target === 'last') {
+            targetTab = webTabs[webTabs.length - 1];
+          } else if (target === 'previous') {
+            const activeTab = allTabs.find(t => t.active);
+            const activeIdx = webTabs.findIndex(t => t.id === activeTab?.id);
+            targetTab = webTabs[activeIdx > 0 ? activeIdx - 1 : webTabs.length - 1];
+          } else {
+            // 'next' (default)
+            const activeTab = allTabs.find(t => t.active);
+            const activeIdx = webTabs.findIndex(t => t.id === activeTab?.id);
+            targetTab = webTabs[activeIdx < webTabs.length - 1 ? activeIdx + 1 : 0];
+          }
+
+          if (!targetTab?.id) throw new Error('Could not determine target tab.');
+          await chrome.tabs.update(targetTab.id, { active: true });
+          if (targetTab.windowId) {
+            await chrome.windows.update(targetTab.windowId, { focused: true }).catch(() => {});
+          }
+          return { success: true, tabId: targetTab.id, url: targetTab.url, title: targetTab.title };
+        }
+
+        case 'CLOSE_TAB': {
+          const { tabId: requestedTabId, target, tabIndex, urlPattern } = message.payload || {};
+          let targetTabId = requestedTabId;
+
+          const allTabs = await chrome.tabs.query({}).catch(() => []);
+          const webTabs = allTabs.filter(t => t.id != null && !isRestrictedUrl(t.url));
+
+          if (!targetTabId) {
+            if (target === 'by_index' && tabIndex != null) {
+              const idx = Math.max(0, Math.min(tabIndex, webTabs.length - 1));
+              targetTabId = webTabs[idx]?.id;
+            } else if (urlPattern) {
+              targetTabId = webTabs.find(t => t.url?.includes(urlPattern))?.id;
+            } else {
+              const activeTab = await getTargetTab();
+              targetTabId = activeTab?.id;
+            }
+          }
+
+          if (targetTabId) {
+            await chrome.tabs.remove(targetTabId).catch((err) => {
+              console.warn('[AutoFlow] Tab remove warning:', err);
+            });
+          }
+
+          // Resolve newly active tab
+          const newActiveTab = await getTargetTab();
+          return { success: true, closedTabId: targetTabId, newActiveTabId: newActiveTab?.id };
+        }
+
+        case 'LIST_TABS': {
+          const allTabs = await chrome.tabs.query({}).catch(() => []);
+          const tabs = allTabs
+            .filter(t => t.id != null && !isRestrictedUrl(t.url))
+            .map(t => ({
+              id: t.id,
+              title: t.title || 'Untitled',
+              url: t.url || '',
+              index: t.index,
+              active: !!t.active,
+              favIconUrl: t.favIconUrl,
+              windowId: t.windowId,
+            }));
+          return { success: true, tabs };
         }
 
         case 'CAPTURE_SCREENSHOT': {
