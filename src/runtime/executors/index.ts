@@ -999,6 +999,236 @@ export const executeExtractTable: NodeExecutor = async (node, ctx) => {
   };
 };
 
+export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
+  const mode = (node.data.properties.mode || 'scrape') as 'scrape' | 'search' | 'map';
+  let targetUrl = String(interpolateVariables(node.data.properties.url || '{{currentUrl}}', ctx.variables) ?? '').trim();
+  if (!targetUrl || targetUrl === '{{currentUrl}}') {
+    targetUrl = ctx.currentUrl || '';
+  }
+
+  const searchQuery = String(interpolateVariables(node.data.properties.searchQuery || '', ctx.variables) ?? '').trim();
+  const formats = Array.isArray(node.data.properties.formats) && node.data.properties.formats.length > 0
+    ? node.data.properties.formats
+    : ['markdown'];
+  const onlyMainContent = node.data.properties.onlyMainContent !== false;
+  const waitFor = Number(node.data.properties.waitFor) || 1000;
+  const outputVariable = node.data.properties.outputVariable || 'firecrawlMarkdown';
+  const fallbackToBrowser = node.data.properties.fallbackToBrowser !== false;
+
+  const customApiKey = node.data.properties.apiKey?.trim();
+  const rawApiUrl = String(node.data.properties.apiUrl || 'https://api.firecrawl.dev/v1').trim().replace(/\/+$/, '');
+
+  if (mode === 'search' && !searchQuery) {
+    throw new Error('Firecrawl search requires a search query.');
+  }
+  if ((mode === 'scrape' || mode === 'map') && !targetUrl) {
+    throw new Error('Firecrawl requires a valid target URL.');
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `[Firecrawl] ${customApiKey ? 'Authenticated' : 'Keyless Mode'} ${mode}: ${mode === 'search' ? searchQuery : targetUrl}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Firecrawl ${mode} (${customApiKey ? 'Key' : 'Keyless'})...`,
+      detail: mode === 'search' ? searchQuery : targetUrl,
+    },
+  });
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  // Keyless: do NOT send Authorization header. Firecrawl's free keyless tier activates automatically!
+  if (customApiKey) {
+    headers['Authorization'] = `Bearer ${customApiKey}`;
+  }
+
+  let endpoint = `${rawApiUrl}/${mode}`;
+  let requestBody: Record<string, any> = {};
+
+  if (mode === 'scrape') {
+    requestBody = {
+      url: targetUrl,
+      formats,
+      onlyMainContent,
+      waitFor,
+    };
+  } else if (mode === 'search') {
+    if (rawApiUrl.includes('/v1')) {
+      endpoint = `${rawApiUrl.replace('/v1', '/v2')}/search`;
+    }
+    requestBody = {
+      query: searchQuery,
+      scrapeOptions: { formats },
+      limit: Number(node.data.properties.limit) || 5,
+    };
+  } else if (mode === 'map') {
+    requestBody = {
+      url: targetUrl,
+    };
+  }
+
+  let res: Response | null = null;
+  let fetchError: Error | null = null;
+
+  try {
+    res = await safeFetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+    });
+  } catch (err: any) {
+    fetchError = err;
+  }
+
+  // Handle fallback if request failed or was blocked by rate limit
+  if (!res || !res.ok) {
+    const status = res?.status || 0;
+    const errText = res ? await res.text().catch(() => '') : '';
+    let parsedErr = errText;
+    try {
+      const parsed = JSON.parse(errText);
+      parsedErr = parsed.error?.message || parsed.message || parsedErr;
+    } catch {}
+
+    const isRateLimitOrBlocked = status === 429 || status === 401 || status === 403 || !res;
+
+    if (fallbackToBrowser && mode === 'scrape' && isRateLimitOrBlocked) {
+      ctx.log({
+        level: 'warn',
+        message: `Firecrawl keyless API unavailable (${status || fetchError?.message || 'offline'}). Using browser DOM extraction fallback...`,
+        nodeId: node.id,
+      });
+
+      try {
+        const domRes = await sendDomAction('extract_html', { selector: 'body', mode: 'inner' }, ctx);
+        const textRes = await sendDomAction('extract_text', { selector: 'body' }, ctx);
+        const fallbackTitle = ctx.variables.pageTitle || 'Extracted Page';
+        const fallbackMarkdown = `# ${fallbackTitle}\n\n${textRes?.text || domRes?.html || ''}`;
+
+        ctx.updateNodeState(node.id, {
+          status: 'success',
+          dynamicState: {
+            message: `Extracted ${fallbackMarkdown.length} chars (Browser Fallback)`,
+            detail: 'Local DOM fallback',
+          },
+        });
+
+        return {
+          success: true,
+          output: fallbackMarkdown,
+          variables: {
+            [outputVariable]: fallbackMarkdown,
+            [`${outputVariable}_markdown`]: fallbackMarkdown,
+            [`${outputVariable}_title`]: fallbackTitle,
+            [`${outputVariable}_html`]: domRes?.html || '',
+          },
+        };
+      } catch (fallbackErr: any) {
+        ctx.log({ level: 'error', message: `Fallback failed: ${fallbackErr.message}`, nodeId: node.id });
+      }
+    }
+
+    const tip = !customApiKey ? ' Tip: For higher rate limits, add a free Firecrawl API key in node properties.' : '';
+    const errorMsg = `Firecrawl ${mode} error (${status}): ${parsedErr || fetchError?.message || 'Request failed'}.${tip}`;
+    ctx.log({ level: 'error', message: errorMsg, nodeId: node.id });
+    throw new Error(errorMsg);
+  }
+
+  const json = await res.json();
+  const data = json.data || json;
+
+  let primaryOutput: any = '';
+  const variablesToSet: Record<string, any> = {};
+
+  if (mode === 'scrape') {
+    const markdown = data.markdown || data.content || '';
+    const title = data.metadata?.title || '';
+    const description = data.metadata?.description || '';
+    const links = data.links || [];
+    const html = data.html || data.rawHtml || '';
+    const screenshot = data.screenshot || '';
+
+    primaryOutput = markdown || html || data;
+    variablesToSet[outputVariable] = primaryOutput;
+    variablesToSet[`${outputVariable}_markdown`] = markdown;
+    variablesToSet[`${outputVariable}_title`] = title;
+    variablesToSet[`${outputVariable}_description`] = description;
+    variablesToSet[`${outputVariable}_links`] = links;
+    variablesToSet[`${outputVariable}_html`] = html;
+    if (screenshot) variablesToSet[`${outputVariable}_screenshot`] = screenshot;
+    variablesToSet[`${outputVariable}_metadata`] = data.metadata || {};
+
+    ctx.log({
+      level: 'success',
+      message: `Firecrawl scraped ${markdown.length} chars markdown from ${targetUrl}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: `${markdown.length} chars markdown`,
+        detail: title ? `${title.slice(0, 35)}...` : 'Scrape complete',
+        previewUrl: screenshot || undefined,
+      },
+    });
+  } else if (mode === 'search') {
+    const results = Array.isArray(data) ? data : (data.results || [data]);
+    primaryOutput = results;
+    variablesToSet[outputVariable] = results;
+    variablesToSet[`${outputVariable}_count`] = results.length;
+
+    ctx.log({
+      level: 'success',
+      message: `Firecrawl found ${results.length} search result(s) for "${searchQuery}"`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: `${results.length} search results`,
+        detail: `Query: ${searchQuery.slice(0, 30)}`,
+      },
+    });
+  } else {
+    // 'map'
+    const links = Array.isArray(data) ? data : (data.links || []);
+    primaryOutput = links;
+    variablesToSet[outputVariable] = links;
+    variablesToSet[`${outputVariable}_count`] = links.length;
+
+    ctx.log({
+      level: 'success',
+      message: `Firecrawl mapped ${links.length} link(s) on ${targetUrl}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        message: `${links.length} URLs mapped`,
+        detail: targetUrl,
+      },
+    });
+  }
+
+  return {
+    success: true,
+    output: primaryOutput,
+    variables: variablesToSet,
+  };
+};
+
 // ----------------- LOGIC EXECUTORS -----------------
 
 export const executeCondition: NodeExecutor = async (node, ctx) => {
@@ -3815,6 +4045,7 @@ export const executors: Record<string, NodeExecutor> = {
   extract_image: executeExtractImage,
   extract_all_images: executeExtractAllImages,
   scrape_elements: executeScrapeElements,
+  firecrawl: executeFirecrawl,
   condition: executeCondition,
   contains: executeContains,
   contains_text: executeContainsText,

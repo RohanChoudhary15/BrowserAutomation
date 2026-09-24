@@ -32,6 +32,7 @@ import {
   FileDown,
   Maximize2,
   Minimize2,
+  Flame,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
@@ -172,6 +173,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [showRawOutput, setShowRawOutput] = useState(false);
   const [copiedBase64, setCopiedBase64] = useState(false);
   const [showImageApiKey, setShowImageApiKey] = useState(false);
+  const [showFirecrawlApiKey, setShowFirecrawlApiKey] = useState(false);
+  const [copiedFirecrawlMarkdown, setCopiedFirecrawlMarkdown] = useState(false);
 
   // Inspect panel width resizing state (persisted to localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -1516,8 +1519,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
+        {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, Firecrawl, New Nodes) */}
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -3844,6 +3847,265 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   >
                     {copiedBase64 ? 'Copied!' : 'Copy URL'}
                   </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Firecrawl (Keyless) Scraper Node */}
+        {selectedNode.data.type === 'firecrawl' && (
+          <div className="space-y-3">
+            {/* Keyless Status Badge */}
+            <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <Flame className="w-3.5 h-3.5 text-orange-400 fill-orange-400" />
+                  Keyless Mode Active
+                </span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-mono">
+                  No Key Needed
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-400 leading-normal">
+                Scrapes and converts full web pages into clean LLM-ready markdown using Firecrawl. Keyless tier is free and requires no signup.
+              </p>
+            </div>
+
+            {/* Mode Selection */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Firecrawl Operation Mode</label>
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  { id: 'scrape', label: 'Scrape Page', desc: 'Convert page into clean Markdown / HTML' },
+                  { id: 'search', label: 'Search & Scrape', desc: 'Search the web & return scraped markdown' },
+                  { id: 'map', label: 'Map Links', desc: 'Discover all internal & external links' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handlePropChange('mode', m.id)}
+                    className={`py-1.5 px-2 text-center rounded border text-[11px] font-medium transition-colors ${
+                      (props.mode || 'scrape') === m.id
+                        ? 'bg-orange-600 text-white border-orange-500 shadow-sm'
+                        : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white'
+                    }`}
+                    title={m.desc}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target URL (for scrape & map modes) */}
+            {props.mode !== 'search' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">Target Page URL</label>
+                  <button
+                    type="button"
+                    onClick={() => handlePropChange('url', '{{currentUrl}}')}
+                    className="text-[10px] text-orange-400 hover:text-orange-300 font-mono transition-colors"
+                  >
+                    Use &#123;&#123;currentUrl&#125;&#125;
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={props.url || ''}
+                  onChange={(e) => handlePropChange('url', e.target.value)}
+                  placeholder="https://example.com or {{currentUrl}}"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-orange-500 outline-none text-xs font-mono"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Supports static URLs or dynamic variables like <code className="text-gray-400 font-mono">&#123;&#123;currentUrl&#125;&#125;</code> or <code className="text-gray-400 font-mono">&#123;&#123;articleUrl&#125;&#125;</code>.
+                </p>
+              </div>
+            )}
+
+            {/* Search Query (for search mode) */}
+            {props.mode === 'search' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">Search Query</label>
+                  <span className="text-[10px] text-orange-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                </div>
+                <input
+                  type="text"
+                  value={props.searchQuery || ''}
+                  onChange={(e) => handlePropChange('searchQuery', e.target.value)}
+                  placeholder="e.g. latest news about AI or {{searchTopic}}"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-orange-500 outline-none text-xs font-mono"
+                />
+                <div className="mt-2">
+                  <label className="block text-[10px] font-medium text-gray-400 mb-1">Max Results Limit</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={props.limit || 5}
+                    onChange={(e) => handlePropChange('limit', parseInt(e.target.value) || 5)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Formats Selection (for scrape mode) */}
+            {(!props.mode || props.mode === 'scrape') && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1.5">Extraction Formats</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'markdown', label: 'Markdown (LLM Clean)' },
+                    { id: 'html', label: 'Cleaned HTML' },
+                    { id: 'rawHtml', label: 'Raw HTML' },
+                    { id: 'links', label: 'Extracted Links' },
+                    { id: 'screenshot', label: 'Page Screenshot' },
+                  ].map((fmt) => {
+                    const currentFormats = Array.isArray(props.formats) ? props.formats : ['markdown'];
+                    const isSelected = currentFormats.includes(fmt.id);
+                    return (
+                      <button
+                        key={fmt.id}
+                        type="button"
+                        onClick={() => {
+                          let nextFormats: string[];
+                          if (isSelected) {
+                            nextFormats = currentFormats.filter((f: string) => f !== fmt.id);
+                            if (nextFormats.length === 0) nextFormats = ['markdown'];
+                          } else {
+                            nextFormats = [...currentFormats, fmt.id];
+                          }
+                          handlePropChange('formats', nextFormats);
+                        }}
+                        className={`py-1 px-2 rounded border text-[10px] font-mono transition-colors ${
+                          isSelected
+                            ? 'bg-orange-600/30 text-orange-300 border-orange-500/50 font-medium'
+                            : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white'
+                        }`}
+                      >
+                        {fmt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Page Toggles & Wait Timing */}
+            {(!props.mode || props.mode === 'scrape') && (
+              <div className="space-y-2 pt-1 border-t border-[#1c2230]">
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={props.onlyMainContent !== false}
+                    onChange={(e) => handlePropChange('onlyMainContent', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-orange-600"
+                  />
+                  <span className="text-[11px]">
+                    Only Main Content (Strip headers, footers & ads)
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={props.fallbackToBrowser !== false}
+                    onChange={(e) => handlePropChange('fallbackToBrowser', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-orange-600"
+                  />
+                  <span className="text-[11px]">
+                    Fallback to Local Browser DOM if Keyless Limit reached
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                    Wait for Dynamic Content (ms)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={props.waitFor !== undefined ? props.waitFor : 1000}
+                    onChange={(e) => handlePropChange('waitFor', parseInt(e.target.value) || 0)}
+                    placeholder="1000"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Dedicated API Settings (Keyless by default, optional key & self-hosted URL) */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-gray-300">Custom API & Self-Hosted Settings</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#1c2230] text-gray-400 font-mono">Optional</span>
+              </div>
+              <p className="text-[10px] text-gray-500 leading-normal">
+                Leave empty for default keyless operation. Specify a custom key or your own self-hosted Firecrawl instance below if desired.
+              </p>
+
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">Optional API Key</label>
+                <div className="relative">
+                  <input
+                    type={showFirecrawlApiKey ? 'text' : 'password'}
+                    value={props.apiKey || ''}
+                    onChange={(e) => handlePropChange('apiKey', e.target.value)}
+                    placeholder="fc-... (Leave empty for keyless mode)"
+                    className="w-full bg-[#0b0e14] text-white p-1.5 pr-8 rounded border border-[#232a3b] focus:border-orange-500 outline-none text-xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowFirecrawlApiKey(!showFirecrawlApiKey)}
+                    className="absolute right-2 top-2 text-gray-500 hover:text-gray-300"
+                    title={showFirecrawlApiKey ? 'Hide API key' : 'Show API key'}
+                  >
+                    {showFirecrawlApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">Firecrawl Base URL</label>
+                <input
+                  type="text"
+                  value={props.apiUrl || 'https://api.firecrawl.dev/v1'}
+                  onChange={(e) => handlePropChange('apiUrl', e.target.value)}
+                  placeholder="https://api.firecrawl.dev/v1 or http://localhost:3002/v1"
+                  className="w-full bg-[#0b0e14] text-white p-1.5 rounded border border-[#232a3b] focus:border-orange-500 outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Live Scraped Markdown Output Preview */}
+            {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable])) && (
+              <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2 mt-2">
+                <div className="text-[11px] font-semibold text-orange-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Flame className="w-3.5 h-3.5" />
+                    Scraped Output Preview
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = String(runtimeState?.output || variables[props.outputVariable] || '');
+                      navigator.clipboard.writeText(text);
+                      setCopiedFirecrawlMarkdown(true);
+                      setTimeout(() => setCopiedFirecrawlMarkdown(false), 2000);
+                    }}
+                    className="text-[10px] px-2 py-0.5 rounded bg-[#1c2230] hover:bg-[#252c3d] text-gray-300 hover:text-white transition-colors"
+                  >
+                    {copiedFirecrawlMarkdown ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <div className="p-2 rounded bg-black/40 border border-[#1c2230] max-h-48 overflow-y-auto text-[11px] font-mono text-gray-300 whitespace-pre-wrap select-all">
+                  {typeof (runtimeState?.output || variables[props.outputVariable]) === 'object'
+                    ? JSON.stringify(runtimeState?.output || variables[props.outputVariable], null, 2)
+                    : String(runtimeState?.output || variables[props.outputVariable])}
                 </div>
               </div>
             )}

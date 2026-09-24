@@ -44,6 +44,7 @@ export type NodeType =
   | 'extract_image'
   | 'extract_all_images'
   | 'scrape_elements'
+  | 'firecrawl'
   // Logic
   | 'condition'
   | 'contains'

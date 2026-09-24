@@ -444,6 +444,25 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       timeout: 10000,
     },
   },
+  firecrawl: {
+    type: 'firecrawl',
+    label: 'Firecrawl (Keyless)',
+    category: 'extraction',
+    description: 'Convert any webpage into clean LLM-ready markdown or search & scrape using keyless Firecrawl API',
+    icon: 'Flame',
+    defaultProperties: {
+      mode: 'scrape',
+      url: '{{currentUrl}}',
+      searchQuery: '',
+      formats: ['markdown'],
+      onlyMainContent: true,
+      waitFor: 1000,
+      apiKey: '',
+      apiUrl: 'https://api.firecrawl.dev/v1',
+      outputVariable: 'firecrawlMarkdown',
+      fallbackToBrowser: true,
+    },
+  },
 
   // Logic
   condition: {
