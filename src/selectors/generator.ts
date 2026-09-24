@@ -179,12 +179,47 @@ export function generateSelectors(el: Element): SelectorCandidate[] {
 }
 
 /**
+ * Extracts a lightweight, clean HTML snippet of an element for AI analysis
+ */
+export function getCleanHtmlSnippet(el: Element, maxLength = 3500): string {
+  try {
+    const clone = el.cloneNode(true) as Element;
+    // Remove heavy scripts, styles, iframes
+    const junk = clone.querySelectorAll('script, style, noscript, iframe, template');
+    junk.forEach(j => j.remove());
+    // Truncate long base64 image data to prevent prompt bloat
+    const imgs = clone.querySelectorAll('img[src]');
+    imgs.forEach(img => {
+      const src = img.getAttribute('src') || '';
+      if (src.startsWith('data:image')) {
+        img.setAttribute('src', '[data-url]');
+      }
+    });
+    return clone.outerHTML.slice(0, maxLength);
+  } catch {
+    return (el.outerHTML || '').slice(0, maxLength);
+  }
+}
+
+/**
  * Builds complete ElementSelectionResult
  */
-export function buildElementSelectionResult(el: Element): ElementSelectionResult {
+export function buildElementSelectionResult(el: Element, context?: string): ElementSelectionResult {
   const strategies = generateSelectors(el);
-  const best = strategies[0]?.value || el.tagName.toLowerCase();
+  let best = strategies[0]?.value || el.tagName.toLowerCase();
+
+  // If selecting a repeating container or generating an AI schema, prefer class / css over unique text
+  if (context === 'container' || context === 'ai_schema') {
+    const classCandidate = strategies.find(s => s.type === 'css');
+    if (classCandidate) {
+      best = classCandidate.value;
+    } else {
+      best = el.tagName.toLowerCase();
+    }
+  }
+
   const rect = el.getBoundingClientRect();
+  const htmlSnippet = getCleanHtmlSnippet(el);
 
   return {
     selector: best,
@@ -193,8 +228,10 @@ export function buildElementSelectionResult(el: Element): ElementSelectionResult
     id: el.getAttribute('id') || undefined,
     name: el.getAttribute('name') || undefined,
     testId: el.getAttribute('data-testid') || el.getAttribute('data-test') || undefined,
-    textSnippet: el.textContent ? el.textContent.trim().substring(0, 60) : undefined,
+    textSnippet: el.textContent ? el.textContent.trim().substring(0, 80) : undefined,
+    outerHtmlSnippet: htmlSnippet,
     ariaLabel: el.getAttribute('aria-label') || undefined,
+    context,
     rect: {
       x: rect.x + window.scrollX,
       y: rect.y + window.scrollY,

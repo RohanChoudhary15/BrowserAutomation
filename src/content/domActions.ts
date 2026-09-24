@@ -949,6 +949,14 @@ export function extractCleanText(el: Element): string {
     }
   }
 
+  // Fallback 4: if element is an icon/svg, inspect closest anchor, button, or parent aria-label
+  if (!raw && (el.tagName.toLowerCase() === 'svg' || el.tagName.toLowerCase() === 'path' || el.querySelector('svg'))) {
+    const parentWithLabel = el.closest('a[aria-label], button[aria-label], [aria-label], [title]');
+    if (parentWithLabel) {
+      raw = parentWithLabel.getAttribute('aria-label') || parentWithLabel.getAttribute('title') || '';
+    }
+  }
+
   // Truncation check: if text ends with ellipsis (...) or a nested link has a full title attribute, prefer the complete title
   const titleEl = el.querySelector('a[title], [title]') || (el.getAttribute('title') ? el : null);
   if (titleEl) {
@@ -1349,6 +1357,9 @@ export function safeQuerySingleElement(root: ParentNode, sel: string): Element |
  */
 export function findRepeatingCardContainers(root: ParentNode, fields: ExtractDatasetField[]): Element[] {
   const commonCardSelectors = [
+    'article.Box-row',
+    '.Box-row',
+    'li.Box-row',
     'article.product_pod',
     '.product-card',
     '.product-item',
@@ -1717,7 +1728,7 @@ export async function extractDataset(
       if (signal?.aborted) return reject(new Error('Extract dataset aborted.'));
 
       if (params.containerSelector) {
-        // Mode 1: Extract from container elements (e.g. .product-card, tr)
+        // Mode 1: Extract from container elements (e.g. .product-card, tr, article.Box-row)
         let containers = safeQueryElements(document, params.containerSelector);
         // Fallback to auto-detected card containers if custom selector returned 0 elements
         if (containers.length === 0) {
@@ -1736,6 +1747,19 @@ export async function extractDataset(
           if (finalItems.length > 0) {
             return resolve({ success: true, items: finalItems, rowCount: finalItems.length, headers });
           }
+
+          // If excludeEmpty with 'any' filtered out everything because some fields were missing in the card
+          // (e.g. price in a GitHub repo card), keep rows that have at least one non-empty value:
+          const hasAnyData = items.some(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+          if (hasAnyData) {
+            const fallbackItems = items.filter(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+            if (fallbackItems.length > 0) {
+              return resolve({ success: true, items: fallbackItems, rowCount: fallbackItems.length, headers });
+            }
+          }
+
+          // If containers were found, resolve with extracted items directly instead of waiting for timeout
+          return resolve({ success: true, items, rowCount: items.length, headers });
         }
       } else {
         // Check if repeating card containers can be found from the fields
@@ -1753,6 +1777,16 @@ export async function extractDataset(
           if (finalItems.length > 0) {
             return resolve({ success: true, items: finalItems, rowCount: finalItems.length, headers });
           }
+
+          const hasAnyData = items.some(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+          if (hasAnyData) {
+            const fallbackItems = items.filter(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+            if (fallbackItems.length > 0) {
+              return resolve({ success: true, items: fallbackItems, rowCount: fallbackItems.length, headers });
+            }
+          }
+
+          return resolve({ success: true, items, rowCount: items.length, headers });
         }
 
         // Mode 2: Extract globally per field and zip

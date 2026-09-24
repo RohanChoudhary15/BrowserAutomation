@@ -38,6 +38,7 @@ import { generateId } from '../utils/id';
 import { useHistory } from './hooks/useHistory';
 import { ElementSelectionResult } from '../types/selector';
 import { RecordedActionPayload } from '../types/messages';
+import { generateSchemaFromElement } from '../ai/schemaGenerator';
 import {
   copyNodesToClipboard,
   getCopiedNodesFromClipboard,
@@ -686,24 +687,80 @@ export const App: React.FC = () => {
     [activeWorkflow, edges, liveVariables, nodes]
   );
 
+  // Recording & Element Picker State
+  const [isGeneratingSchema, setIsGeneratingSchema] = useState(false);
+
   // Element Picker Integration
-  const handleStartElementPicker = useCallback(async (mode: 'single' | 'pattern_2click' = 'single') => {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-      setIsPickingElement(true);
-      try {
-        const res = await chrome.runtime.sendMessage({ type: 'START_ELEMENT_PICKER', payload: { mode } });
-        if (res && !res.success) {
+  const handleStartElementPicker = useCallback(
+    async (
+      mode: 'single' | 'pattern_2click' = 'single',
+      context: string = 'selector',
+      fieldIndex?: number
+    ) => {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        setIsPickingElement(true);
+        try {
+          const res = await chrome.runtime.sendMessage({
+            type: 'START_ELEMENT_PICKER',
+            payload: { mode, context, fieldIndex },
+          });
+          if (res && !res.success) {
+            setIsPickingElement(false);
+            alert(res.error || 'Could not start Element Picker. Please ensure a webpage is open in another tab.');
+          }
+        } catch (err: any) {
           setIsPickingElement(false);
-          alert(res.error || 'Could not start Element Picker. Please ensure a webpage is open in another tab.');
+          alert(`Could not start Element Picker: ${err.message || String(err)}`);
+        }
+      } else {
+        alert('Element Picker communicates directly with live webpages in Chrome/Edge.');
+      }
+    },
+    []
+  );
+
+  // AI Schema Generation from Selected Element
+  const handleGenerateSchemaFromElement = useCallback(
+    async (nodeId: string, picked: ElementSelectionResult) => {
+      setIsGeneratingSchema(true);
+      try {
+        const generated = await generateSchemaFromElement({
+          selector: picked.selector,
+          tagName: picked.tagName,
+          htmlSnippet: picked.outerHtmlSnippet,
+          textSnippet: picked.textSnippet,
+        });
+
+        if (generated && generated.fields && generated.fields.length > 0) {
+          handleUpdateProperties(nodeId, {
+            containerSelector: generated.containerSelector || picked.selector,
+            fields: generated.fields,
+          });
+
+          // Show friendly Chrome notification if available
+          if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+            chrome.runtime
+              .sendMessage({
+                type: 'SHOW_NOTIFICATION',
+                payload: {
+                  title: '✨ AutoFlow AI Schema Created',
+                  message: `Generated schema with ${generated.fields.length} fields for ${
+                    generated.containerSelector || picked.selector
+                  } (${generated.summary || generated.category || 'Custom schema'})`,
+                },
+              })
+              .catch(() => {});
+          }
         }
       } catch (err: any) {
-        setIsPickingElement(false);
-        alert(`Could not start Element Picker: ${err.message || String(err)}`);
+        console.error('Failed to generate schema with AI:', err);
+        alert(`AI Schema generation error: ${err.message || String(err)}`);
+      } finally {
+        setIsGeneratingSchema(false);
       }
-    } else {
-      alert('Element Picker communicates directly with live webpages in Chrome/Edge.');
-    }
-  }, []);
+    },
+    [handleUpdateProperties]
+  );
 
   // Action Recorder Integration
   const handleToggleRecord = useCallback(async () => {
@@ -739,23 +796,73 @@ export const App: React.FC = () => {
         const picked: ElementSelectionResult = message.payload;
         setIsPickingElement(false);
 
-        if (selectedNodeId) {
-          handleUpdateProperties(selectedNodeId, {
-            selector: picked.selector,
-            strategies: picked.strategies,
-            tagName: picked.tagName,
-            textSnippet: picked.textSnippet,
-            ...(picked.patternMode
-              ? {
-                  patternMode: true,
-                  patternMatchCount: picked.matchCount,
-                  patternSampleTexts: picked.sampleTexts,
-                  item1Selector: picked.item1Selector,
-                  item2Selector: picked.item2Selector,
-                }
-              : {}),
-          });
+        if (!selectedNodeId) return;
+
+        // Context 1: AI Schema Generation
+        if (picked.context === 'ai_schema') {
+          handleGenerateSchemaFromElement(selectedNodeId, picked);
+          return;
         }
+
+        // Context 2: Card Container Selector
+        if (picked.context === 'container') {
+          handleUpdateProperties(selectedNodeId, {
+            containerSelector: picked.selector,
+          });
+          return;
+        }
+
+        // Context 3: Individual Card Field Selector
+        if (picked.context === 'field' && typeof picked.fieldIndex === 'number') {
+          const targetNode = nodes.find((n) => n.id === selectedNodeId);
+          if (targetNode) {
+            const currentFields = Array.isArray(targetNode.data.properties.fields)
+              ? [...targetNode.data.properties.fields]
+              : [];
+            if (currentFields[picked.fieldIndex]) {
+              currentFields[picked.fieldIndex] = {
+                ...currentFields[picked.fieldIndex],
+                selector: picked.selector,
+              };
+              handleUpdateProperties(selectedNodeId, {
+                fields: currentFields,
+              });
+            }
+          }
+          return;
+        }
+
+        // Context 4: Stop Condition Selector
+        if (picked.context === 'stopCondition') {
+          const targetNode = nodes.find((n) => n.id === selectedNodeId);
+          if (targetNode) {
+            const currentStop = targetNode.data.properties.stopCondition || {};
+            handleUpdateProperties(selectedNodeId, {
+              stopCondition: {
+                ...currentStop,
+                selector: picked.selector,
+              },
+            });
+          }
+          return;
+        }
+
+        // Context 5: Standard Element Selector
+        handleUpdateProperties(selectedNodeId, {
+          selector: picked.selector,
+          strategies: picked.strategies,
+          tagName: picked.tagName,
+          textSnippet: picked.textSnippet,
+          ...(picked.patternMode
+            ? {
+                patternMode: true,
+                patternMatchCount: picked.matchCount,
+                patternSampleTexts: picked.sampleTexts,
+                item1Selector: picked.item1Selector,
+                item2Selector: picked.item2Selector,
+              }
+            : {}),
+        });
       }
 
       if (message.type === 'PICKER_CANCELLED') {
@@ -1064,6 +1171,7 @@ export const App: React.FC = () => {
               onRunSingleNode={handleRunSingleNode}
               onStartElementPicker={handleStartElementPicker}
               isPickingElement={isPickingElement}
+              isGeneratingSchema={isGeneratingSchema}
               onClose={() => setIsPropertiesCollapsed(true)}
               allNodes={nodes}
             />

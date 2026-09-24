@@ -19,7 +19,15 @@ export type ExtensionMessage =
   | { type: 'LIST_TABS' }
 
   // Element Picker
-  | { type: 'START_ELEMENT_PICKER'; payload?: { tabId?: number; mode?: 'single' | 'pattern_2click' } }
+  | {
+      type: 'START_ELEMENT_PICKER';
+      payload?: {
+        tabId?: number;
+        mode?: 'single' | 'pattern_2click';
+        context?: 'selector' | 'container' | 'field' | 'ai_schema' | 'stopCondition' | string;
+        fieldIndex?: number;
+      };
+    }
   | { type: 'STOP_ELEMENT_PICKER'; payload?: { tabId?: number } }
   | { type: 'ELEMENT_PICKED'; payload: ElementSelectionResult }
   | { type: 'PICKER_CANCELLED' }

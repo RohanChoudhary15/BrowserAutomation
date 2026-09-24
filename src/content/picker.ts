@@ -10,6 +10,8 @@ let bannerEl: HTMLDivElement | null = null;
 let hoveredElement: Element | null = null;
 let isPickerActive = false;
 let currentPickerMode: PickerMode = 'single';
+let currentPickerContext: string = 'selector';
+let currentFieldIndex: number | undefined = undefined;
 
 // 2-Click Pattern Detection State
 let patternStep: 1 | 2 | 'confirm' = 1;
@@ -80,6 +82,30 @@ function renderBanner() {
   if (!bannerEl) return;
 
   if (currentPickerMode === 'single') {
+    if (currentPickerContext === 'ai_schema') {
+      bannerEl.innerHTML = `
+        <span class="autoflow-pattern-badge-pill" style="background:#4338ca; border-color:#6366f1; color:#c7d2fe;">✨ AI Schema Mode</span>
+        <span>Click any <strong>card or item</strong> to generate its extraction schema with AI</span>
+        <span class="autoflow-picker-kbd">Esc</span> to cancel
+      `;
+      return;
+    }
+    if (currentPickerContext === 'container') {
+      bannerEl.innerHTML = `
+        <span class="autoflow-pattern-badge-pill" style="background:#065f46; border-color:#10b981; color:#a7f3d0;">Card Container</span>
+        <span>Click the <strong>card or repeating item container</strong> on the page</span>
+        <span class="autoflow-picker-kbd">Esc</span> to cancel
+      `;
+      return;
+    }
+    if (currentPickerContext === 'field') {
+      bannerEl.innerHTML = `
+        <span class="autoflow-pattern-badge-pill" style="background:#1e3a8a; border-color:#3b82f6; color:#bfdbfe;">Field Selector</span>
+        <span>Click the element on the page for this field</span>
+        <span class="autoflow-picker-kbd">Esc</span> to cancel
+      `;
+      return;
+    }
     bannerEl.innerHTML = `
       <span class="autoflow-picker-banner-indicator"></span>
       <span><strong>Element Picker:</strong> Click any element to select it</span>
@@ -205,7 +231,9 @@ function handleClick(e: MouseEvent) {
 
   // 1. Single Mode: Pick immediately
   if (currentPickerMode === 'single') {
-    const result = buildElementSelectionResult(hoveredElement);
+    const result = buildElementSelectionResult(hoveredElement, currentPickerContext);
+    result.context = currentPickerContext;
+    result.fieldIndex = currentFieldIndex;
     stopElementPicker();
     onPickCallback?.(result);
     return;
@@ -267,7 +295,9 @@ function handleKeyDown(e: KeyboardEvent) {
 export function startElementPicker(
   onPick: PickCallback,
   onCancel: CancelCallback,
-  mode: PickerMode = 'single'
+  mode: PickerMode = 'single',
+  context: string = 'selector',
+  fieldIndex?: number
 ) {
   if (isPickerActive) {
     stopElementPicker();
@@ -275,6 +305,8 @@ export function startElementPicker(
 
   isPickerActive = true;
   currentPickerMode = mode;
+  currentPickerContext = context;
+  currentFieldIndex = fieldIndex;
   onPickCallback = onPick;
   onCancelCallback = onCancel;
   patternStep = 1;

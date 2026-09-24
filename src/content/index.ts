@@ -29,11 +29,17 @@ if (!(window as any).__autoflow_listener_registered__) {
 
           case 'START_ELEMENT_PICKER': {
             const pickerMode = (message as any).payload?.mode || 'single';
+            const pickerContext = (message as any).payload?.context || 'selector';
+            const fieldIndex = (message as any).payload?.fieldIndex;
             startElementPicker(
               (result) => {
                 chrome.runtime.sendMessage({
                   type: 'ELEMENT_PICKED',
-                  payload: result,
+                  payload: {
+                    ...result,
+                    context: pickerContext,
+                    fieldIndex,
+                  },
                 });
               },
               () => {
@@ -41,7 +47,9 @@ if (!(window as any).__autoflow_listener_registered__) {
                   type: 'PICKER_CANCELLED',
                 });
               },
-              pickerMode
+              pickerMode,
+              pickerContext,
+              fieldIndex
             );
             return { success: true };
           }

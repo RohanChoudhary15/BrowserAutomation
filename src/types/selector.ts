@@ -35,4 +35,7 @@ export interface ElementSelectionResult {
   sampleTexts?: string[];
   item1Selector?: string;
   item2Selector?: string;
+  outerHtmlSnippet?: string;
+  context?: 'selector' | 'container' | 'field' | 'ai_schema' | 'stopCondition' | string;
+  fieldIndex?: number;
 }

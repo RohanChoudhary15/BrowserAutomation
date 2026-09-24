@@ -33,6 +33,7 @@ import {
   Maximize2,
   Minimize2,
   Flame,
+  Loader2,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
@@ -84,8 +85,9 @@ interface PropertiesPanelProps {
   onCopyNodes?: (nodes: WorkflowNode[]) => void;
   onDuplicateNodes?: (nodes: WorkflowNode[]) => void;
   onRunSingleNode: (node: WorkflowNode) => void;
-  onStartElementPicker: (mode?: 'single' | 'pattern_2click') => void;
+  onStartElementPicker: (mode?: 'single' | 'pattern_2click', context?: string, fieldIndex?: number) => void;
   isPickingElement: boolean;
+  isGeneratingSchema?: boolean;
   onClose: () => void;
   allNodes?: WorkflowNode[];
 }
@@ -107,6 +109,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onRunSingleNode,
   onStartElementPicker,
   isPickingElement,
+  isGeneratingSchema = false,
   onClose,
   allNodes = [],
 }) => {
@@ -1412,7 +1415,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                           <label className="text-[10px] text-gray-400">Container Element (optional)</label>
                           <button
                             type="button"
-                            onClick={() => onStartElementPicker('single')}
+                            onClick={() => onStartElementPicker('single', 'stopCondition')}
                             className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-white"
                           >
                             <Crosshair className="w-3 h-3" />
@@ -1440,7 +1443,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                         <label className="text-[10px] text-gray-400">Element to Watch For</label>
                         <button
                           type="button"
-                          onClick={() => onStartElementPicker('single')}
+                          onClick={() => onStartElementPicker('single', 'stopCondition')}
                           className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-white"
                         >
                           <Crosshair className="w-3 h-3" />
@@ -1848,6 +1851,51 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {/* Scrape Elements (Product Cards / Multi-Field) Node */}
         {selectedNode.data.type === 'scrape_elements' && (
           <div className="space-y-3.5 pt-2 border-t border-[#1c2230]">
+            {/* AI Schema Generator from Selected Element */}
+            <div className="p-3 rounded-xl bg-gradient-to-br from-indigo-950/40 via-[#121624] to-purple-950/30 border border-indigo-500/30 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  <span>AI Card Schema Generator</span>
+                </div>
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium">
+                  Auto-Detect
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Click any item or card on the webpage (GitHub repo, product, blog post, job card). AutoFlow AI will automatically extract the container selector and generate customized field mappings for you!
+              </p>
+              <button
+                type="button"
+                disabled={isGeneratingSchema || isPickingElement}
+                onClick={() => onStartElementPicker('single', 'ai_schema')}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all shadow-md ${
+                  isGeneratingSchema
+                    ? 'bg-indigo-700 text-white cursor-wait animate-pulse'
+                    : isPickingElement
+                    ? 'bg-rose-600 text-white animate-pulse'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white hover:shadow-indigo-500/25'
+                }`}
+              >
+                {isGeneratingSchema ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Analyzing Element with AI...</span>
+                  </>
+                ) : isPickingElement ? (
+                  <>
+                    <Crosshair className="w-3.5 h-3.5" />
+                    <span>Click Target Card on Webpage...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Select Element & Auto-Generate Schema with AI</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             {/* Card Container Selector */}
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -1856,7 +1904,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </label>
                 <button
                   type="button"
-                  onClick={() => onStartElementPicker('single')}
+                  onClick={() => onStartElementPicker('single', 'container')}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
                     isPickingElement
                       ? 'bg-rose-600 text-white animate-pulse'
@@ -1885,10 +1933,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <span className="text-[10px] font-medium text-gray-400 block mb-1">
                 Quick Schema Presets:
               </span>
-              <div className="grid grid-cols-3 gap-1">
+              <div className="grid grid-cols-4 gap-1">
                 <button
                   type="button"
                   onClick={() => {
+                    handlePropChange('containerSelector', 'article.Box-row, .Box-row');
+                    handlePropChange('fields', [
+                      { name: 'repo_name', selector: 'h1 a, h2 a', attribute: 'text' },
+                      { name: 'repo_url', selector: 'h1 a, h2 a', attribute: 'href' },
+                      { name: 'description', selector: 'p', attribute: 'text' },
+                      { name: 'language', selector: '[itemprop="programmingLanguage"]', attribute: 'text' },
+                      { name: 'stars', selector: 'a[href*="stargazers"]', attribute: 'text' },
+                      { name: 'forks', selector: 'a[href*="forks"]', attribute: 'text' },
+                      { name: 'stars_today', selector: 'span.float-sm-right', attribute: 'text' },
+                    ]);
+                  }}
+                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
+                >
+                  GitHub
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePropChange('containerSelector', '.product-card, article');
                     handlePropChange('fields', [
                       { name: 'title', selector: 'h2, h3, h4, .title, [class*="title"]', attribute: 'text' },
                       { name: 'price', selector: '.price, [class*="price"]', attribute: 'text' },
@@ -1904,6 +1971,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    handlePropChange('containerSelector', 'article, .post, .article-card');
                     handlePropChange('fields', [
                       { name: 'headline', selector: 'h2, h3, h4, a', attribute: 'text' },
                       { name: 'author', selector: '.author, [rel="author"]', attribute: 'text' },
@@ -1920,17 +1988,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    handlePropChange('containerSelector', '.job-item, li, article');
                     handlePropChange('fields', [
-                      { name: 'name', selector: 'h3, h4, .name, strong', attribute: 'text' },
-                      { name: 'role', selector: '.role, .title', attribute: 'text' },
-                      { name: 'company', selector: '.company', attribute: 'text' },
-                      { name: 'email', selector: 'a[href^="mailto:"]', attribute: 'href' },
+                      { name: 'job_title', selector: 'h2, h3, [class*="title" i]', attribute: 'text' },
+                      { name: 'company', selector: '[class*="company" i]', attribute: 'text' },
+                      { name: 'location', selector: '[class*="location" i]', attribute: 'text' },
                       { name: 'link', selector: 'a', attribute: 'href' },
+                      { name: 'description', selector: 'p', attribute: 'text' },
                     ]);
                   }}
                   className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
                 >
-                  Leads
+                  Jobs
                 </button>
               </div>
             </div>
@@ -1987,6 +2056,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                         placeholder="Selector inside card (e.g. h2, img, a)"
                         className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono"
                       />
+                      <button
+                        type="button"
+                        onClick={() => onStartElementPicker('single', 'field', idx)}
+                        className="p-1 hover:bg-[#1f2738] text-gray-400 hover:text-indigo-400 rounded border border-[#202738] transition-colors"
+                        title="Pick selector for this field from page"
+                      >
+                        <Crosshair className="w-3 h-3" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
