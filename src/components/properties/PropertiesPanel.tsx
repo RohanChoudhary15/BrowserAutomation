@@ -2116,80 +2116,83 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </div>
 
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                {(Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : [
-                  { name: 'title', selector: 'h2', attribute: 'text' },
-                  { name: 'price', selector: '.price', attribute: 'text' },
-                  { name: 'image', selector: 'img', attribute: 'src' },
-                  { name: 'link', selector: 'a', attribute: 'href' },
-                ]).map((field: any, idx: number) => (
-                  <div key={idx} className="bg-[#141924] p-2 rounded-lg border border-[#202738] space-y-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={field.name}
-                        onChange={(e) => {
-                          const updated = [...(props.fields || [])];
-                          updated[idx] = { ...updated[idx], name: e.target.value };
-                          handlePropChange('fields', updated);
-                        }}
-                        placeholder="Field name"
-                        className="w-1/3 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px]"
-                      />
-                      <input
-                        type="text"
-                        value={field.selector}
-                        onChange={(e) => {
-                          const updated = [...(props.fields || [])];
-                          updated[idx] = { ...updated[idx], selector: e.target.value };
-                          handlePropChange('fields', updated);
-                        }}
-                        placeholder="Selector inside card (e.g. h2, img, a)"
-                        className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onStartElementPicker('single', 'field', idx)}
-                        className="p-1 hover:bg-[#1f2738] text-gray-400 hover:text-indigo-400 rounded border border-[#202738] transition-colors"
-                        title="Pick selector for this field from page"
-                      >
-                        <Crosshair className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = (props.fields || []).filter((_: any, i: number) => i !== idx);
-                          handlePropChange('fields', updated);
-                        }}
-                        className="text-gray-500 hover:text-red-400 p-1"
-                        title="Delete field"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                {(() => {
+                  const effectiveFields = Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : [
+                    { name: 'title', selector: 'h2', attribute: 'text' },
+                    { name: 'price', selector: '.price', attribute: 'text' },
+                    { name: 'image', selector: 'img', attribute: 'src' },
+                    { name: 'link', selector: 'a', attribute: 'href' },
+                  ];
+                  return effectiveFields.map((field: any, idx: number) => (
+                    <div key={idx} className="bg-[#141924] p-2 rounded-lg border border-[#202738] space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={field.name}
+                          onChange={(e) => {
+                            const updated = [...effectiveFields];
+                            updated[idx] = { ...updated[idx], name: e.target.value };
+                            handlePropChange('fields', updated);
+                          }}
+                          placeholder="Field name"
+                          className="w-1/3 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px]"
+                        />
+                        <input
+                          type="text"
+                          value={field.selector}
+                          onChange={(e) => {
+                            const updated = [...effectiveFields];
+                            updated[idx] = { ...updated[idx], selector: e.target.value };
+                            handlePropChange('fields', updated);
+                          }}
+                          placeholder="Selector inside card (e.g. h2, img, a)"
+                          className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[11px] font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onStartElementPicker('single', 'field', idx)}
+                          className="p-1 hover:bg-[#1f2738] text-gray-400 hover:text-indigo-400 rounded border border-[#202738] transition-colors"
+                          title="Pick selector for this field from page"
+                        >
+                          <Crosshair className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = effectiveFields.filter((_: any, i: number) => i !== idx);
+                            handlePropChange('fields', updated);
+                          }}
+                          className="text-gray-500 hover:text-red-400 p-1"
+                          title="Delete field"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
 
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-gray-500 shrink-0">Extract:</span>
-                      <select
-                        value={field.attribute || 'text'}
-                        onChange={(e) => {
-                          const updated = [...(props.fields || [])];
-                          updated[idx] = { ...updated[idx], attribute: e.target.value };
-                          handlePropChange('fields', updated);
-                        }}
-                        className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[10px]"
-                      >
-                        <option value="text">Text Content</option>
-                        <option value="src">Image URL (src / lazy data-src / srcset)</option>
-                        <option value="href">Link URL (href - absolute URL)</option>
-                        <option value="paragraphs">Paragraphs (all &lt;p&gt; aggregated)</option>
-                        <option value="value">Form Input Value</option>
-                        <option value="innerHTML">innerHTML</option>
-                        <option value="outerHTML">outerHTML</option>
-                        <option value="data-id">data-id / custom attribute</option>
-                      </select>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-gray-500 shrink-0">Extract:</span>
+                        <select
+                          value={field.attribute || 'text'}
+                          onChange={(e) => {
+                            const updated = [...effectiveFields];
+                            updated[idx] = { ...updated[idx], attribute: e.target.value };
+                            handlePropChange('fields', updated);
+                          }}
+                          className="flex-1 bg-[#0d1017] text-white px-2 py-1 rounded border border-[#202738] outline-none text-[10px]"
+                        >
+                          <option value="text">Text Content</option>
+                          <option value="src">Image URL (src / lazy data-src / srcset)</option>
+                          <option value="href">Link URL (href - absolute URL)</option>
+                          <option value="paragraphs">Paragraphs (all &lt;p&gt; aggregated)</option>
+                          <option value="value">Form Input Value</option>
+                          <option value="innerHTML">innerHTML</option>
+                          <option value="outerHTML">outerHTML</option>
+                          <option value="data-id">data-id / custom attribute</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             </div>
 

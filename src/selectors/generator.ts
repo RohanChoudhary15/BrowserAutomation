@@ -81,6 +81,32 @@ export function generateSelectors(el: Element): SelectorCandidate[] {
     }
   }
 
+  // 1b. Schema.org itemprop (Microdata - high reliability for repeating data fields)
+  const itemprop = el.getAttribute('itemprop');
+  if (itemprop) {
+    candidates.push({
+      type: 'css',
+      value: `[itemprop="${itemprop}"]`,
+      reliabilityScore: 1.2,
+      description: `Itemprop (${itemprop})`,
+    });
+  }
+
+  // 1c. Data attributes for semantic fields
+  const fieldDataAttrs = ['data-field', 'data-component', 'data-name', 'data-prop', 'data-column'];
+  for (const attr of fieldDataAttrs) {
+    const val = el.getAttribute(attr);
+    if (val) {
+      candidates.push({
+        type: 'css',
+        value: `[${attr}="${val}"]`,
+        reliabilityScore: 1.5,
+        description: `Field Data Attribute (${attr})`,
+      });
+      break;
+    }
+  }
+
   // 2. Stable ID
   const id = el.getAttribute('id');
   if (id && !isDynamicId(id)) {
@@ -150,6 +176,14 @@ export function generateSelectors(el: Element): SelectorCandidate[] {
     });
   }
 
+  // 6b. HTML Tag candidate (for semantic tags: h1-h6, p, a, img, span, button, etc.)
+  candidates.push({
+    type: 'css',
+    value: tag,
+    reliabilityScore: 7.5,
+    description: `HTML Tag (<${tag}>)`,
+  });
+
   // 7. Hierarchical CSS path
   const parent = el.parentElement;
   if (parent) {
@@ -210,9 +244,29 @@ export function buildElementSelectionResult(el: Element, context?: string): Elem
 
   // If selecting a repeating container or generating an AI schema, prefer class / css over unique text
   if (context === 'container' || context === 'card_container' || context === 'card' || context === 'ai_schema') {
-    const classCandidate = strategies.find(s => s.type === 'css');
+    const classCandidate = strategies.find(s => s.type === 'css' && !s.value.includes('#'));
     if (classCandidate) {
       best = classCandidate.value;
+    } else {
+      best = el.tagName.toLowerCase();
+    }
+  }
+
+  // If selecting an individual field inside a repeating container, prefer reusable semantic/structural selectors
+  // (itemprop, testid, css classes, or bare tag) and NEVER prefer unique instance text (:has-text) or unique IDs
+  if (context === 'field' || context?.startsWith('field')) {
+    const attrCandidate = strategies.find(
+      s => s.value.includes('itemprop') || s.type === 'testid' || s.value.includes('data-')
+    );
+    const classCandidate = strategies.find(s => s.type === 'css' && !s.value.includes('#') && s.value !== el.tagName.toLowerCase());
+    const ariaCandidate = strategies.find(s => s.type === 'aria' || s.type === 'name');
+
+    if (attrCandidate) {
+      best = attrCandidate.value;
+    } else if (classCandidate) {
+      best = classCandidate.value;
+    } else if (ariaCandidate) {
+      best = ariaCandidate.value;
     } else {
       best = el.tagName.toLowerCase();
     }

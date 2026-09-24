@@ -364,4 +364,83 @@ describe('Scrape Products - Resilient Tag & Nested Text Extraction', () => {
     expect(res.items[0].title).toBe('repo-1');
     expect(res.items[0].description).toBe('Description 1');
   });
+
+  it('guarantees identical extraction for h2, itemprop, and compound classes across queryElement and extractDataset', async () => {
+    document.body.innerHTML = `
+      <div class="Box">
+        <article class="Box-row">
+          <h2 class="h3 lh-condensed">
+            <a href="/rohitg00/predictive-analytics">rohitg00 / predictive-analytics</a>
+          </h2>
+          <p class="col-9 color-fg-muted my-1 pr-4">Predictive analytics algorithms and models in Python.</p>
+          <div class="f6 color-fg-muted mt-2">
+            <span class="tmp-mr-3 d-inline-block ml-0 tmp-ml-0">
+              <span class="repo-language-color" style="background-color: #3572A5"></span>
+              <span itemprop="programmingLanguage">Python</span>
+            </span>
+          </div>
+        </article>
+      </div>
+    `;
+
+    // 1. Check extract_text engine (queryElement)
+    const { queryElement } = await import('../src/selectors/finder');
+    const h2El = queryElement('h2');
+    expect(h2El).not.toBeNull();
+    expect(h2El?.textContent?.trim()).toContain('predictive-analytics');
+
+    const itempropSingleQuotes = queryElement("[itemprop='programmingLanguage']");
+    expect(itempropSingleQuotes).not.toBeNull();
+    expect(itempropSingleQuotes?.textContent?.trim()).toBe('Python');
+
+    const itempropUnbracketed = queryElement("itemprop='programmingLanguage'");
+    expect(itempropUnbracketed).not.toBeNull();
+    expect(itempropUnbracketed?.textContent?.trim()).toBe('Python');
+
+    const compoundClassEl = queryElement('span.d-inline-block.ml-0.mr-3');
+    expect(compoundClassEl).not.toBeNull();
+    expect(compoundClassEl?.textContent?.trim()).toContain('Python');
+
+    // 2. Check scrape_elements engine (extractDataset) with the same selectors
+    const res = await extractDataset({
+      containerSelector: 'article.Box-row',
+      fields: [
+        { name: 'repo_name', selector: 'h2', attribute: 'text' },
+        { name: 'scoped_repo_name', selector: 'article.Box-row h2', attribute: 'text' },
+        { name: 'language_itemprop', selector: "[itemprop='programmingLanguage']", attribute: 'text' },
+        { name: 'language_unbracketed', selector: "itemprop='programmingLanguage'", attribute: 'text' },
+        { name: 'language_compound', selector: 'span.d-inline-block.ml-0.mr-3', attribute: 'text' },
+      ],
+    });
+
+    expect(res.items.length).toBe(1);
+    expect(res.items[0].repo_name).toBe('rohitg00 / predictive-analytics');
+    expect(res.items[0].scoped_repo_name).toBe('rohitg00 / predictive-analytics');
+    expect(res.items[0].language_itemprop).toBe('Python');
+    expect(res.items[0].language_unbracketed).toBe('Python');
+    expect(res.items[0].language_compound).toBe('Python');
+  });
+
+  it('generates non-instance-specific selectors when context is field', async () => {
+    const { buildElementSelectionResult } = await import('../src/selectors/generator');
+    document.body.innerHTML = `
+      <article class="Box-row">
+        <h2 class="h3 lh-condensed">
+          <a href="/user/repo">user / repo</a>
+        </h2>
+        <span itemprop="programmingLanguage">TypeScript</span>
+      </article>
+    `;
+
+    const h2El = document.querySelector('h2')!;
+    const h2Result = buildElementSelectionResult(h2El, 'field');
+    // Must NOT contain :has-text("user / repo")
+    expect(h2Result.selector).not.toContain(':has-text');
+    expect(h2Result.selector).toMatch(/h2/);
+
+    const langEl = document.querySelector('[itemprop="programmingLanguage"]')!;
+    const langResult = buildElementSelectionResult(langEl, 'field');
+    // Must pick semantic itemprop selector
+    expect(langResult.selector).toBe('[itemprop="programmingLanguage"]');
+  });
 });

@@ -2280,7 +2280,7 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
   if (excludeEmpty && items.length > 0) {
     const initialCount = items.length;
     const isValEmpty = (v: any) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0);
-    items = items.filter((row: any) => {
+    let filtered = items.filter((row: any) => {
       if (!row || typeof row !== 'object') return false;
       const keys = Object.keys(row);
       if (keys.length === 0) return false;
@@ -2290,6 +2290,18 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
         return !keys.every((k) => isValEmpty(row[k]));
       }
     });
+
+    // Graceful fallback: If strict 'any' dropped all rows because some card fields were optional
+    // (e.g. repo cards without language/stars or products without sale price), retain rows with at least one non-empty value
+    if (filtered.length === 0 && initialCount > 0 && filterEmptyMode === 'any') {
+      filtered = items.filter((row: any) => {
+        if (!row || typeof row !== 'object') return false;
+        const keys = Object.keys(row);
+        return !keys.every((k) => isValEmpty(row[k]));
+      });
+    }
+    items = filtered;
+
     if (items.length < initialCount) {
       ctx.log({
         level: 'info',

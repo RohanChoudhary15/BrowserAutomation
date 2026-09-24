@@ -1,4 +1,4 @@
-import { waitForElement, queryElement, isElementVisible } from '../selectors/finder';
+import { waitForElement, queryElement, queryElements, isElementVisible } from '../selectors/finder';
 import { InteractiveElement } from '../ai/types';
 import { HumanConfig, randomBetween, wait } from '../utils/human';
 import {
@@ -10,7 +10,7 @@ import {
   moveCursorTo,
 } from './humanizer';
 import { matchesText, findMatchingElement, TextMatchOptions } from '../utils/textMatcher';
-export { waitForElement, queryElement };
+export { waitForElement, queryElement, queryElements };
 
 export async function clickElement(
   selector: string,
@@ -1263,92 +1263,12 @@ function matchesSafe(el: Element, sel: string): boolean {
 
 export function safeQueryElements(root: ParentNode, sel: string): Element[] {
   if (!sel || !sel.trim()) return [];
-  const rawSel = sel.trim();
-  const results: Element[] = [];
-
-  const addUnique = (el: Element | null | undefined) => {
-    if (el && !results.includes(el)) {
-      results.push(el);
-    }
-  };
-
-  // If root is itself an Element matching the selector, include it as candidate
-  if (root instanceof Element && matchesSafe(root, rawSel)) {
-    addUnique(root);
-  }
-
-  // 1. Direct query
-  try {
-    const queried = Array.from(root.querySelectorAll(rawSel));
-    for (const q of queried) addUnique(q);
-    if (results.length > 0) return results;
-  } catch {}
-
-  // 2. Combinator-first selector (e.g. "> h2", "> p", "+ div")
-  if (/^[>+~]/.test(rawSel)) {
-    try {
-      const scopeSel = `:scope ${rawSel}`;
-      const queried = Array.from(root.querySelectorAll(scopeSel));
-      for (const q of queried) addUnique(q);
-      if (results.length > 0) return results;
-    } catch {}
-  }
-
-  // 3. Container-prefixed or complex scoped selector
-  if (root instanceof Element) {
-    try {
-      const scopeSel = `:scope ${rawSel}`;
-      const queried = Array.from(root.querySelectorAll(scopeSel));
-      for (const q of queried) addUnique(q);
-      if (results.length > 0) return results;
-    } catch {}
-
-    // Check if selector starts with a selector that matches root itself
-    // e.g. root matches .product-card and sel is ".product-card h2" or "article.product_pod > h3"
-    const parts = rawSel.split(/\s+(?:>\s+)?/);
-    if (parts.length > 1) {
-      const firstPart = parts[0].trim();
-      if (firstPart && matchesSafe(root, firstPart)) {
-        const remainder = rawSel.slice(firstPart.length).replace(/^[\s>+~]+/, '').trim();
-        if (remainder) {
-          try {
-            const queried = Array.from(root.querySelectorAll(remainder));
-            for (const q of queried) addUnique(q);
-            if (results.length > 0) return results;
-          } catch {}
-          try {
-            const scopeRemainder = `:scope ${remainder}`;
-            const queried = Array.from(root.querySelectorAll(scopeRemainder));
-            for (const q of queried) addUnique(q);
-            if (results.length > 0) return results;
-          } catch {}
-        }
-      }
-    }
-  }
-
-  // 4. XPath fallback for expressions starting with // or (
-  try {
-    if (rawSel.startsWith('//') || rawSel.startsWith('(')) {
-      const doc = root instanceof Document ? root : root.ownerDocument || document;
-      const res = doc.evaluate(rawSel, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-      for (let i = 0; i < res.snapshotLength; i++) {
-        const item = res.snapshotItem(i);
-        if (item instanceof Element) {
-          addUnique(item);
-        }
-      }
-      return results;
-    }
-  } catch {}
-
-  return results;
+  return queryElements(sel, root);
 }
 
 export function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
   if (!sel || !sel.trim()) return null;
-  const list = safeQueryElements(root, sel);
-  return list[0] || null;
+  return queryElement(sel, root);
 }
 
 /**
@@ -1479,6 +1399,10 @@ export function extractFieldFromElement(
       effectiveSel = 'a[href], a';
     } else if (/^(desc|description|details|summary|text)/i.test(fieldName)) {
       effectiveSel = 'p, .description, [class*="desc" i]';
+    } else if (/^(language|lang|programming_language|programminglanguage)/i.test(fieldName)) {
+      effectiveSel = '[itemprop="programmingLanguage"], [class*="lang" i], span.repo-language-color + span, span';
+    } else if (/^(h1|h2|h3|h4|h5|h6|p|a|span|li|td|th|button|label|strong|b|em|i|code|pre)$/i.test(fieldName)) {
+      effectiveSel = fieldName.toLowerCase();
     }
   }
 
@@ -1507,7 +1431,18 @@ export function extractFieldFromElement(
 
     // Check candidate elements in order, finding the first that yields a non-empty value
     for (const el of candidateEls) {
-      const val = resolveElementAttribute(el, attrType);
+      let val = resolveElementAttribute(el, attrType);
+      if (!val || val.trim() === '') {
+        // Inspect nested children for non-empty text (e.g. inside wrapper spans/links)
+        const children = Array.from(el.querySelectorAll('*'));
+        for (const ch of children) {
+          const chVal = resolveElementAttribute(ch, attrType);
+          if (chVal && chVal.trim() !== '') {
+            val = chVal;
+            break;
+          }
+        }
+      }
       if (val && val.trim() !== '') {
         return val;
       }

@@ -580,42 +580,151 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
             }
           }
 
+          function normalizeSelector(sel: string): string {
+            if (!sel) return '';
+            let s = sel.trim();
+            if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+              const unquoted = s.slice(1, -1).trim();
+              if (unquoted.includes('[') || unquoted.includes('.') || unquoted.includes('#') || unquoted.includes('//') || unquoted.includes(':')) {
+                s = unquoted;
+              }
+            }
+            if (/^[a-zA-Z0-9_\-]+(?:\*|\^|\$|~|\|)?=/.test(s) && !s.startsWith('[')) {
+              s = `[${s}]`;
+            }
+            return s;
+          }
+
           function safeQueryElements(root: ParentNode, sel: string): Element[] {
             if (!sel || !sel.trim()) return [];
-            try {
-              return Array.from(root.querySelectorAll(sel));
-            } catch {
+            const normalized = normalizeSelector(sel);
+            const results: Element[] = [];
+            const addUnique = (el: Element | null | undefined) => {
+              if (el && !results.includes(el)) results.push(el);
+            };
+
+            if (root instanceof Element) {
               try {
-                if (sel.startsWith('//') || sel.startsWith('(')) {
-                  const doc = root instanceof Document ? root : root.ownerDocument || document;
-                  const res = doc.evaluate(sel, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                  const list: Element[] = [];
-                  for (let i = 0; i < res.snapshotLength; i++) {
-                    const item = res.snapshotItem(i);
-                    if (item instanceof Element) list.push(item);
-                  }
-                  return list;
+                if (root.matches(normalized) || normalized === 'self' || normalized === ':scope' || normalized === '.') {
+                  addUnique(root);
                 }
               } catch {}
-              return [];
             }
+
+            // 1. XPath
+            if (normalized.startsWith('//') || normalized.startsWith('(') || normalized.startsWith('./') || normalized.startsWith('.//')) {
+              try {
+                const doc = root instanceof Document ? root : root.ownerDocument || document;
+                const res = doc.evaluate(normalized, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                for (let i = 0; i < res.snapshotLength; i++) {
+                  const item = res.snapshotItem(i);
+                  if (item instanceof Element) addUnique(item);
+                }
+                if (results.length > 0) return results;
+              } catch {}
+            }
+
+            // 2. Direct querySelectorAll
+            try {
+              const queried = Array.from(root.querySelectorAll(normalized));
+              for (const q of queried) addUnique(q);
+              if (results.length > 0) return results;
+            } catch {
+              // Quote swap
+              if (normalized.includes("'") || normalized.includes('"')) {
+                try {
+                  const swapped = normalized.includes("'")
+                    ? normalized.replace(/'([^']*)'/g, '"$1"')
+                    : normalized.replace(/"([^"]*)"/g, "'$1'");
+                  const queried = Array.from(root.querySelectorAll(swapped));
+                  for (const q of queried) addUnique(q);
+                  if (results.length > 0) return results;
+                } catch {}
+              }
+            }
+
+            // 3. Container prefix stripping (when root is Element)
+            if (root instanceof Element) {
+              const parts = normalized.split(/\s+(?:>\s+)?/);
+              if (parts.length > 1) {
+                const firstPart = parts[0].trim();
+                let matchedPrefix = false;
+                try {
+                  matchedPrefix = root.matches(firstPart);
+                } catch {}
+                if (matchedPrefix) {
+                  const remainder = normalized.slice(firstPart.length).replace(/^[\s>+~]+/, '').trim();
+                  if (remainder) {
+                    const subResults = safeQueryElements(root, remainder);
+                    for (const s of subResults) addUnique(s);
+                    if (results.length > 0) return results;
+                  }
+                }
+                const lastPart = parts[parts.length - 1].trim();
+                if (lastPart && lastPart !== normalized) {
+                  try {
+                    const lastQueried = Array.from(root.querySelectorAll(lastPart));
+                    for (const q of lastQueried) addUnique(q);
+                    if (results.length > 0) return results;
+                  } catch {}
+                }
+              }
+            }
+
+            // 4. Relaxed compound class matching (e.g. span.d-inline-block.ml-0.mr-3 with tmp- prefixes)
+            const compoundClassMatch = normalized.match(/^([a-zA-Z0-9_\-*]*)\.([a-zA-Z0-9_\-.]+)$/);
+            if (compoundClassMatch) {
+              const tag = compoundClassMatch[1] || '*';
+              const classes = compoundClassMatch[2].split('.').filter(Boolean);
+              if (classes.length >= 1) {
+                try {
+                  const candidates = Array.from(root.querySelectorAll(tag));
+                  const scored: { el: Element; score: number }[] = [];
+                  for (const cand of candidates) {
+                    if (!cand.classList) continue;
+                    let score = 0;
+                    for (const cls of classes) {
+                      if (cand.classList.contains(cls)) score++;
+                      else if (Array.from(cand.classList).some((c) => c.endsWith(cls) || c.includes(cls))) score += 0.5;
+                    }
+                    if (score >= 0.5) scored.push({ el: cand, score });
+                  }
+                  scored.sort((a, b) => b.score - a.score);
+                  if (scored.length > 0) {
+                    const topScore = scored[0].score;
+                    const bestMatches = scored.filter((s) => s.score >= topScore - 0.5).map((s) => s.el);
+                    for (const b of bestMatches) addUnique(b);
+                    if (results.length > 0) return results;
+                  }
+                } catch {}
+              }
+            }
+
+            return results;
           }
 
           function safeQuerySingleElement(root: ParentNode, sel: string): Element | null {
             if (!sel || !sel.trim()) return null;
-            try {
-              return root.querySelector(sel);
-            } catch {
-              const list = safeQueryElements(root, sel);
-              return list[0] || null;
-            }
+            const list = safeQueryElements(root, sel);
+            return list[0] || null;
           }
 
           function resolveAttr(el: Element, attrType?: string): string {
             if (!el) return '';
             const attr = (attrType || 'text').trim().toLowerCase();
             if (attr === 'text' || attr === 'innertext' || attr === 'textcontent' || !attrType) {
-              return (el.textContent || '').trim();
+              let text = (el.textContent || '').trim();
+              if (!text) {
+                const children = Array.from(el.querySelectorAll('*'));
+                for (const ch of children) {
+                  const chText = (ch.textContent || '').trim();
+                  if (chText) {
+                    text = chText;
+                    break;
+                  }
+                }
+              }
+              return text;
             }
             if (attr === 'paragraphs' || attr === 'all_paragraphs' || attr === 'all_text') {
               const pEls = safeQueryElements(el, 'p');
@@ -694,15 +803,37 @@ async function executeDirectDomAction(tabId: number, payload: any): Promise<any>
                 const row: Record<string, any> = {};
                 for (const field of safeFields) {
                   const attrType = field.attribute || 'text';
+                  let rawSel = (field.selector || '').trim();
+                  const fieldName = (field.name || '').trim().toLowerCase();
+
+                  if (!rawSel) {
+                    if (/^(title|name|headline|heading|product|header)/i.test(fieldName)) {
+                      rawSel = 'h2, h3, h1, h4, [role="heading"], .title';
+                    } else if (/^(language|lang|programming_language|programminglanguage)/i.test(fieldName)) {
+                      rawSel = '[itemprop="programmingLanguage"], [class*="lang" i], span';
+                    } else if (/^(h1|h2|h3|h4|h5|h6|p|a|span|li|td|th)$/i.test(fieldName)) {
+                      rawSel = fieldName;
+                    }
+                  }
+
                   if (attrType === 'paragraphs' || attrType === 'all_paragraphs') {
-                    const subEls = safeQueryElements(container, field.selector || 'p');
+                    const subEls = safeQueryElements(container, rawSel || 'p');
                     if (subEls.length > 0) {
                       row[field.name] = subEls.map(p => (p.textContent || '').trim()).filter(Boolean).join('\n\n');
                       continue;
                     }
                   }
-                  const targetEl = field.selector ? safeQuerySingleElement(container, field.selector) : container;
-                  row[field.name] = targetEl ? resolveAttr(targetEl, attrType) : '';
+
+                  const targetEls = rawSel ? safeQueryElements(container, rawSel) : [container];
+                  let extractedVal = '';
+                  for (const targetEl of targetEls) {
+                    const val = resolveAttr(targetEl, attrType);
+                    if (val && val.trim() !== '') {
+                      extractedVal = val;
+                      break;
+                    }
+                  }
+                  row[field.name] = extractedVal;
                 }
                 return row;
               });
