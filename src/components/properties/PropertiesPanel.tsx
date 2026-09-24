@@ -36,6 +36,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { fetchAvailableModels } from '../../ai/aiService';
+import { generateSchemaFromElement } from '../../ai/schemaGenerator';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
 import { ModelOption, AiProvider } from '../../ai/types';
 import { BotCredentialsModal } from '../modals/BotCredentialsModal';
@@ -86,6 +87,7 @@ interface PropertiesPanelProps {
   onDuplicateNodes?: (nodes: WorkflowNode[]) => void;
   onRunSingleNode: (node: WorkflowNode) => void;
   onStartElementPicker: (mode?: 'single' | 'pattern_2click', context?: string, fieldIndex?: number) => void;
+  onGenerateSchema?: (nodeId: string) => Promise<void>;
   isPickingElement: boolean;
   isGeneratingSchema?: boolean;
   onClose: () => void;
@@ -108,6 +110,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onDuplicateNodes,
   onRunSingleNode,
   onStartElementPicker,
+  onGenerateSchema,
   isPickingElement,
   isGeneratingSchema = false,
   onClose,
@@ -389,6 +392,68 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       ...props,
       [key]: value,
     });
+  };
+
+  const [isLocalGeneratingSchema, setIsLocalGeneratingSchema] = useState(false);
+  const effectiveGeneratingSchema = isGeneratingSchema || isLocalGeneratingSchema;
+
+  const handleGenerateAiSchema = async () => {
+    if (!selectedNode) return;
+    if (onGenerateSchema) {
+      await onGenerateSchema(selectedNode.id);
+      return;
+    }
+
+    setIsLocalGeneratingSchema(true);
+    try {
+      let htmlSnippet = props.cardHtmlSnippet || '';
+      const textSnippet = props.cardTextSnippet || '';
+      const tagName = props.cardTagName || '';
+      let containerSelector = props.containerSelector || '';
+
+      // If no card snippet was stored, attempt to extract live from active tab
+      if (!htmlSnippet && containerSelector && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        try {
+          const res = await chrome.runtime.sendMessage({
+            type: 'EXECUTE_DOM_ACTION',
+            payload: {
+              action: 'extract_html',
+              params: { selector: containerSelector, mode: 'outer' },
+            },
+          });
+          if (res && res.success && res.html) {
+            htmlSnippet = res.html;
+          }
+        } catch {}
+      }
+
+      // If no container and no snippet, prompt or launch element picker
+      if (!htmlSnippet && !containerSelector) {
+        onStartElementPicker('single', 'card_container');
+        return;
+      }
+
+      const generated = await generateSchemaFromElement({
+        selector: containerSelector,
+        tagName,
+        htmlSnippet,
+        textSnippet,
+      });
+
+      if (generated && generated.fields && generated.fields.length > 0) {
+        onUpdateProperties(selectedNode.id, {
+          ...props,
+          containerSelector: generated.containerSelector || containerSelector,
+          fields: generated.fields,
+          ...(htmlSnippet ? { cardHtmlSnippet: htmlSnippet } : {}),
+        });
+      }
+    } catch (err: any) {
+      console.error('Error generating schema:', err);
+      alert(`AI Schema generation error: ${err.message || String(err)}`);
+    } finally {
+      setIsLocalGeneratingSchema(false);
+    }
   };
 
   const availableVars = Object.keys(variables);
@@ -1851,60 +1916,88 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {/* Scrape Elements (Product Cards / Multi-Field) Node */}
         {selectedNode.data.type === 'scrape_elements' && (
           <div className="space-y-3.5 pt-2 border-t border-[#1c2230]">
-            {/* AI Schema Generator from Selected Element */}
-            <div className="p-3 rounded-xl bg-gradient-to-br from-indigo-950/40 via-[#121624] to-purple-950/30 border border-indigo-500/30 space-y-2">
+            {/* Card Setup: Two Dedicated Action Buttons */}
+            <div className="p-3 rounded-xl bg-gradient-to-br from-[#121624] to-[#17112c] border border-indigo-500/25 space-y-2.5 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span>AI Card Schema Generator</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Card Schema Generator</span>
                 </div>
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium">
-                  Auto-Detect
-                </span>
-              </div>
-              <p className="text-[11px] text-gray-400 leading-relaxed">
-                Click any item or card on the webpage (GitHub repo, product, blog post, job card). AutoFlow AI will automatically extract the container selector and generate customized field mappings for you!
-              </p>
-              <button
-                type="button"
-                disabled={isGeneratingSchema || isPickingElement}
-                onClick={() => onStartElementPicker('single', 'ai_schema')}
-                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all shadow-md ${
-                  isGeneratingSchema
-                    ? 'bg-indigo-700 text-white cursor-wait animate-pulse'
-                    : isPickingElement
-                    ? 'bg-rose-600 text-white animate-pulse'
-                    : 'bg-indigo-600 hover:bg-indigo-500 text-white hover:shadow-indigo-500/25'
-                }`}
-              >
-                {isGeneratingSchema ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Analyzing Element with AI...</span>
-                  </>
-                ) : isPickingElement ? (
-                  <>
-                    <Crosshair className="w-3.5 h-3.5" />
-                    <span>Click Target Card on Webpage...</span>
-                  </>
+                {props.cardHtmlSnippet || props.containerSelector ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Ready
+                  </span>
                 ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Select Element & Auto-Generate Schema with AI</span>
-                  </>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300/80 border border-indigo-500/20 font-medium">
+                    2-Step Setup
+                  </span>
                 )}
-              </button>
+              </div>
+
+              {/* Two Separate Buttons: 1 for Selecting, 1 for Generating */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* Button 1: Select Card Element */}
+                <button
+                  type="button"
+                  disabled={isPickingElement}
+                  onClick={() => onStartElementPicker('single', 'card_container')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all border ${
+                    isPickingElement
+                      ? 'bg-rose-600 text-white animate-pulse border-rose-500'
+                      : 'bg-[#151a27] hover:bg-[#1c2335] text-gray-200 border-[#2b354c] hover:border-indigo-500/50'
+                  }`}
+                  title="Click to visually pick the repeating card on the webpage"
+                >
+                  <Crosshair className={`w-3.5 h-3.5 ${isPickingElement ? 'animate-spin' : 'text-indigo-400'}`} />
+                  <span>{isPickingElement ? 'Click on Page...' : 'Select Card Element'}</span>
+                </button>
+
+                {/* Button 2: Generate Schema with AI */}
+                <button
+                  type="button"
+                  disabled={effectiveGeneratingSchema}
+                  onClick={handleGenerateAiSchema}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all shadow-sm ${
+                    effectiveGeneratingSchema
+                      ? 'bg-indigo-700 text-white cursor-wait animate-pulse'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white hover:shadow-indigo-500/25'
+                  }`}
+                  title="Generate extraction fields and selectors using AI"
+                >
+                  {effectiveGeneratingSchema ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Generating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Generate with AI</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Card Snippet / Selector Status Pill */}
+              {props.cardHtmlSnippet && (
+                <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#0e121c] border border-[#1e2538] text-[11px]">
+                  <span className="text-gray-300 truncate max-w-[210px] font-mono">
+                    {props.cardTagName ? `<${props.cardTagName}>` : 'Card'} {props.containerSelector || ''}
+                  </span>
+                  <span className="text-emerald-400 font-medium text-[10px] shrink-0">HTML Ready ✓</span>
+                </div>
+              )}
             </div>
 
-            {/* Card Container Selector */}
+            {/* Container Selector */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[11px] font-semibold text-gray-300">
-                  Card Container Selector
+                  Container Selector
                 </label>
                 <button
                   type="button"
-                  onClick={() => onStartElementPicker('single', 'container')}
+                  onClick={() => onStartElementPicker('single', 'card_container')}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
                     isPickingElement
                       ? 'bg-rose-600 text-white animate-pulse'
@@ -1920,18 +2013,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 type="text"
                 value={props.containerSelector || ''}
                 onChange={(e) => handlePropChange('containerSelector', e.target.value)}
-                placeholder=".product-card, .listing-item, article, div.item"
+                placeholder="article.Box-row, .product-card, li, div.item"
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
               />
-              <p className="text-[10px] text-gray-500 mt-1">
-                CSS selector that identifies each repeating item/card container on the page.
-              </p>
             </div>
 
             {/* Quick Schema Presets */}
             <div>
               <span className="text-[10px] font-medium text-gray-400 block mb-1">
-                Quick Schema Presets:
+                Presets:
               </span>
               <div className="grid grid-cols-4 gap-1">
                 <button

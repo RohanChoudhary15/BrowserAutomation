@@ -82,6 +82,7 @@ export const App: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isPickingElement, setIsPickingElement] = useState(false);
   const lastRecordedNodeIdRef = useRef<string | null>(null);
+  const activePickerNodeIdRef = useRef<string | null>(null);
 
   // Autosave tracking
   const [isSaving, setIsSaving] = useState(false);
@@ -511,7 +512,10 @@ export const App: React.FC = () => {
               ...n,
               data: {
                 ...n.data,
-                properties,
+                properties: {
+                  ...n.data.properties,
+                  ...properties,
+                },
               },
             };
           }
@@ -697,6 +701,7 @@ export const App: React.FC = () => {
       context: string = 'selector',
       fieldIndex?: number
     ) => {
+      activePickerNodeIdRef.current = selectedNodeId;
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         setIsPickingElement(true);
         try {
@@ -716,7 +721,7 @@ export const App: React.FC = () => {
         alert('Element Picker communicates directly with live webpages in Chrome/Edge.');
       }
     },
-    []
+    [selectedNodeId]
   );
 
   // AI Schema Generation from Selected Element
@@ -735,6 +740,9 @@ export const App: React.FC = () => {
           handleUpdateProperties(nodeId, {
             containerSelector: generated.containerSelector || picked.selector,
             fields: generated.fields,
+            cardHtmlSnippet: picked.outerHtmlSnippet,
+            cardTextSnippet: picked.textSnippet,
+            cardTagName: picked.tagName,
           });
 
           // Show friendly Chrome notification if available
@@ -760,6 +768,74 @@ export const App: React.FC = () => {
       }
     },
     [handleUpdateProperties]
+  );
+
+  // AI Schema Generation for a specific node on demand
+  const handleGenerateSchemaForNode = useCallback(
+    async (nodeId: string) => {
+      const targetNode = nodes.find((n) => n.id === nodeId);
+      if (!targetNode) return;
+      const props = targetNode.data.properties || {};
+
+      let htmlSnippet = props.cardHtmlSnippet || '';
+      const textSnippet = props.cardTextSnippet || '';
+      const tagName = props.cardTagName || '';
+      const containerSelector = props.containerSelector || '';
+
+      // If no card snippet was stored, attempt to extract it live from active tab
+      if (!htmlSnippet && containerSelector && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        try {
+          const res = await chrome.runtime.sendMessage({
+            type: 'EXECUTE_DOM_ACTION',
+            payload: {
+              action: 'extract_html',
+              params: { selector: containerSelector, mode: 'outer' },
+            },
+          });
+          if (res && res.success && res.html) {
+            htmlSnippet = res.html;
+          }
+        } catch {}
+      }
+
+      setIsGeneratingSchema(true);
+      try {
+        const generated = await generateSchemaFromElement({
+          selector: containerSelector,
+          tagName,
+          htmlSnippet,
+          textSnippet,
+        });
+
+        if (generated && generated.fields && generated.fields.length > 0) {
+          handleUpdateProperties(nodeId, {
+            containerSelector: generated.containerSelector || containerSelector,
+            fields: generated.fields,
+            ...(htmlSnippet ? { cardHtmlSnippet: htmlSnippet } : {}),
+          });
+
+          if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+            chrome.runtime
+              .sendMessage({
+                type: 'SHOW_NOTIFICATION',
+                payload: {
+                  title: '✨ AutoFlow AI Schema Created',
+                  message: `Generated schema with ${generated.fields.length} fields for ${
+                    generated.containerSelector || containerSelector || 'card'
+                  }`,
+                },
+              })
+              .catch(() => {});
+          }
+        }
+      } catch (err: any) {
+        console.error('Failed to generate schema with AI:', err);
+        alert(`AI Schema generation error: ${err.message || String(err)}`);
+      } finally {
+        setIsGeneratingSchema(false);
+      }
+    },
+    [handleUpdateProperties, nodes]
   );
 
   // Action Recorder Integration
@@ -796,59 +872,73 @@ export const App: React.FC = () => {
         const picked: ElementSelectionResult = message.payload;
         setIsPickingElement(false);
 
-        if (!selectedNodeId) return;
+        const targetNodeId = activePickerNodeIdRef.current || selectedNodeId;
+        if (!targetNodeId) return;
 
-        // Context 1: AI Schema Generation
-        if (picked.context === 'ai_schema') {
-          handleGenerateSchemaFromElement(selectedNodeId, picked);
+        // Context 1: Card Container Selector (Button 1: Select Card Element)
+        if (
+          picked.context === 'container' ||
+          picked.context === 'card_container' ||
+          picked.context === 'card'
+        ) {
+          handleUpdateProperties(targetNodeId, {
+            containerSelector: picked.selector,
+            cardHtmlSnippet: picked.outerHtmlSnippet,
+            cardTextSnippet: picked.textSnippet,
+            cardTagName: picked.tagName,
+          });
           return;
         }
 
-        // Context 2: Card Container Selector
-        if (picked.context === 'container') {
-          handleUpdateProperties(selectedNodeId, {
-            containerSelector: picked.selector,
-          });
+        // Context 2: AI Schema Generation
+        if (picked.context === 'ai_schema') {
+          handleGenerateSchemaFromElement(targetNodeId, picked);
           return;
         }
 
         // Context 3: Individual Card Field Selector
         if (picked.context === 'field' && typeof picked.fieldIndex === 'number') {
-          const targetNode = nodes.find((n) => n.id === selectedNodeId);
-          if (targetNode) {
-            const currentFields = Array.isArray(targetNode.data.properties.fields)
-              ? [...targetNode.data.properties.fields]
-              : [];
-            if (currentFields[picked.fieldIndex]) {
-              currentFields[picked.fieldIndex] = {
-                ...currentFields[picked.fieldIndex],
-                selector: picked.selector,
-              };
-              handleUpdateProperties(selectedNodeId, {
-                fields: currentFields,
-              });
+          setNodes((currentNodes) => {
+            const targetNode = currentNodes.find((n) => n.id === targetNodeId);
+            if (targetNode) {
+              const currentFields = Array.isArray(targetNode.data.properties.fields)
+                ? [...targetNode.data.properties.fields]
+                : [];
+              if (currentFields[picked.fieldIndex!]) {
+                currentFields[picked.fieldIndex!] = {
+                  ...currentFields[picked.fieldIndex!],
+                  selector: picked.selector,
+                };
+                handleUpdateProperties(targetNodeId, {
+                  fields: currentFields,
+                });
+              }
             }
-          }
+            return currentNodes;
+          });
           return;
         }
 
         // Context 4: Stop Condition Selector
         if (picked.context === 'stopCondition') {
-          const targetNode = nodes.find((n) => n.id === selectedNodeId);
-          if (targetNode) {
-            const currentStop = targetNode.data.properties.stopCondition || {};
-            handleUpdateProperties(selectedNodeId, {
-              stopCondition: {
-                ...currentStop,
-                selector: picked.selector,
-              },
-            });
-          }
+          setNodes((currentNodes) => {
+            const targetNode = currentNodes.find((n) => n.id === targetNodeId);
+            if (targetNode) {
+              const currentStop = targetNode.data.properties.stopCondition || {};
+              handleUpdateProperties(targetNodeId, {
+                stopCondition: {
+                  ...currentStop,
+                  selector: picked.selector,
+                },
+              });
+            }
+            return currentNodes;
+          });
           return;
         }
 
         // Context 5: Standard Element Selector
-        handleUpdateProperties(selectedNodeId, {
+        handleUpdateProperties(targetNodeId, {
           selector: picked.selector,
           strategies: picked.strategies,
           tagName: picked.tagName,
@@ -923,7 +1013,7 @@ export const App: React.FC = () => {
 
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [handleUpdateProperties, selectedNodeId, setEdges, setNodes]);
+  }, [handleGenerateSchemaFromElement, handleUpdateProperties, selectedNodeId, setEdges, setNodes]);
 
   // Export JSON
   const handleExport = useCallback(() => {
@@ -1170,6 +1260,7 @@ export const App: React.FC = () => {
               onDuplicateNodes={handleDuplicateNodes}
               onRunSingleNode={handleRunSingleNode}
               onStartElementPicker={handleStartElementPicker}
+              onGenerateSchema={handleGenerateSchemaForNode}
               isPickingElement={isPickingElement}
               isGeneratingSchema={isGeneratingSchema}
               onClose={() => setIsPropertiesCollapsed(true)}

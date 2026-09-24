@@ -52,6 +52,22 @@ function handleMouseMove(e: MouseEvent) {
     }
   }
 
+  // In card/container mode, auto-ascend from internal card children to card container
+  if (
+    currentPickerMode === 'single' &&
+    (currentPickerContext === 'container' ||
+      currentPickerContext === 'card_container' ||
+      currentPickerContext === 'card' ||
+      currentPickerContext === 'ai_schema')
+  ) {
+    const cardCandidate = target.closest<HTMLElement>(
+      'article, .Box-row, [class*="Box-row"], [class*="card" i], [class*="product" i], [class*="item" i], [class*="listing" i], [class*="row" i], [class*="post" i], li, tr'
+    );
+    if (cardCandidate && cardCandidate !== document.body && cardCandidate.parentElement !== document.documentElement) {
+      target = cardCandidate;
+    }
+  }
+
   hoveredElement = target;
   updateOverlay(target);
 }
@@ -90,10 +106,14 @@ function renderBanner() {
       `;
       return;
     }
-    if (currentPickerContext === 'container') {
+    if (
+      currentPickerContext === 'container' ||
+      currentPickerContext === 'card_container' ||
+      currentPickerContext === 'card'
+    ) {
       bannerEl.innerHTML = `
-        <span class="autoflow-pattern-badge-pill" style="background:#065f46; border-color:#10b981; color:#a7f3d0;">Card Container</span>
-        <span>Click the <strong>card or repeating item container</strong> on the page</span>
+        <span class="autoflow-pattern-badge-pill" style="background:#065f46; border-color:#10b981; color:#a7f3d0;">🎯 Card Container</span>
+        <span>Click any <strong>repeating card or item</strong> on the webpage</span>
         <span class="autoflow-picker-kbd">Esc</span> to cancel
       `;
       return;
@@ -231,7 +251,21 @@ function handleClick(e: MouseEvent) {
 
   // 1. Single Mode: Pick immediately
   if (currentPickerMode === 'single') {
-    const result = buildElementSelectionResult(hoveredElement, currentPickerContext);
+    let pickTarget = hoveredElement;
+    if (
+      currentPickerContext === 'container' ||
+      currentPickerContext === 'card_container' ||
+      currentPickerContext === 'card' ||
+      currentPickerContext === 'ai_schema'
+    ) {
+      const cardCandidate = pickTarget.closest<HTMLElement>(
+        'article, .Box-row, [class*="Box-row"], [class*="card" i], [class*="product" i], [class*="item" i], [class*="listing" i], [class*="row" i], [class*="post" i], li, tr'
+      );
+      if (cardCandidate && cardCandidate !== document.body && cardCandidate.parentElement !== document.documentElement) {
+        pickTarget = cardCandidate;
+      }
+    }
+    const result = buildElementSelectionResult(pickTarget, currentPickerContext);
     result.context = currentPickerContext;
     result.fieldIndex = currentFieldIndex;
     stopElementPicker();

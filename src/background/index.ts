@@ -132,8 +132,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
   const handleAsync = async () => {
     try {
       // If message originates from the AutoFlow Editor or extension view, record its tab ID
-      if (sender.tab?.id && isRestrictedUrl(sender.tab.url)) {
-        lastEditorTabId = sender.tab.id;
+      if (sender.tab?.id) {
+        if (
+          isRestrictedUrl(sender.tab.url) ||
+          sender.tab.url?.includes('editor') ||
+          sender.tab.url?.includes('localhost') ||
+          sender.tab.title?.includes('AutoFlow')
+        ) {
+          lastEditorTabId = sender.tab.id;
+        }
       }
 
       switch (message.type) {
@@ -447,6 +454,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
             if (editorTab?.windowId) {
               await chrome.windows.update(editorTab.windowId, { focused: true }).catch(() => {});
             }
+            // Deliver directly to the editor tab
+            chrome.tabs.sendMessage(lastEditorTabId, message).catch(() => {});
           }
           // Broadcast to all extension views
           chrome.runtime.sendMessage(message).catch(() => {});

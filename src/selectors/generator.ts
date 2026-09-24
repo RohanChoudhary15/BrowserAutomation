@@ -209,7 +209,7 @@ export function buildElementSelectionResult(el: Element, context?: string): Elem
   let best = strategies[0]?.value || el.tagName.toLowerCase();
 
   // If selecting a repeating container or generating an AI schema, prefer class / css over unique text
-  if (context === 'container' || context === 'ai_schema') {
+  if (context === 'container' || context === 'card_container' || context === 'card' || context === 'ai_schema') {
     const classCandidate = strategies.find(s => s.type === 'css');
     if (classCandidate) {
       best = classCandidate.value;
