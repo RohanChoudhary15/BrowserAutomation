@@ -6,7 +6,7 @@ import {
   LogicalGate,
   ConditionRule,
 } from '../evaluator';
-import { queryLlm } from '../../ai/aiService';
+import { queryLlm, getAiConfig, getOpenAiBaseUrl, safeFetch } from '../../ai/aiService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
 import {
@@ -2380,6 +2380,165 @@ export const executeAutonomousAgent: NodeExecutor = async (node, ctx) => {
   };
 };
 
+export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
+  const rawPrompt = node.data.properties.prompt !== undefined ? node.data.properties.prompt : 'A digital illustration of {{pageTitle}}';
+  const prompt = String(interpolateVariables(rawPrompt, ctx.variables) ?? '').trim();
+  if (!prompt) {
+    throw new Error('Image Generator requires a prompt.');
+  }
+
+  const aiConfig = await getAiConfig();
+  const customApiKey = node.data.properties.apiKey?.trim();
+  const apiKey = customApiKey || aiConfig.apiKey;
+  if (!apiKey) {
+    throw new Error('API Key missing for Image Generator. Please provide an API key in the node properties or configure OpenAI in AI Settings.');
+  }
+
+  let baseUrl = node.data.properties.baseUrl?.trim();
+  if (baseUrl) {
+    baseUrl = baseUrl.replace(/\/+$/, '');
+    if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/images')) {
+      baseUrl = `${baseUrl}/v1`;
+    }
+  } else {
+    baseUrl = getOpenAiBaseUrl(aiConfig);
+  }
+
+  const model = node.data.properties.model?.trim() || 'dall-e-3';
+  const size = node.data.properties.size || '1024x1024';
+  const quality = node.data.properties.quality || 'standard';
+  const style = node.data.properties.style || 'vivid';
+  const responseFormat = node.data.properties.responseFormat || 'url';
+  const outputVariable = node.data.properties.outputVariable || 'generatedImageUrl';
+  const autoDownload = !!node.data.properties.autoDownload;
+  const rawDownloadFilename = node.data.properties.downloadFilename || `${outputVariable}_image`;
+  const downloadFilename = String(interpolateVariables(rawDownloadFilename, ctx.variables) ?? `${outputVariable}_image`);
+
+  const endpoint = baseUrl.endsWith('/images/generations') ? baseUrl : `${baseUrl}/images/generations`;
+
+  ctx.log({
+    level: 'info',
+    message: `Generating image with ${model} (${size}, ${quality}): "${prompt.slice(0, 45)}..."`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Generating image with ${model}...`,
+      detail: `${size} • ${quality}`,
+    },
+  });
+
+  const requestBody: Record<string, any> = {
+    prompt,
+    model,
+    n: 1,
+    size,
+    response_format: responseFormat,
+  };
+
+  if (model.toLowerCase().includes('dall-e-3')) {
+    requestBody.quality = quality;
+    requestBody.style = style;
+  }
+
+  const res = await safeFetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    let parsedMsg = errText;
+    try {
+      const errJson = JSON.parse(errText);
+      parsedMsg = errJson.error?.message || errJson.message || errText;
+    } catch {}
+    const fullErr = `OpenAI Image Generation error (${res.status}): ${parsedMsg}`;
+    ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
+    throw new Error(fullErr);
+  }
+
+  const json = await res.json();
+  const item = json.data?.[0];
+  if (!item) {
+    throw new Error('No image was returned by the image generation API.');
+  }
+
+  const imageUrl = responseFormat === 'b64_json' && item.b64_json
+    ? `data:image/png;base64,${item.b64_json}`
+    : (item.url || (item.b64_json ? `data:image/png;base64,${item.b64_json}` : ''));
+  const revisedPrompt = item.revised_prompt || prompt;
+
+  if (autoDownload && imageUrl) {
+    try {
+      const finalFilename = downloadFilename.endsWith('.png') || downloadFilename.endsWith('.jpg') || downloadFilename.endsWith('.webp')
+        ? downloadFilename
+        : `${downloadFilename}.png`;
+
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        await new Promise<number | undefined>((resolve, reject) => {
+          chrome.downloads.download(
+            {
+              url: imageUrl,
+              filename: finalFilename,
+              saveAs: false,
+            },
+            (downloadId) => {
+              if (chrome.runtime?.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+              } else {
+                resolve(downloadId);
+              }
+            }
+          );
+        });
+      } else if (typeof document !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = imageUrl;
+        a.download = finalFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      ctx.log({ level: 'info', message: `Downloaded generated image as ${finalFilename}`, nodeId: node.id });
+    } catch (dlErr: any) {
+      ctx.log({ level: 'warn', message: `Auto-download image warning: ${dlErr.message}`, nodeId: node.id });
+    }
+  }
+
+  ctx.log({
+    level: 'success',
+    message: `Image generated successfully (${model})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    dynamicState: {
+      message: 'Image generated',
+      previewUrl: imageUrl,
+      detail: `${model} • ${size}`,
+    },
+  });
+
+  return {
+    success: true,
+    output: imageUrl,
+    variables: {
+      [outputVariable]: imageUrl,
+      [`${outputVariable}_revised_prompt`]: revisedPrompt,
+    },
+  };
+};
+
 // ----------------- MESSAGING & NOTIFICATION EXECUTORS -----------------
 
 // ----------------- MESSAGING & NOTIFICATION EXECUTORS -----------------
@@ -3687,6 +3846,7 @@ export const executors: Record<string, NodeExecutor> = {
   show_notification: executeShowNotification,
   ai_agent: executeAiAgent,
   autonomous_agent: executeAutonomousAgent,
+  generate_image: executeGenerateImage,
   telegram_message: executeTelegramMessage,
   discord_message: executeDiscordMessage,
   slack_message: executeSlackMessage,

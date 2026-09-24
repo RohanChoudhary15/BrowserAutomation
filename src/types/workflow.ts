@@ -80,6 +80,7 @@ export type NodeType =
   | 'show_notification'
   | 'ai_agent'
   | 'autonomous_agent'
+  | 'generate_image'
   // Messaging & Notifications
   | 'telegram_message'
   | 'discord_message'

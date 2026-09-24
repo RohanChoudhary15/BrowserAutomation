@@ -880,6 +880,26 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'agentResult',
     },
   },
+  generate_image: {
+    type: 'generate_image',
+    label: 'AI Image Generator',
+    category: 'utility',
+    description: 'Generate images using OpenAI DALL-E or custom image models with separate API key & base URL',
+    icon: 'ImagePlus',
+    defaultProperties: {
+      prompt: 'A futuristic digital illustration of {{pageTitle}}',
+      model: 'dall-e-3',
+      size: '1024x1024',
+      quality: 'standard',
+      style: 'vivid',
+      responseFormat: 'url',
+      apiKey: '',
+      baseUrl: '',
+      outputVariable: 'generatedImageUrl',
+      autoDownload: false,
+      downloadFilename: 'generated_image',
+    },
+  },
 
   // Messaging & Notifications
   telegram_message: {

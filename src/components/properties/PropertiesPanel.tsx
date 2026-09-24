@@ -171,6 +171,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const [showRawOutput, setShowRawOutput] = useState(false);
   const [copiedBase64, setCopiedBase64] = useState(false);
+  const [showImageApiKey, setShowImageApiKey] = useState(false);
 
   // Inspect panel width resizing state (persisted to localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -1516,7 +1517,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -3616,6 +3617,236 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
               <span className="text-[11px]">JSON Mode (parse response into structured object)</span>
             </label>
+          </div>
+        )}
+
+        {/* AI Image Generator Node */}
+        {selectedNode.data.type === 'generate_image' && (
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Image Generation Prompt</label>
+                <span className="text-[10px] text-purple-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <textarea
+                rows={3}
+                value={props.prompt || ''}
+                onChange={(e) => handlePropChange('prompt', e.target.value)}
+                placeholder="e.g. A high resolution product mock-up of {{pageTitle}}, commercial studio lighting, 8k"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                Describe the image to generate. You can embed extracted text, titles, or variables.
+              </p>
+            </div>
+
+            {/* Model Selection */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Image Model</label>
+              <select
+                value={props.model || 'dall-e-3'}
+                onChange={(e) => handlePropChange('model', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="dall-e-3">DALL-E 3 (Highest Quality, Flagship)</option>
+                <option value="dall-e-2">DALL-E 2 (Fast & Lightweight)</option>
+                <option value="custom">Custom Model (e.g. Flux, Stable Diffusion, SDXL)...</option>
+              </select>
+            </div>
+
+            {props.model === 'custom' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Custom Model Name</label>
+                <input
+                  type="text"
+                  value={props.customModelName || ''}
+                  onChange={(e) => {
+                    handlePropChange('customModelName', e.target.value);
+                    handlePropChange('model', e.target.value);
+                  }}
+                  placeholder="e.g. flux-1.1-pro, stable-diffusion-3.5, midjourney-proxy"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            )}
+
+            {/* Separate API Key & Base URL Settings */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-gray-300">Dedicated API & Base URL Settings</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#1c2230] text-gray-400 font-mono">Optional</span>
+              </div>
+              <p className="text-[10px] text-gray-500 leading-normal">
+                By default, this node uses your global AI Settings. Specify a separate API key or custom OpenAI-compatible gateway (e.g. OpenRouter, Together AI, ExperientialLabs, local endpoint) below if needed.
+              </p>
+
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">Separate API Key</label>
+                <div className="relative">
+                  <input
+                    type={showImageApiKey ? 'text' : 'password'}
+                    value={props.apiKey || ''}
+                    onChange={(e) => handlePropChange('apiKey', e.target.value)}
+                    placeholder="sk-... (Leave empty to use global key)"
+                    className="w-full bg-[#0b0e14] text-white p-1.5 pr-8 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowImageApiKey(!showImageApiKey)}
+                    className="absolute right-2 top-2 text-gray-500 hover:text-gray-300"
+                    title={showImageApiKey ? 'Hide API key' : 'Show API key'}
+                  >
+                    {showImageApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">Separate Base URL</label>
+                <input
+                  type="text"
+                  value={props.baseUrl || ''}
+                  onChange={(e) => handlePropChange('baseUrl', e.target.value)}
+                  placeholder="https://api.openai.com/v1 or custom gateway"
+                  className="w-full bg-[#0b0e14] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Image Resolution & Dimensions */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Image Size</label>
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  { id: '1024x1024', label: '1024x1024', desc: 'Square 1:1' },
+                  { id: '1024x1792', label: '1024x1792', desc: 'Portrait 9:16' },
+                  { id: '1792x1024', label: '1792x1024', desc: 'Landscape 16:9' },
+                  { id: '512x512', label: '512x512', desc: 'DALL-E 2' },
+                  { id: '256x256', label: '256x256', desc: 'Thumbnail' },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handlePropChange('size', s.id)}
+                    className={`py-1 px-1.5 text-center rounded border text-[10px] font-mono transition-colors ${
+                      (props.size || '1024x1024') === s.id
+                        ? 'bg-indigo-600 text-white border-indigo-500 font-semibold'
+                        : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white'
+                    }`}
+                    title={s.desc}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quality and Style (for DALL-E 3) */}
+            {(!props.model || props.model.includes('dall-e-3')) && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Quality</label>
+                  <select
+                    value={props.quality || 'standard'}
+                    onChange={(e) => handlePropChange('quality', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value="standard">Standard</option>
+                    <option value="hd">HD (High Definition)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Style</label>
+                  <select
+                    value={props.style || 'vivid'}
+                    onChange={(e) => handlePropChange('style', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value="vivid">Vivid (Hyper-real)</option>
+                    <option value="natural">Natural (Realistic)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Response Format */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Format</label>
+              <select
+                value={props.responseFormat || 'url'}
+                onChange={(e) => handlePropChange('responseFormat', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="url">Hosted Image URL (Valid for 60 min)</option>
+                <option value="b64_json">Base64 Data URI (Self-contained, permanent)</option>
+              </select>
+            </div>
+
+            {/* Auto-Download Checkbox */}
+            <div className="space-y-2 pt-1 border-t border-[#1c2230]">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!props.autoDownload}
+                  onChange={(e) => handlePropChange('autoDownload', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px] flex items-center gap-1.5">
+                  <Download className="w-3.5 h-3.5 text-indigo-400" />
+                  Auto-download generated image
+                </span>
+              </label>
+
+              {props.autoDownload && (
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-400 mb-1">Save Filename</label>
+                  <input
+                    type="text"
+                    value={props.downloadFilename || 'generated_image'}
+                    onChange={(e) => handlePropChange('downloadFilename', e.target.value)}
+                    placeholder="e.g. art_{{pageTitle}}"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none text-xs font-mono"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Generated Image Preview if available */}
+            {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable])) && (
+              <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2 mt-2">
+                <div className="text-[11px] font-semibold text-emerald-400 flex items-center justify-between">
+                  <span>Generated Image Preview</span>
+                </div>
+                <div className="rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 max-h-48 flex items-center justify-center">
+                  <img
+                    src={String(runtimeState?.output || variables[props.outputVariable])}
+                    alt="Generated Preview"
+                    className="w-full max-h-48 object-contain"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <a
+                    href={String(runtimeState?.output || variables[props.outputVariable])}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 py-1 text-center rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold transition-colors"
+                  >
+                    Open Image in New Tab
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(String(runtimeState?.output || variables[props.outputVariable]));
+                      setCopiedBase64(true);
+                      setTimeout(() => setCopiedBase64(false), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded bg-[#161a24] hover:bg-[#202738] text-gray-300 hover:text-white text-[10px] border border-[#232a3b] transition-colors"
+                  >
+                    {copiedBase64 ? 'Copied!' : 'Copy URL'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
