@@ -3532,11 +3532,17 @@ export const executeDownloadFile: NodeExecutor = async (node, ctx) => {
  * Universal file download trigger (Chrome downloads API with DOM anchor fallback)
  */
 async function triggerFileDownload(dataUrl: string, filename: string, saveAs = false): Promise<any> {
+  // Enforce .pdf extension when downloading application/pdf data URLs
+  let resolvedFilename = filename;
+  if (dataUrl.startsWith('data:application/pdf') && !resolvedFilename.toLowerCase().endsWith('.pdf')) {
+    resolvedFilename += '.pdf';
+  }
+
   if (typeof chrome !== 'undefined' && chrome.downloads && chrome.downloads.download) {
     try {
       return await chrome.downloads.download({
         url: dataUrl,
-        filename,
+        filename: resolvedFilename,
         saveAs,
       });
     } catch (e) {
@@ -3546,13 +3552,36 @@ async function triggerFileDownload(dataUrl: string, filename: string, saveAs = f
 
   if (typeof document !== 'undefined') {
     try {
+      let downloadHref = dataUrl;
+      let blobUrlToRevoke: string | null = null;
+
+      // In browser/DOM context, create an application/pdf Blob URL so browser won't rename to .htm
+      if (dataUrl.startsWith('data:application/pdf;base64,')) {
+        try {
+          const base64Data = dataUrl.slice('data:application/pdf;base64,'.length);
+          const binaryStr = typeof atob === 'function' ? atob(base64Data) : Buffer.from(base64Data, 'base64').toString('binary');
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: 'application/pdf' });
+          downloadHref = URL.createObjectURL(blob);
+          blobUrlToRevoke = downloadHref;
+        } catch (_) {}
+      }
+
       const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = filename;
+      a.href = downloadHref;
+      a.download = resolvedFilename;
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
-      setTimeout(() => a.remove(), 200);
+      setTimeout(() => {
+        a.remove();
+        if (blobUrlToRevoke && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+          URL.revokeObjectURL(blobUrlToRevoke);
+        }
+      }, 500);
       return 'dom_fallback';
     } catch (domErr) {
       console.warn('[AutoFlow] DOM download fallback failed:', domErr);
@@ -4294,15 +4323,57 @@ export const executeGeneratePdf: NodeExecutor = async (node, ctx) => {
   if (useAi) {
     try {
       const resolvedAiPrompt = String(interpolateVariables(rawAiPrompt, ctx.variables));
-      const aiPromptFull = `${resolvedAiPrompt}\n\nFormat your entire response in GitHub-flavored Markdown including H1/H2 headings, bullet points, callout alerts ([!NOTE], [!TIP], [!WARNING]), and structured Markdown tables where appropriate. Output pure markdown only without wrapping in \`\`\`markdown backticks.`;
 
-      const aiResponse = await queryLlm(aiPromptFull, {
+      // Auto-detect workflow datasets to inject into the AI context
+      let datasetContext = '';
+      const candidateKeys = [
+        'combinedDataset',
+        'scrapedProducts',
+        'extractedData',
+        'extractedList',
+        'products',
+        'items',
+        'dataset',
+        'data',
+        'tableData',
+      ];
+      const foundData: Record<string, any> = {};
+      for (const key of candidateKeys) {
+        if (ctx.variables[key] !== undefined && ctx.variables[key] !== null) {
+          foundData[key] = ctx.variables[key];
+        }
+      }
+      if (Object.keys(foundData).length === 0) {
+        for (const [k, v] of Object.entries(ctx.variables)) {
+          if (k !== 'generatedPdf' && k !== outVar && Array.isArray(v) && v.length > 0) {
+            foundData[k] = v;
+          }
+        }
+      }
+
+      if (Object.keys(foundData).length > 0) {
+        const jsonStr = JSON.stringify(foundData, null, 2);
+        const safeJson = jsonStr.length > 30000 ? jsonStr.slice(0, 30000) + '\n... [dataset truncated for length]' : jsonStr;
+        datasetContext = `\n\n### Extracted Workflow Dataset Context:\n\`\`\`json\n${safeJson}\n\`\`\``;
+      } else if (rawMarkdown && rawMarkdown.trim() && !rawMarkdown.includes('Generated intelligence report based on extracted dataset.')) {
+        datasetContext = `\n\n### Reference Document Content / Context:\n${contentMarkdown}`;
+      }
+
+      const aiPromptFull = `${resolvedAiPrompt}${datasetContext}\n\nFormat your entire response in GitHub-flavored Markdown including H1/H2 headings, bullet points, callout alerts ([!NOTE], [!TIP], [!WARNING]), and structured Markdown tables where appropriate. Output pure markdown only without wrapping in \`\`\`markdown backticks.`;
+
+      const systemPrompt = 'You are an elite data analyst and executive briefing author. You turn raw extracted data into pristine, beautifully structured Markdown briefing documents with executive summaries, comparative tables, and strategic recommendations.';
+
+      const aiResponse = await queryLlm(aiPromptFull, systemPrompt, {
         model: aiModel,
-        systemPrompt: 'You are an elite data analyst and executive briefing author. You turn raw extracted data into pristine, beautifully structured Markdown briefing documents.',
       });
 
       if (aiResponse && aiResponse.trim()) {
-        contentMarkdown = aiResponse.trim();
+        let cleanResponse = aiResponse.trim();
+        // Strip markdown code block fences if LLM wrapped whole output
+        if (/^```(?:markdown|md)?\s*[\r\n]/i.test(cleanResponse)) {
+          cleanResponse = cleanResponse.replace(/^```(?:markdown|md)?\s*[\r\n]/i, '').replace(/[\r\n]```\s*$/i, '').trim();
+        }
+        contentMarkdown = cleanResponse;
         ctx.log({
           level: 'info',
           message: `AI generated structured document markdown (${contentMarkdown.length} chars)`,
@@ -4375,7 +4446,8 @@ export const executeGeneratePdf: NodeExecutor = async (node, ctx) => {
           title,
           content: pdfResult.html,
           dataUrl: pdfResult.dataUrl,
-          format: 'html',
+          htmlDataUrl: pdfResult.htmlDataUrl,
+          format: 'pdf',
           timestamp: Date.now(),
         },
         scope: 'workflow',
@@ -4399,6 +4471,8 @@ export const executeGeneratePdf: NodeExecutor = async (node, ctx) => {
     title,
     filename,
     dataUrl: pdfResult.dataUrl,
+    pdfDataUrl: pdfResult.pdfDataUrl,
+    htmlDataUrl: pdfResult.htmlDataUrl,
     sizeBytes: pdfResult.sizeBytes,
     theme,
     savedToStorage: saveToStorage ? storageKey : false,

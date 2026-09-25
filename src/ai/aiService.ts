@@ -484,6 +484,9 @@ export function resolveCompatibleModel(provider: AiProvider, requestedModel?: st
  * Mistral AI fallback execution
  */
 async function executeMistralFallback(prompt: string, systemInstruction?: string): Promise<string> {
+  const cleanSys = systemInstruction && typeof systemInstruction === 'string' && systemInstruction.trim()
+    ? systemInstruction.trim()
+    : undefined;
   const res = await safeFetch(`${DEFAULT_MISTRAL_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -493,7 +496,7 @@ async function executeMistralFallback(prompt: string, systemInstruction?: string
     body: JSON.stringify({
       model: 'ministral-8b-latest',
       messages: [
-        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+        ...(cleanSys ? [{ role: 'system', content: cleanSys }] : []),
         { role: 'user', content: prompt },
       ],
       temperature: 0.2,
@@ -510,21 +513,45 @@ async function executeMistralFallback(prompt: string, systemInstruction?: string
 }
 
 /**
- * Calls selected LLM provider with prompt and system instructions
+ * Calls selected LLM provider with prompt and system instructions.
+ * Accepts polymorphic arguments:
+ *   queryLlm(prompt, systemInstruction, config)
+ *   queryLlm(prompt, { model, systemPrompt, ... })
  */
 export async function queryLlm(
   prompt: string,
-  systemInstruction?: string,
-  config?: Partial<AiConfig>
+  systemInstructionOrConfig?: string | (Partial<AiConfig> & { systemPrompt?: string; systemInstruction?: string }),
+  configOverride?: Partial<AiConfig>
 ): Promise<string> {
+  let resolvedSystemInstruction: string | undefined;
+  let resolvedConfig: Partial<AiConfig> | undefined = configOverride;
+
+  if (typeof systemInstructionOrConfig === 'object' && systemInstructionOrConfig !== null) {
+    const { systemPrompt, systemInstruction, ...restConfig } = systemInstructionOrConfig;
+    const sys = systemPrompt || systemInstruction;
+    if (sys !== undefined && sys !== null) {
+      resolvedSystemInstruction = typeof sys === 'string' ? sys : String(sys);
+    }
+    resolvedConfig = {
+      ...restConfig,
+      ...configOverride,
+    };
+  } else if (typeof systemInstructionOrConfig === 'string') {
+    resolvedSystemInstruction = systemInstructionOrConfig;
+  } else if (systemInstructionOrConfig !== undefined && systemInstructionOrConfig !== null) {
+    resolvedSystemInstruction = String(systemInstructionOrConfig);
+  }
+
   const baseConfig = await getAiConfig();
   const currentConfig: AiConfig = {
     ...baseConfig,
-    ...config,
+    ...resolvedConfig,
   };
 
   const provider = currentConfig.provider || 'openai';
   const model = resolveCompatibleModel(provider, currentConfig.model, currentConfig);
+  const cleanSystem = resolvedSystemInstruction && resolvedSystemInstruction.trim() ? resolvedSystemInstruction.trim() : undefined;
+  const cleanPrompt = typeof prompt === 'string' ? prompt : String(prompt ?? '');
 
   // 1. OpenAI / OpenAI Compatible
   if (provider === 'openai') {
@@ -543,8 +570,8 @@ export async function queryLlm(
         body: JSON.stringify({
           model,
           messages: [
-            ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-            { role: 'user', content: prompt },
+            ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+            { role: 'user', content: cleanPrompt },
           ],
           temperature: 0.2,
         }),
@@ -556,7 +583,7 @@ export async function queryLlm(
         // If default gateway returns model locked, purchase required, card required, or quota exceeded, fall back to Mistral
         if (isDefaultKey && (res.status === 429 || /purchase|locked|credit|card_required|insufficient_quota/i.test(err))) {
           console.warn('[AutoFlow AI] Primary gateway blocked (status ' + res.status + '). Falling back to Mistral AI.');
-          return await executeMistralFallback(prompt, systemInstruction);
+          return await executeMistralFallback(cleanPrompt, cleanSystem);
         }
         throw new Error(parseApiError(err, res.status, 'OpenAI', model));
       }
@@ -569,7 +596,7 @@ export async function queryLlm(
       if (isDefaultGateway && /fetch|network|cors|offline|locked|purchase/i.test(openAiErr.message)) {
         console.warn('[AutoFlow AI] Primary gateway fetch failed, auto-falling back to Mistral AI:', openAiErr.message);
         try {
-          return await executeMistralFallback(prompt, systemInstruction);
+          return await executeMistralFallback(cleanPrompt, cleanSystem);
         } catch (fallbackErr) {
           console.warn('Mistral fallback failed:', fallbackErr);
         }
@@ -590,8 +617,8 @@ export async function queryLlm(
       body: JSON.stringify({
         model: model || 'ministral-8b-latest',
         messages: [
-          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-          { role: 'user', content: prompt },
+          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+          { role: 'user', content: cleanPrompt },
         ],
         temperature: 0.2,
       }),
@@ -621,8 +648,8 @@ export async function queryLlm(
         contents: [
           {
             parts: [
-              ...(systemInstruction ? [{ text: systemInstruction }] : []),
-              { text: prompt },
+              ...(cleanSystem ? [{ text: cleanSystem }] : []),
+              { text: cleanPrompt },
             ],
           },
         ],
@@ -654,8 +681,8 @@ export async function queryLlm(
       body: JSON.stringify({
         model: routerModel,
         messages: [
-          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-          { role: 'user', content: prompt },
+          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+          { role: 'user', content: cleanPrompt },
         ],
       }),
     });
@@ -682,8 +709,8 @@ export async function queryLlm(
       body: JSON.stringify({
         model: customModel,
         messages: [
-          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-          { role: 'user', content: prompt },
+          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+          { role: 'user', content: cleanPrompt },
         ],
         temperature: 0.2,
       }),
@@ -699,7 +726,7 @@ export async function queryLlm(
   }
 
   // Fallback for built-in or offline: returns simulated or rule-based response
-  return `Simulated analysis for: ${prompt}`;
+  return `Simulated analysis for: ${cleanPrompt}`;
 }
 
 /**

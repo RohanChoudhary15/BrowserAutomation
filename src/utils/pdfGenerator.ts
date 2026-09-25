@@ -146,10 +146,39 @@ export interface GeneratePdfOptions {
 
 export interface GeneratedPdfResult {
   html: string;
-  dataUrl: string;
+  dataUrl: string; // Primary data URL: data:application/pdf;base64,... (guarantees .pdf download)
+  pdfDataUrl: string; // Explicit PDF data URL: data:application/pdf;base64,...
+  htmlDataUrl: string; // HTML preview data URL: data:text/html;charset=utf-8;base64,...
   pdfBinary: string;
   filename: string;
   sizeBytes: number;
+}
+
+/**
+ * Formats inline Markdown elements: bold, italic, code, strikethrough, highlights, and badges
+ */
+export function formatInlineMarkdown(text: string): string {
+  if (!text) return '';
+  let str = text;
+  // Bold
+  str = str.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  str = str.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  // Italic
+  str = str.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  str = str.replace(/_([^_]+)_/g, '<em>$1</em>');
+  // Strikethrough
+  str = str.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  // Highlight
+  str = str.replace(/==([^=]+)==/g, '<mark class="doc-highlight">$1</mark>');
+  // Inline code
+  str = str.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  // Badges: [badge:info:text] or [badge:text]
+  str = str.replace(/\[badge:(?:([a-zA-Z0-9_\-]+):)?([^\]]+)\]/g, (_, color, badgeText) => {
+    return `<span class="doc-badge ${color ? `badge-${color}` : 'badge-default'}">${badgeText.trim()}</span>`;
+  });
+  // Links
+  str = str.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return str;
 }
 
 /**
@@ -161,25 +190,70 @@ export function markdownToHtml(md: string): string {
   let html = md;
 
   // 1. Page breaks
-  html = html.replace(/---(?:pagebreak|break)---/gi, '<div class="page-break"></div>');
+  html = html.replace(/(?:---|===)(?:pagebreak|break)(?:---|===)/gi, '<div class="page-break"></div>');
 
-  // 2. Fenced Code Blocks (must be parsed before inline code)
+  // 2. Fenced Code Blocks (must be parsed before inline code/tables)
   html = html.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const escaped = escapeHtml(code.trim());
     return `<pre class="code-block ${lang ? `lang-${lang}` : ''}"><code>${escaped}</code></pre>`;
   });
 
-  // 3. Tables
+  // 3. Multi-line GFM Callouts / Alerts (> [!NOTE] ... > continuation)
+  // Supports NOTE, TIP, IMPORTANT, WARNING, CAUTION, INFO, SUCCESS, DANGER, SUMMARY
+  html = html.replace(
+    /(?:^|\n)(>[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION|INFO|SUCCESS|DANGER|SUMMARY)\][^\n]*(?:\r?\n>[^\n]*)*)/gi,
+    (match, block) => {
+      const lines = block.split(/\r?\n/);
+      const firstLine = lines[0].replace(/^>[ \t]*/, '');
+      const typeMatch = firstLine.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION|INFO|SUCCESS|DANGER|SUMMARY)\]\s*(.*)$/i);
+      const type = typeMatch ? typeMatch[1].toUpperCase() : 'NOTE';
+      const initialMsg = typeMatch && typeMatch[2] ? typeMatch[2].trim() : '';
+
+      const restLines = lines.slice(1).map((l) => l.replace(/^>[ \t]?/, '').trim());
+      const allLines = [initialMsg, ...restLines].filter(Boolean);
+      const formattedContent = allLines.map((l) => formatInlineMarkdown(l)).join('<br />');
+      const t = type.toLowerCase();
+      return `\n<div class="callout callout-${t}"><span class="callout-badge">${type}</span> <span class="callout-content">${formattedContent}</span></div>\n`;
+    }
+  );
+
+  // Standard multi-line blockquotes
+  html = html.replace(/(?:^|\n)((?:>[ \t]*[^\n]*(?:\r?\n|$))+)/g, (match, block) => {
+    if (block.includes('class="callout')) return match;
+    const lines = block
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => formatInlineMarkdown(l.replace(/^>[ \t]?/, '').trim()));
+    if (lines.length === 0) return '';
+    return `\n<blockquote>${lines.join('<br />')}</blockquote>\n`;
+  });
+
+  // 4. Tables with alignment (:---, :---:, ---:) and formatted cells
   html = html.replace(
     /((?:\|[^\n]+\|\r?\n)(?:\|[\s\-:|]+\|\r?\n)(?:\|[^\n]+\|\r?\n?)+)/g,
     (tableBlock) => {
       const lines = tableBlock.trim().split(/\r?\n/).filter(Boolean);
       if (lines.length < 2) return tableBlock;
 
+      // Parse alignment from delimiter row (line 1)
+      const delimiterCells = lines[1].split('|').slice(1, -1);
+      const alignments = delimiterCells.map((c) => {
+        const trimmed = c.trim();
+        const leftColon = trimmed.startsWith(':');
+        const rightColon = trimmed.endsWith(':');
+        if (leftColon && rightColon) return 'center';
+        if (rightColon) return 'right';
+        if (leftColon) return 'left';
+        return 'left';
+      });
+
       const headerCells = lines[0]
         .split('|')
         .slice(1, -1)
-        .map((c) => `<th>${c.trim()}</th>`)
+        .map((c, i) => {
+          const align = alignments[i] || 'left';
+          return `<th style="text-align: ${align};">${formatInlineMarkdown(c.trim())}</th>`;
+        })
         .join('');
 
       const bodyRows = lines
@@ -188,7 +262,10 @@ export function markdownToHtml(md: string): string {
           const cells = rowLine
             .split('|')
             .slice(1, -1)
-            .map((c) => `<td>${c.trim()}</td>`)
+            .map((c, i) => {
+              const align = alignments[i] || 'left';
+              return `<td style="text-align: ${align};">${formatInlineMarkdown(c.trim())}</td>`;
+            })
             .join('');
           return `<tr>${cells}</tr>`;
         })
@@ -198,40 +275,41 @@ export function markdownToHtml(md: string): string {
     }
   );
 
-  // 4. Headings
-  html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
-  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-
-  // 5. Callouts / Alerts (> [!NOTE], > [!WARNING], > [!TIP], > [!IMPORTANT])
-  html = html.replace(/^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*$)/gim, (_, type, msg) => {
-    const t = type.toLowerCase();
-    const cleanMsg = msg.replace(/^>\s*/, '').trim();
-    return `<div class="callout callout-${t}"><span class="callout-badge">${type}</span> ${cleanMsg}</div>`;
-  });
-
-  // Standard blockquotes
-  html = html.replace(/^>\s*(.*$)/gim, '<blockquote>$1</blockquote>');
+  // 5. Headings
+  html = html.replace(/^#### (.*$)/gim, (_, text) => `<h4>${formatInlineMarkdown(text)}</h4>`);
+  html = html.replace(/^### (.*$)/gim, (_, text) => `<h3>${formatInlineMarkdown(text)}</h3>`);
+  html = html.replace(/^## (.*$)/gim, (_, text) => `<h2>${formatInlineMarkdown(text)}</h2>`);
+  html = html.replace(/^# (.*$)/gim, (_, text) => `<h1>${formatInlineMarkdown(text)}</h1>`);
 
   // 6. Horizontal Rules
   html = html.replace(/^(?:---|\*\*\*|___)$/gim, '<hr />');
 
-  // 7. Unordered Lists
-  html = html.replace(/^\s*[-*+]\s+(.*$)/gim, '<li>$1</li>');
-  html = html.replace(/((?:<li>.*<\/li>\s*)+)/gim, '<ul>$1</ul>');
+  // 7. Task lists (- [ ] Incomplete, - [x] Complete)
+  html = html.replace(/^\s*[-*+]\s+\[([ xX])\]\s+(.*$)/gim, (_, checked, label) => {
+    const isChecked = checked.toLowerCase() === 'x';
+    return `<li class="task-list-item ${isChecked ? 'task-done' : ''}"><span class="task-box ${isChecked ? 'checked' : 'unchecked'}">${isChecked ? '&#10003;' : '&#9633;'}</span> <span class="task-label ${isChecked ? 'line-through' : ''}">${formatInlineMarkdown(label)}</span></li>`;
+  });
 
-  // 8. Bold, Italic, Strikethrough, Inline Code
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  // 8. Ordered Lists (1. item)
+  html = html.replace(/^\s*(\d+)\.\s+(.*$)/gim, (_, num, text) => `<li class="ordered-item" value="${num}">${formatInlineMarkdown(text)}</li>`);
+  html = html.replace(/((?:<li class="ordered-item"[^>]*>.*<\/li>\s*)+)/gim, '<ol>$1</ol>');
 
-  // 9. Links & Images
+  // 9. Unordered Lists (- item, * item, + item)
+  html = html.replace(/^\s*[-*+]\s+(?!<li)(.*$)/gim, (_, text) => `<li>${formatInlineMarkdown(text)}</li>`);
+  html = html.replace(/((?:<li(?: class="(?:task-list-item|bullet-item)[^"]*")?>.*<\/li>\s*)+)/gim, (match) => {
+    if (match.includes('task-list-item')) {
+      return `<ul class="task-list">${match}</ul>`;
+    }
+    return `<ul>${match}</ul>`;
+  });
+
+  // 10. General Inline formatting (runs across remaining paragraphs)
+  html = formatInlineMarkdown(html);
+
+  // 11. Links & Images
   html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="doc-img inline-img" />');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
-  // 10. Paragraphs: convert loose non-tagged lines to <p>
+  // 12. Paragraphs: convert loose non-tagged lines to <p>
   const blocks = html.split(/\n{2,}/);
   const formattedBlocks = blocks.map((b) => {
     const trimmed = b.trim();
@@ -262,60 +340,248 @@ function escapePdf(text: string): string {
 }
 
 /**
+ * Wraps text to maximum character width per line for PDF stream
+ */
+function wrapPdfLine(text: string, maxChars = 85): string[] {
+  if (text.length <= maxChars) return [text];
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length <= maxChars) {
+      current = (current + ' ' + word).trim();
+    } else {
+      if (current) lines.push(current);
+      current = word;
+      while (current.length > maxChars) {
+        lines.push(current.slice(0, maxChars));
+        current = current.slice(maxChars);
+      }
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
  * Builds a vector-stream multi-page PDF-1.4 binary matching document content
  */
-export function buildPdf14Binary(title: string, textContent: string, maxLines = 150): string {
-  const lines = textContent.split('\n').slice(0, maxLines);
-  let stream = 'BT\n/F1 16 Tf\n50 740 Td\n(' + escapePdf(title) + ') Tj\n';
-  stream += '/F1 10 Tf\n0 -25 Td\n';
+export function buildPdf14Binary(title: string, textContent: string, maxLines = 600): string {
+  const rawLines = textContent.split(/\r?\n/).slice(0, maxLines);
+  const pages: string[] = [];
+  let currentStream = '';
+  let currentY = 730; // Starts below header (750)
+  const bottomMargin = 65;
 
-  for (const line of lines) {
-    const cleanLine = line.replace(/[\r\t]/g, ' ').slice(0, 95);
-    stream += '(' + escapePdf(cleanLine) + ') Tj\n0 -13 Td\n';
+  const pushPage = () => {
+    pages.push(currentStream);
+    currentStream = '';
+    currentY = 730;
+  };
+
+  for (const rawLine of rawLines) {
+    const line = rawLine.trimEnd();
+
+    // Check heading 1
+    if (line.startsWith('# ')) {
+      const heading = line.slice(2).trim();
+      if (currentY - 30 < bottomMargin) pushPage();
+      currentStream += `BT\n/F2 16 Tf\n50 ${currentY} Td\n(${escapePdf(heading.slice(0, 70))}) Tj\nET\n`;
+      currentY -= 26;
+      continue;
+    }
+
+    // Heading 2
+    if (line.startsWith('## ')) {
+      const heading = line.slice(3).trim();
+      if (currentY - 26 < bottomMargin) pushPage();
+      currentStream += `BT\n/F2 13 Tf\n50 ${currentY} Td\n(${escapePdf(heading.slice(0, 80))}) Tj\nET\n`;
+      currentStream += `0.8 0.8 0.8 RG 0.5 w 50 ${currentY - 3} m 562 ${currentY - 3} l S\n`;
+      currentY -= 22;
+      continue;
+    }
+
+    // Heading 3
+    if (line.startsWith('### ')) {
+      const heading = line.slice(4).trim();
+      if (currentY - 20 < bottomMargin) pushPage();
+      currentStream += `BT\n/F2 11 Tf\n50 ${currentY} Td\n(${escapePdf(heading.slice(0, 85))}) Tj\nET\n`;
+      currentY -= 18;
+      continue;
+    }
+
+    // Horizontal Rule
+    if (/^(?:---|\*\*\*|___)$/.test(line)) {
+      if (currentY - 14 < bottomMargin) pushPage();
+      currentStream += `0.85 0.85 0.85 RG 0.5 w 50 ${currentY} m 562 ${currentY} l S\n`;
+      currentY -= 14;
+      continue;
+    }
+
+    // Callout alert: > [!NOTE] or > line
+    if (line.startsWith('>')) {
+      const calloutContent = line.replace(/^>[ \t]*/, '').trim();
+      const wrapped = wrapPdfLine(calloutContent, 80);
+      for (const wLine of wrapped) {
+        if (currentY - 15 < bottomMargin) pushPage();
+        // Left accent bar
+        currentStream += `0.3 0.45 0.9 rg 50 ${currentY - 2} 3 13 re f\n`;
+        currentStream += `BT\n/F1 9.5 Tf\n58 ${currentY} Td\n(${escapePdf(wLine)}) Tj\nET\n`;
+        currentY -= 14;
+      }
+      continue;
+    }
+
+    // Table row
+    if (line.startsWith('|') && line.endsWith('|')) {
+      // Delimiter row
+      if (/^\|[\s\-:|]+\|$/.test(line)) {
+        currentStream += `0.8 0.8 0.8 RG 0.5 w 50 ${currentY} m 562 ${currentY} l S\n`;
+        currentY -= 8;
+        continue;
+      }
+      const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+      const colWidth = Math.floor(512 / Math.max(cells.length, 1));
+      if (currentY - 15 < bottomMargin) pushPage();
+      cells.forEach((cell, idx) => {
+        const xPos = 50 + idx * colWidth + 4;
+        const cellText = cell.slice(0, Math.floor(colWidth / 6));
+        currentStream += `BT\n/F1 9 Tf\n${xPos} ${currentY} Td\n(${escapePdf(cellText)}) Tj\nET\n`;
+      });
+      currentY -= 14;
+      continue;
+    }
+
+    // Task list items
+    if (/^[-*+]\s+\[([ xX])\]/.test(line)) {
+      const isDone = /^[-*+]\s+\[[xX]\]/.test(line);
+      const text = line.replace(/^[-*+]\s+\[[ xX]\]\s*/, '');
+      const wrapped = wrapPdfLine(text, 80);
+      for (let i = 0; i < wrapped.length; i++) {
+        if (currentY - 14 < bottomMargin) pushPage();
+        const prefix = i === 0 ? (isDone ? '[X] ' : '[ ] ') : '    ';
+        currentStream += `BT\n/F1 9.5 Tf\n54 ${currentY} Td\n(${escapePdf(prefix + wrapped[i])}) Tj\nET\n`;
+        currentY -= 13;
+      }
+      continue;
+    }
+
+    // Bullet items
+    if (/^[-*+]\s+/.test(line)) {
+      const text = line.replace(/^[-*+]\s+/, '');
+      const wrapped = wrapPdfLine(text, 80);
+      for (let i = 0; i < wrapped.length; i++) {
+        if (currentY - 14 < bottomMargin) pushPage();
+        const prefix = i === 0 ? '- ' : '  ';
+        currentStream += `BT\n/F1 9.5 Tf\n54 ${currentY} Td\n(${escapePdf(prefix + wrapped[i])}) Tj\nET\n`;
+        currentY -= 13;
+      }
+      continue;
+    }
+
+    // Empty line
+    if (!line.trim()) {
+      currentY -= 8;
+      if (currentY < bottomMargin) pushPage();
+      continue;
+    }
+
+    // Normal paragraph text
+    const wrapped = wrapPdfLine(line, 85);
+    for (const wLine of wrapped) {
+      if (currentY - 14 < bottomMargin) pushPage();
+      currentStream += `BT\n/F1 9.5 Tf\n50 ${currentY} Td\n(${escapePdf(wLine)}) Tj\nET\n`;
+      currentY -= 13;
+    }
   }
-  stream += 'ET';
 
-  const streamLength = stream.length;
-  return `%PDF-1.4
-1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
-endobj
-2 0 obj
-<< /Type /Pages /Kids [3 0 R] /Count 1 >>
-endobj
-3 0 obj
-<< /Type /Page
-   /Parent 2 0 R
-   /MediaBox [0 0 612 792]
-   /Resources << /Font << /F1 4 0 R >> >>
-   /Contents 5 0 R
->>
-endobj
-4 0 obj
-<< /Type /Font
-   /Subtype /Type1
-   /BaseFont /Helvetica
->>
-endobj
-5 0 obj
-<< /Length ${streamLength} >>
-stream
-${stream}
-endstream
-endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000262 00000 n 
-0000000341 00000 n 
-trailer
-<< /Size 6 /Root 1 0 R >>
-startxref
-${420 + streamLength}
-%%EOF`;
+  // Push last page if has content or if empty
+  if (currentStream.trim().length > 0 || pages.length === 0) {
+    pages.push(currentStream);
+  }
+
+  const totalPages = pages.length;
+
+  // Add header & footer to each page stream
+  const finalizedPages = pages.map((pageBody, idx) => {
+    const pageNum = idx + 1;
+    let fullPage = '';
+    // Header
+    fullPage += `BT\n/F1 8 Tf\n50 755 Td\n0.4 0.4 0.4 rg\n(${escapePdf(title.slice(0, 60))}) Tj\nET\n`;
+    fullPage += `0.85 0.85 0.85 RG 0.5 w 50 748 m 562 748 l S\n`;
+    // Body
+    fullPage += pageBody;
+    // Footer
+    fullPage += `0.85 0.85 0.85 RG 0.5 w 50 48 m 562 48 l S\n`;
+    fullPage += `BT\n/F1 8 Tf\n50 36 Td\n0.4 0.4 0.4 rg\n(AutoFlow Intelligence Document) Tj\nET\n`;
+    fullPage += `BT\n/F1 8 Tf\n480 36 Td\n0.4 0.4 0.4 rg\n(Page ${pageNum} of ${totalPages}) Tj\nET\n`;
+    return fullPage;
+  });
+
+  // Assemble PDF document objects
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [0];
+
+  // Obj 1: Catalog
+  offsets.push(pdf.length);
+  pdf += `1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`;
+
+  // Page IDs: 3, 5, 7, ...
+  const pageObjIds = finalizedPages.map((_, i) => 3 + i * 2);
+  const streamObjIds = finalizedPages.map((_, i) => 4 + i * 2);
+  const kidsStr = pageObjIds.map((id) => `${id} 0 R`).join(' ');
+
+  // Obj 2: Pages tree
+  offsets.push(pdf.length);
+  pdf += `2 0 obj\n<< /Type /Pages /Kids [${kidsStr}] /Count ${totalPages}\n   /Resources <<\n     /Font <<\n       /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\n       /F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\n       /F3 << /Type /Font /Subtype /Type1 /BaseFont /Courier >>\n     >>\n   >>\n>>\nendobj\n`;
+
+  // Each page and its content stream
+  for (let i = 0; i < totalPages; i++) {
+    const pageId = pageObjIds[i];
+    const streamId = streamObjIds[i];
+    const streamContent = finalizedPages[i];
+    const streamLen = typeof Buffer !== 'undefined'
+      ? Buffer.byteLength(streamContent, 'utf-8')
+      : streamContent.length;
+
+    offsets.push(pdf.length);
+    pdf += `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${streamId} 0 R >>\nendobj\n`;
+
+    offsets.push(pdf.length);
+    pdf += `${streamId} 0 obj\n<< /Length ${streamLen} >>\nstream\n${streamContent}\nendstream\nendobj\n`;
+  }
+
+  const startXref = pdf.length;
+  pdf += `xref\n0 ${offsets.length}\n`;
+  pdf += `0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i++) {
+    pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  }
+  pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF`;
+
+  return pdf;
+}
+
+/**
+ * Safely encodes a binary string to base64 across Node.js and Browser
+ */
+export function encodePdfToBase64(binaryStr: string): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(binaryStr, 'utf-8').toString('base64');
+  }
+  if (typeof btoa === 'function') {
+    try {
+      return btoa(unescape(encodeURIComponent(binaryStr)));
+    } catch (_) {
+      let bin = '';
+      for (let i = 0; i < binaryStr.length; i++) {
+        bin += String.fromCharCode(binaryStr.charCodeAt(i) & 0xff);
+      }
+      return btoa(bin);
+    }
+  }
+  return '';
 }
 
 /**
@@ -574,6 +840,7 @@ export function generateThemedPdfDocument(options: GeneratePdfOptions): Generate
       font-size: 12px;
       border-left: 4px solid ${effectiveAccent};
       background: ${currentTheme.cardBg};
+      line-height: 1.5;
     }
 
     .callout-badge {
@@ -586,9 +853,81 @@ export function generateThemedPdfDocument(options: GeneratePdfOptions): Generate
       ${currentTheme.badgeStyle}
     }
 
-    .callout-warning { border-left-color: #f59e0b; }
+    .callout-note { border-left-color: #3b82f6; }
     .callout-tip { border-left-color: #10b981; }
-    .callout-important { border-left-color: #ef4444; }
+    .callout-important { border-left-color: #f43f5e; }
+    .callout-warning { border-left-color: #f59e0b; }
+    .callout-caution { border-left-color: #ef4444; }
+    .callout-info { border-left-color: #0284c7; }
+    .callout-success { border-left-color: #16a34a; }
+    .callout-danger { border-left-color: #dc2626; }
+    .callout-summary { border-left-color: #8b5cf6; }
+
+    /* Task Lists */
+    .task-list {
+      list-style: none;
+      padding-left: 0;
+      margin: 12px 0;
+    }
+
+    .task-list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12.5px;
+    }
+
+    .task-box {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid ${currentTheme.borderColor};
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: bold;
+      flex-shrink: 0;
+      margin-top: 2px;
+      line-height: 1;
+    }
+
+    .task-box.checked {
+      background: ${effectiveAccent};
+      color: #ffffff;
+      border-color: ${effectiveAccent};
+    }
+
+    .task-done .task-label {
+      text-decoration: line-through;
+      opacity: 0.65;
+    }
+
+    /* Highlights & Badges */
+    .doc-highlight {
+      background: rgba(253, 224, 71, 0.25);
+      color: inherit;
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid rgba(234, 179, 8, 0.4);
+    }
+
+    .doc-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-default { background: ${currentTheme.cardBg}; border: 1px solid ${currentTheme.borderColor}; }
+    .badge-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .badge-warning { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+    .badge-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-info { background: #e0f2fe; color: #075985; border: 1px solid #7dd3fc; }
 
     blockquote {
       border-left: 3px solid ${currentTheme.borderColor};
@@ -684,15 +1023,17 @@ export function generateThemedPdfDocument(options: GeneratePdfOptions): Generate
 </body>
 </html>`;
 
+  // Generate vector PDF-1.4 binary
+  const cleanSummaryText = `${title}\n${subtitle ? subtitle + '\n' : ''}\n${contentMarkdown}`.replace(/<[^>]*>/g, '');
+  const pdfBinary = buildPdf14Binary(title, cleanSummaryText);
+  const base64Pdf = encodePdfToBase64(pdfBinary);
+  const pdfDataUrl = `data:application/pdf;base64,${base64Pdf}`;
+
   // Encode HTML document as printable Data URL
   const htmlBase64 = typeof btoa === 'function'
     ? btoa(unescape(encodeURIComponent(fullHtml)))
     : Buffer.from(fullHtml).toString('base64');
-  const dataUrl = `data:text/html;charset=utf-8;base64,${htmlBase64}`;
-
-  // Generate vector PDF-1.4 binary
-  const cleanSummaryText = `${title}\n${subtitle ? subtitle + '\n' : ''}\n${contentMarkdown}`.replace(/<[^>]*>/g, '');
-  const pdfBinary = buildPdf14Binary(title, cleanSummaryText);
+  const htmlDataUrl = `data:text/html;charset=utf-8;base64,${htmlBase64}`;
 
   const cleanFilename = (title || 'report')
     .toLowerCase()
@@ -701,9 +1042,11 @@ export function generateThemedPdfDocument(options: GeneratePdfOptions): Generate
 
   return {
     html: fullHtml,
-    dataUrl,
+    dataUrl: pdfDataUrl,
+    pdfDataUrl,
+    htmlDataUrl,
     pdfBinary,
     filename: `${cleanFilename}.pdf`,
-    sizeBytes: fullHtml.length,
+    sizeBytes: pdfBinary.length,
   };
 }

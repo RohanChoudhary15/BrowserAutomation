@@ -299,4 +299,40 @@ describe('AI Models & /models Endpoint', () => {
     expect(reqBody.messages[0].content[1].image_url.url).toContain('base64imagedata');
     expect(result).toContain('"action": "click"');
   });
+
+  it('safely handles polymorphic config object as second argument without serializing objects into system message', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { content: 'Briefing report generated.' } }],
+      }),
+    } as Response);
+
+    // Call queryLlm with { model, systemPrompt } as second argument (similar to WandB / Custom LLM usage)
+    const result = await queryLlm('Analyze data', {
+      model: 'deepseek-ai/DeepSeek-V4.1-Flash',
+      systemPrompt: 'You are an elite data analyst.',
+      provider: 'custom',
+      customEndpoint: 'https://api.inference.wandb.ai/v1',
+      apiKey: 'test-wandb-key',
+    });
+
+    expect(result).toBe('Briefing report generated.');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.inference.wandb.ai/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+      })
+    );
+
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as any).body);
+    expect(callBody.model).toBe('deepseek-ai/DeepSeek-V4.1-Flash');
+    // Content MUST be string, never object!
+    expect(typeof callBody.messages[0].content).toBe('string');
+    expect(callBody.messages[0].content).toBe('You are an elite data analyst.');
+    expect(callBody.messages[1].role).toBe('user');
+    expect(callBody.messages[1].content).toBe('Analyze data');
+  });
 });
+
