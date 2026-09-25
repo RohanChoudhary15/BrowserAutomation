@@ -5,6 +5,8 @@ import { generateId } from '../utils/id';
 import { createFriendlyError } from '../utils/formatters';
 import { interpolateVariables, getNestedValue } from './interpolator';
 import { HumanConfig, nodeThinkTime, randomBetween, resolveHumanConfig, wait } from '../utils/human';
+import { runThrottled } from '../utils/parallelOrchestrator';
+import { syncStorageToVariables } from '../utils/simpleStorage';
 
 /**
  * Wraps an object so that string coercion (e.g. String(item), `item: ${item}`)
@@ -71,6 +73,7 @@ export class WorkflowEngine {
     };
     this.events = events;
     this.variables = { ...workflow.variables };
+    syncStorageToVariables(this.variables);
     this.human = resolveHumanConfig(this.workflow.settings);
   }
 
@@ -157,6 +160,7 @@ export class WorkflowEngine {
   async runSingleNode(node: WorkflowNode, initialVariables?: Record<string, any>): Promise<any> {
     const controller = new AbortController();
     const vars = initialVariables ? { ...initialVariables } : { ...this.variables };
+    syncStorageToVariables(vars);
 
     const ctx: ExecutionContext = {
       workflowId: this.workflow.id,
@@ -195,6 +199,7 @@ export class WorkflowEngine {
     this.abortController = new AbortController();
     this.setStatus('running');
     this.variables = { ...this.workflow.variables };
+    syncStorageToVariables(this.variables);
     this.events.onVariablesChange?.(this.variables);
     this.gateInputsState.clear();
     this.triggeredGates.clear();
@@ -733,7 +738,8 @@ export class WorkflowEngine {
       const rawType = String(next.data.type || '').toLowerCase();
       let gate = String(next.data.properties?.gate || '').toUpperCase();
       if (!gate) {
-        if (rawType.includes('and') && !rawType.includes('nand')) gate = 'AND';
+        if (next.data.type === 'combine_datasets' || next.type === 'combineDatasetsNode') gate = 'AND';
+        else if (rawType.includes('and') && !rawType.includes('nand')) gate = 'AND';
         else if (rawType.includes('nand')) gate = 'NAND';
         else if (rawType.includes('nor')) gate = 'NOR';
         else gate = 'OR';
@@ -796,6 +802,40 @@ export class WorkflowEngine {
         this.gateInputsState.delete(next.id);
       }
     };
+
+    if (sourceNode.data.type === 'async_parallel') {
+      const mode = sourceNode.data.properties?.mode || 'all';
+      const maxConcurrency = Number(sourceNode.data.properties?.maxConcurrency) || 0;
+
+      if (mode === 'race') {
+        await Promise.race(nextNodes.map((n) => handleNext(n)));
+      } else if (mode === 'settled') {
+        if (maxConcurrency > 0) {
+          await runThrottled(
+            nextNodes.map((n) => async () => {
+              try {
+                await handleNext(n);
+              } catch (e) {
+                /* continue on settled branch error */
+              }
+            }),
+            maxConcurrency
+          );
+        } else {
+          await Promise.allSettled(nextNodes.map((n) => handleNext(n)));
+        }
+      } else {
+        if (maxConcurrency > 0) {
+          await runThrottled(
+            nextNodes.map((n) => () => handleNext(n)),
+            maxConcurrency
+          );
+        } else {
+          await Promise.all(nextNodes.map((n) => handleNext(n)));
+        }
+      }
+      return;
+    }
 
     await Promise.all(nextNodes.map((n) => handleNext(n)));
   }

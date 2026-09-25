@@ -34,7 +34,15 @@ import {
   Minimize2,
   Flame,
   Loader2,
+  Zap,
+  Archive,
+  Database,
+  Filter,
+  GitFork,
+  Palette,
+  HardDrive,
 } from 'lucide-react';
+import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels } from '../../ai/aiService';
 import { generateSchemaFromElement } from '../../ai/schemaGenerator';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
@@ -166,7 +174,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   useEffect(() => {
-    if (selectedNode?.data.type === 'ai_agent' || selectedNode?.data.type === 'autonomous_agent') {
+    if (
+      selectedNode?.data.type === 'ai_agent' ||
+      selectedNode?.data.type === 'autonomous_agent' ||
+      selectedNode?.data.type === 'generate_pdf'
+    ) {
       loadAiModels(selectedNode.data.properties?.provider, selectedNode.data.properties?.openaiBaseUrl);
     }
   }, [
@@ -5917,6 +5929,1098 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 placeholder="slackResponse"
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
               />
+            </div>
+          </div>
+        )}
+
+        {/* Combine Datasets Node */}
+        {selectedNode.data.type === 'combine_datasets' && (
+          <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+            {/* Header description banner */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-pink-500/10 via-rose-500/5 to-transparent border border-pink-500/20">
+              <div className="flex items-center gap-2 text-pink-400 font-semibold text-xs mb-1">
+                <Layers className="w-4 h-4" />
+                <span>Multi-Source Schema & Product Combiner</span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Merge multiple scrapes and schemas with column alignment, custom aliasing, and duplicate resolution.
+              </p>
+            </div>
+
+            {/* Schema Alignment Mode Tabs */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Schema Alignment Mode
+              </label>
+              <div className="grid grid-cols-3 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                {[
+                  { id: 'union', label: 'Full Union', sub: 'Outer Join' },
+                  { id: 'intersection', label: 'Intersection', sub: 'Inner Join' },
+                  { id: 'key_join', label: 'Key Join', sub: 'Merge by Key' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handlePropChange('mode', m.id)}
+                    className={`py-1.5 px-1.5 text-center rounded-lg font-medium transition-all ${
+                      (props.mode || 'union') === m.id
+                        ? 'bg-pink-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                    }`}
+                  >
+                    <div>{m.label}</div>
+                    <div className="text-[8px] opacity-75">{m.sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Primary Key for Key Join */}
+            {props.mode === 'key_join' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Primary Match Key</label>
+                <input
+                  type="text"
+                  value={props.primaryKey || 'title'}
+                  onChange={(e) => handlePropChange('primaryKey', e.target.value)}
+                  placeholder="e.g. title, sku, url"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-pink-500 outline-none font-mono text-xs"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Rows from different sources with the same primary key will be merged into a single record.
+                </p>
+              </div>
+            )}
+
+            {/* Source Data Mode */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Dataset Source
+              </label>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('sourceMode', 'incoming_edges')}
+                  className={`py-1.5 px-2 text-center rounded-lg font-medium transition-all ${
+                    (props.sourceMode || 'incoming_edges') === 'incoming_edges'
+                      ? 'bg-pink-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  Canvas Predecessors
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('sourceMode', 'variables')}
+                  className={`py-1.5 px-2 text-center rounded-lg font-medium transition-all ${
+                    props.sourceMode === 'variables'
+                      ? 'bg-pink-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  From Variables
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-1">
+                {(props.sourceMode || 'incoming_edges') === 'incoming_edges'
+                  ? 'Connect scrape or extract nodes directly into this node on the canvas. Execution engine synchronizes all branches before combining.'
+                  : 'Specify the variable names that hold the extracted arrays.'}
+              </p>
+            </div>
+
+            {/* Source Variables List when in variables mode */}
+            {props.sourceMode === 'variables' && (
+              <div className="p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-medium text-gray-300">Source Variable Names</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = Array.isArray(props.sourceVariables) ? [...props.sourceVariables] : ['scrapedProducts1'];
+                      cur.push(`scrapedProducts${cur.length + 1}`);
+                      handlePropChange('sourceVariables', cur);
+                    }}
+                    className="text-[10px] text-pink-400 hover:text-pink-300 flex items-center gap-1"
+                  >
+                    <Plus className="w-2.5 h-2.5" /> Add Variable
+                  </button>
+                </div>
+                {(Array.isArray(props.sourceVariables) ? props.sourceVariables : ['scrapedProducts1', 'scrapedProducts2']).map((varName: string, idx: number) => (
+                  <div key={idx} className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={varName}
+                      onChange={(e) => {
+                        const cur = [...(props.sourceVariables || [])];
+                        cur[idx] = e.target.value;
+                        handlePropChange('sourceVariables', cur);
+                      }}
+                      placeholder={`e.g. scrapedProducts${idx + 1}`}
+                      className="flex-1 bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = (props.sourceVariables || []).filter((_: any, i: number) => i !== idx);
+                        handlePropChange('sourceVariables', cur);
+                      }}
+                      className="p-1.5 text-gray-500 hover:text-rose-400 rounded hover:bg-[#1f2638]"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Deduplication Card */}
+            <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Intelligent Deduplication</span>
+                </label>
+                <input
+                  type="checkbox"
+                  checked={props.deduplicate !== false}
+                  onChange={(e) => handlePropChange('deduplicate', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-pink-600 focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              {props.deduplicate !== false && (
+                <div className="space-y-3 pt-1 border-t border-[#1a2030]">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Resolution Strategy</label>
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                      {[
+                        { id: 'merge_coalesce', label: 'Merge & Fill Gaps', desc: 'Coalesce fields' },
+                        { id: 'highest_completeness', label: 'Highest Completeness', desc: 'Row with most data' },
+                        { id: 'keep_first', label: 'Keep First', desc: 'Earliest source' },
+                        { id: 'keep_last', label: 'Keep Last', desc: 'Latest source' },
+                      ].map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => handlePropChange('dedupStrategy', s.id)}
+                          className={`p-2 rounded-lg border text-left transition-all ${
+                            (props.dedupStrategy || 'merge_coalesce') === s.id
+                              ? 'bg-pink-950/40 border-pink-500/50 text-pink-200'
+                              : 'bg-[#141824] border-[#1e2433] text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <div className="font-medium text-[10px]">{s.label}</div>
+                          <div className="text-[9px] opacity-70 mt-0.5">{s.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Deduplication Keys (Optional)</label>
+                    <input
+                      type="text"
+                      value={Array.isArray(props.dedupKeys) ? props.dedupKeys.join(', ') : (props.dedupKeys || '')}
+                      onChange={(e) => {
+                        const val = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
+                        handlePropChange('dedupKeys', val);
+                      }}
+                      placeholder="e.g. title, url (leave empty for full-row match)"
+                      className="w-full bg-[#141824] text-white p-1.5 rounded border border-[#232a3b] outline-none font-mono text-[11px]"
+                    />
+                    <p className="text-[9px] text-gray-500 mt-0.5">
+                      Columns to evaluate for matching duplicate items. Empty matches all common keys.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={props.normalizeUrls !== false}
+                        onChange={(e) => handlePropChange('normalizeUrls', e.target.checked)}
+                        className="rounded bg-[#161a24] border-[#232a3b] text-pink-600 focus:ring-0"
+                      />
+                      <span className="text-[10px]">Normalize URLs (strip tracking & query parameters)</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!props.caseSensitive}
+                        onChange={(e) => handlePropChange('caseSensitive', e.target.checked)}
+                        className="rounded bg-[#161a24] border-[#232a3b] text-pink-600 focus:ring-0"
+                      />
+                      <span className="text-[10px]">Case-sensitive text comparison</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Column Aliasing / Renaming Table */}
+            <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] font-semibold text-gray-300">Column Mapping / Aliasing</div>
+                  <div className="text-[10px] text-gray-500">Unify mismatched column names (e.g. product_name &#8594; title)</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = Array.isArray(props.columnMappings) ? [...props.columnMappings] : [];
+                    cur.push({ sourceColumn: '', targetColumn: '' });
+                    handlePropChange('columnMappings', cur);
+                  }}
+                  className="px-2 py-1 rounded bg-pink-600/20 hover:bg-pink-600/30 text-pink-300 border border-pink-500/30 text-[10px] font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Map Column
+                </button>
+              </div>
+
+              {(Array.isArray(props.columnMappings) && props.columnMappings.length > 0) ? (
+                <div className="space-y-1.5 pt-1">
+                  {props.columnMappings.map((map: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={map.sourceColumn || ''}
+                        onChange={(e) => {
+                          const cur = [...props.columnMappings];
+                          cur[idx] = { ...cur[idx], sourceColumn: e.target.value };
+                          handlePropChange('columnMappings', cur);
+                        }}
+                        placeholder="Source column"
+                        className="w-1/2 bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none font-mono text-[11px]"
+                      />
+                      <span className="text-gray-500 text-xs">&#8594;</span>
+                      <input
+                        type="text"
+                        value={map.targetColumn || ''}
+                        onChange={(e) => {
+                          const cur = [...props.columnMappings];
+                          cur[idx] = { ...cur[idx], targetColumn: e.target.value };
+                          handlePropChange('columnMappings', cur);
+                        }}
+                        placeholder="Unified column"
+                        className="w-1/2 bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none font-mono text-[11px]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = props.columnMappings.filter((_: any, i: number) => i !== idx);
+                          handlePropChange('columnMappings', cur);
+                        }}
+                        className="p-1 text-gray-500 hover:text-rose-400 rounded hover:bg-[#1f2638]"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[10px] text-gray-500 italic py-1">
+                  No manual mappings. Columns with identical names are merged automatically.
+                </div>
+              )}
+            </div>
+
+            {/* Source Tag Column */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.addSourceColumn !== false}
+                  onChange={(e) => handlePropChange('addSourceColumn', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-pink-600 focus:ring-0"
+                />
+                <span className="text-[11px] font-medium">Add source dataset tracking column</span>
+              </label>
+
+              {props.addSourceColumn !== false && (
+                <div className="pl-5">
+                  <input
+                    type="text"
+                    value={props.sourceColumnName || '_source'}
+                    onChange={(e) => handlePropChange('sourceColumnName', e.target.value)}
+                    placeholder="_source"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none font-mono text-[11px]"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Output Variable */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Combined Output Variable</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'combinedDataset'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="combinedDataset"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-pink-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Merged array accessible as <code className="text-pink-400 font-mono">&#123;&#123;{props.outputVariable || 'combinedDataset'}&#125;&#125;</code>, row count as <code className="text-pink-400 font-mono">&#123;&#123;{props.outputVariable || 'combinedDataset'}_count&#125;&#125;</code>.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Async Parallel Node */}
+        {selectedNode.data.type === 'async_parallel' && (
+          <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+            {/* Header description banner */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/20">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs mb-1">
+                <Zap className="w-4 h-4" />
+                <span>Concurrent Async Parallel Orchestrator</span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Execute multiple workflow branches simultaneously with concurrency limits, error tolerance, and variable merging.
+              </p>
+            </div>
+
+            {/* Execution Mode Tabs */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Parallel Execution Mode
+              </label>
+              <div className="grid grid-cols-3 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                {[
+                  { id: 'all', label: 'Promise.all', sub: 'Strict All' },
+                  { id: 'settled', label: 'All Settled', sub: 'Error Tolerant' },
+                  { id: 'race', label: 'Race', sub: 'First Finished' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handlePropChange('mode', m.id)}
+                    className={`py-1.5 px-1.5 text-center rounded-lg font-medium transition-all ${
+                      (props.mode || 'all') === m.id
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                    }`}
+                  >
+                    <div>{m.label}</div>
+                    <div className="text-[8px] opacity-75">{m.sub}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-500 mt-1">
+                {(props.mode || 'all') === 'all' && 'All branches execute concurrently. If any fails, the node stops immediately.'}
+                {props.mode === 'settled' && 'Runs all branches to completion regardless of individual errors. Captures successes and failures.'}
+                {props.mode === 'race' && 'The first branch to complete sets the result. Slow branches are ignored.'}
+              </p>
+            </div>
+
+            {/* Branch Lanes Configuration */}
+            <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                    <GitFork className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Parallel Branch Lanes</span>
+                  </div>
+                  <div className="text-[10px] text-gray-500">Each branch creates an outgoing canvas handle</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = Array.isArray(props.branches) ? [...props.branches] : [
+                      { id: 'branch_1', name: 'Branch 1' },
+                      { id: 'branch_2', name: 'Branch 2' },
+                    ];
+                    const nextNum = cur.length + 1;
+                    cur.push({ id: `branch_${nextNum}`, name: `Branch ${nextNum}` });
+                    handlePropChange('branches', cur);
+                  }}
+                  className="px-2 py-1 rounded bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Add Branch
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                {(Array.isArray(props.branches) ? props.branches : [
+                  { id: 'branch_1', name: 'Branch 1' },
+                  { id: 'branch_2', name: 'Branch 2' },
+                ]).map((b: any, idx: number, arr: any[]) => (
+                  <div key={b.id || idx} className="flex items-center gap-2 bg-[#141824] p-1.5 rounded-lg border border-[#202738]">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={b.name || ''}
+                      onChange={(e) => {
+                        const cur = [...arr];
+                        cur[idx] = { ...cur[idx], name: e.target.value };
+                        handlePropChange('branches', cur);
+                      }}
+                      placeholder={`Branch ${idx + 1}`}
+                      className="flex-1 bg-transparent text-white outline-none font-medium text-xs"
+                    />
+                    <span className="text-[9px] font-mono text-gray-500">{b.id}</span>
+                    {arr.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = arr.filter((_: any, i: number) => i !== idx);
+                          handlePropChange('branches', cur);
+                        }}
+                        className="p-1 text-gray-500 hover:text-rose-400 rounded hover:bg-[#1f2638]"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Concurrency Throttling & Timeout */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Max Concurrency</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={props.maxConcurrency ?? 0}
+                  onChange={(e) => handlePropChange('maxConcurrency', Number(e.target.value))}
+                  placeholder="0 = Unlimited"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                />
+                <span className="text-[9px] text-gray-500 mt-0.5 block">0 = all at once</span>
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Timeout (ms)</label>
+                <input
+                  type="number"
+                  step={1000}
+                  min={1000}
+                  value={props.timeoutMs ?? 30000}
+                  onChange={(e) => handlePropChange('timeoutMs', Number(e.target.value))}
+                  placeholder="30000"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                />
+                <span className="text-[9px] text-gray-500 mt-0.5 block">{((props.timeoutMs ?? 30000) / 1000).toFixed(0)}s limit</span>
+              </div>
+            </div>
+
+            {/* Variable Merge Strategy */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Variable Merge Strategy
+              </label>
+              <select
+                value={props.mergeStrategy || 'merge'}
+                onChange={(e) => handlePropChange('mergeStrategy', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="merge">Merge (All branch variables propagate back to workflow context)</option>
+                <option value="isolated">Isolated (Branch variables remain isolated; only parallelResults is saved)</option>
+                <option value="collect_datasets">Collect Datasets (Aggregates array outputs from all branches into a list)</option>
+              </select>
+            </div>
+
+            {/* Output Variable */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Results Output Variable</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'parallelResults'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="parallelResults"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-amber-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Contains branch status, outputs, execution timings, and aggregated variables.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Generate PDF Document Node */}
+        {selectedNode.data.type === 'generate_pdf' && (
+          <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+            {/* Header description banner */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent border border-indigo-500/20">
+              <div className="flex items-center gap-2 text-indigo-400 font-semibold text-xs mb-1">
+                <FileText className="w-4 h-4" />
+                <span>Themed Executive PDF Briefing Generator</span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Transform extracted data into executive briefings with 6 visual themes, full Markdown formatting, image injection, and AI report synthesis.
+              </p>
+            </div>
+
+            {/* Theme Picker Cards */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Palette className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Visual PDF Theme ({Object.keys(PDF_THEMES).length} curated themes)</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(PDF_THEMES).map(([themeKey, tConfig]) => {
+                  const isSelected = (props.theme || 'modern_clean') === themeKey;
+                  return (
+                    <button
+                      key={themeKey}
+                      type="button"
+                      onClick={() => handlePropChange('theme', themeKey)}
+                      className={`p-2.5 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-[#181d2c] border-indigo-500 ring-1 ring-indigo-500/50 shadow-md'
+                          : 'bg-[#11141c] border-[#1c2230] hover:border-gray-700 text-gray-400'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className={`text-[11px] font-bold ${isSelected ? 'text-white' : 'text-gray-200'}`}>
+                          {tConfig.name}
+                        </span>
+                        <div
+                          className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                          style={{ backgroundColor: tConfig.accentColor }}
+                          title={`Accent: ${tConfig.accentColor}`}
+                        />
+                      </div>
+                      <p className="text-[9px] text-gray-500 leading-tight mb-2">
+                        {tConfig.description}
+                      </p>
+                      <div className="flex items-center gap-1 pt-1.5 border-t border-[#202738] text-[9px] font-mono text-gray-400">
+                        <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: tConfig.bgColor }} />
+                        <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: tConfig.cardBg }} />
+                        <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: tConfig.accentColor }} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* AI Report Synthesis Card */}
+            <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>AI Executive Briefing Synthesis</span>
+                </label>
+                <input
+                  type="checkbox"
+                  checked={!!props.useAi}
+                  onChange={(e) => handlePropChange('useAi', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600 focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              {props.useAi && (
+                <div className="space-y-2.5 pt-1 border-t border-[#1a2030]">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">AI Model</label>
+                    <select
+                      value={props.aiModel || 'gpt-5.6-sol'}
+                      onChange={(e) => handlePropChange('aiModel', e.target.value)}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none text-xs"
+                    >
+                      <option value="gpt-5.6-sol">gpt-5.6-sol (ExperientialLabs Virtual Fast)</option>
+                      <option value="gpt-5.6-luna">gpt-5.6-luna (ExperientialLabs Virtual Pro)</option>
+                      <option value="gpt-4o-mini">gpt-4o-mini (OpenAI Fast)</option>
+                      <option value="gpt-4o">gpt-4o (OpenAI Flagship)</option>
+                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                      {aiAgentModels.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">AI Instructions & Data Prompt</label>
+                    <textarea
+                      rows={3}
+                      value={props.aiPrompt || 'Summarize the extracted items in {{combinedDataset}} into a structured executive report with key findings table and strategic insights.'}
+                      onChange={(e) => handlePropChange('aiPrompt', e.target.value)}
+                      placeholder="e.g. Turn {{combinedDataset}} into a high-level briefing with competitive analysis table..."
+                      className="w-full bg-[#161a24] text-white p-2 rounded border border-[#232a3b] outline-none text-xs font-mono"
+                    />
+                    <p className="text-[9px] text-gray-500 mt-0.5">
+                      AI outputs clean Markdown with headings, tables, and callouts directly injected into your PDF.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Document Details (Title, Subtitle, Author) */}
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Document Title</label>
+                <input
+                  type="text"
+                  value={props.title || 'Executive Scrape Briefing'}
+                  onChange={(e) => handlePropChange('title', e.target.value)}
+                  placeholder="e.g. Market Research Briefing"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1">Subtitle</label>
+                  <input
+                    type="text"
+                    value={props.subtitle || ''}
+                    onChange={(e) => handlePropChange('subtitle', e.target.value)}
+                    placeholder="Multi-Source Intelligence"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1">Author / Organization</label>
+                  <input
+                    type="text"
+                    value={props.author || 'AutoFlow AI'}
+                    onChange={(e) => handlePropChange('author', e.target.value)}
+                    placeholder="AutoFlow AI"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Markdown Content Editor with Snippet Buttons */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300">Markdown Document Content</label>
+                <span className="text-[10px] text-indigo-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+
+              {/* Quick formatting snippets */}
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { label: '+ H2', snippet: '\n## Section Heading\n' },
+                  { label: '+ Table', snippet: '\n| Field | Value |\n| --- | --- |\n| Example | Sample |\n' },
+                  { label: '+ [!NOTE]', snippet: '\n> [!NOTE]\n> Executive context notes here.\n' },
+                  { label: '+ [!TIP]', snippet: '\n> [!TIP]\n> Actionable optimization suggestion.\n' },
+                  { label: '+ [!WARNING]', snippet: '\n> [!WARNING]\n> Critical alert or exception.\n' },
+                  { label: '+ Page Break', snippet: '\n<!-- pagebreak -->\n' },
+                ].map((snip, sIdx) => (
+                  <button
+                    key={sIdx}
+                    type="button"
+                    onClick={() => {
+                      const cur = props.contentMarkdown || '';
+                      handlePropChange('contentMarkdown', cur + snip.snippet);
+                    }}
+                    className="px-1.5 py-0.5 bg-[#161a24] hover:bg-[#1e2434] text-gray-300 hover:text-white rounded border border-[#232a3b] text-[9px] font-mono transition-colors"
+                  >
+                    {snip.label}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                rows={6}
+                value={props.contentMarkdown ?? '# Executive Summary\n\nGenerated intelligence report based on extracted dataset.\n\n| Item | Status |\n| --- | --- |\n| Analysis | Completed |'}
+                onChange={(e) => handlePropChange('contentMarkdown', e.target.value)}
+                placeholder="# Heading 1&#10;&#10;Content paragraphs..."
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono leading-relaxed"
+              />
+            </div>
+
+            {/* Image Injection Manager */}
+            <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Injected Images & Screenshots</span>
+                  </div>
+                  <div className="text-[10px] text-gray-500">Inject images into cover, header, or article flow</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = Array.isArray(props.images) ? [...props.images] : [];
+                    cur.push({ url: '{{screenshotUrl}}', placement: 'inline', caption: '' });
+                    handlePropChange('images', cur);
+                  }}
+                  className="px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-[10px] font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Add Image
+                </button>
+              </div>
+
+              {(Array.isArray(props.images) && props.images.length > 0) ? (
+                <div className="space-y-2 pt-1">
+                  {props.images.map((img: any, idx: number) => (
+                    <div key={idx} className="p-2 bg-[#141824] rounded-lg border border-[#202738] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-indigo-400">Image #{idx + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = props.images.filter((_: any, i: number) => i !== idx);
+                            handlePropChange('images', cur);
+                          }}
+                          className="p-1 text-gray-500 hover:text-rose-400 rounded hover:bg-[#1f2638]"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={img.url || ''}
+                        onChange={(e) => {
+                          const cur = [...props.images];
+                          cur[idx] = { ...cur[idx], url: e.target.value };
+                          handlePropChange('images', cur);
+                        }}
+                        placeholder="Image URL or {{screenshotUrl}} or storage:myKey"
+                        className="w-full bg-[#161a24] text-white p-1 rounded border border-[#232a3b] outline-none font-mono text-[11px]"
+                      />
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <select
+                          value={img.placement || 'inline'}
+                          onChange={(e) => {
+                            const cur = [...props.images];
+                            cur[idx] = { ...cur[idx], placement: e.target.value };
+                            handlePropChange('images', cur);
+                          }}
+                          className="bg-[#161a24] text-white p-1 rounded border border-[#232a3b] outline-none text-[10px]"
+                        >
+                          <option value="inline">Inline (In Document Body)</option>
+                          <option value="cover_page">Cover Page (Hero)</option>
+                          <option value="header_logo">Header Logo (Top)</option>
+                          <option value="gallery_grid">Gallery Grid</option>
+                          <option value="footer">Footer Banner</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={img.caption || ''}
+                          onChange={(e) => {
+                            const cur = [...props.images];
+                            cur[idx] = { ...cur[idx], caption: e.target.value };
+                            handlePropChange('images', cur);
+                          }}
+                          placeholder="Caption (optional)"
+                          className="bg-[#161a24] text-white p-1 rounded border border-[#232a3b] outline-none text-[10px]"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[10px] text-gray-500 italic py-0.5">
+                  No images attached yet. Add screenshots or brand logos.
+                </div>
+              )}
+            </div>
+
+            {/* Layout, Download & Storage Options */}
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1">Page Format</label>
+                  <select
+                    value={props.pageSize || 'A4'}
+                    onChange={(e) => handlePropChange('pageSize', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value="A4">A4 (210 x 297mm)</option>
+                    <option value="Letter">US Letter (8.5 x 11in)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-1">Orientation</label>
+                  <select
+                    value={props.orientation || 'portrait'}
+                    onChange={(e) => handlePropChange('orientation', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none text-xs"
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-300">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.coverPage}
+                    onChange={(e) => handlePropChange('coverPage', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600 focus:ring-0"
+                  />
+                  <span>Standalone Cover Page</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={props.includePageNumbers !== false}
+                    onChange={(e) => handlePropChange('includePageNumbers', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600 focus:ring-0"
+                  />
+                  <span>Page Numbers</span>
+                </label>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-[#1c2230]">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={props.autoDownload !== false}
+                      onChange={(e) => handlePropChange('autoDownload', e.target.checked)}
+                      className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600 focus:ring-0"
+                    />
+                    <span>Auto-Download PDF File</span>
+                  </label>
+                </div>
+                {props.autoDownload !== false && (
+                  <input
+                    type="text"
+                    value={props.filename || 'autoflow_report.pdf'}
+                    onChange={(e) => handlePropChange('filename', e.target.value)}
+                    placeholder="autoflow_report.pdf"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none font-mono text-xs"
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-[#1c2230]">
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={!!props.saveToStorage}
+                    onChange={(e) => handlePropChange('saveToStorage', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600 focus:ring-0"
+                  />
+                  <span>Save to Simple Storage (Documents)</span>
+                </label>
+                {props.saveToStorage && (
+                  <input
+                    type="text"
+                    value={props.storageKey || 'report_pdf'}
+                    onChange={(e) => handlePropChange('storageKey', e.target.value)}
+                    placeholder="Storage key, e.g. report_pdf"
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] outline-none font-mono text-xs"
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Output Variable */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Variable Name</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'generatedPdf'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="generatedPdf"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Contains PDF metadata, data URL for viewing, and byte size.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Simple Storage Node */}
+        {selectedNode.data.type === 'simple_storage' && (
+          <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+            {/* Header description banner */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-500/20">
+              <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs mb-1">
+                <Archive className="w-4 h-4" />
+                <span>Universal Simple Storage</span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Shared data store for Arrays, Dictionaries, Primitive Variables, Images, and Documents. Accessible by any node via &#123;&#123;key&#125;&#125; or &#123;&#123;storage.key&#125;&#125;.
+              </p>
+            </div>
+
+            {/* Storage Scope Selector */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Storage Scope
+              </label>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('scope', 'workflow')}
+                  className={`py-1.5 px-2 text-center rounded-lg font-medium transition-all ${
+                    (props.scope || 'workflow') === 'workflow'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  Workflow Run (In-Memory)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePropChange('scope', 'persistent')}
+                  className={`py-1.5 px-2 text-center rounded-lg font-medium transition-all ${
+                    props.scope === 'persistent'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                  }`}
+                >
+                  Persistent (Chrome Storage)
+                </button>
+              </div>
+            </div>
+
+            {/* Storage Action Pills */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                Storage Action
+              </label>
+              <div className="grid grid-cols-4 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[10px]">
+                {[
+                  { id: 'set', label: 'SET' },
+                  { id: 'get', label: 'GET' },
+                  { id: 'append', label: 'APPEND' },
+                  { id: 'merge', label: 'MERGE' },
+                  { id: 'delete', label: 'DELETE' },
+                  { id: 'clear', label: 'CLEAR' },
+                  { id: 'list', label: 'LIST' },
+                ].map((act) => (
+                  <button
+                    key={act.id}
+                    type="button"
+                    onClick={() => handlePropChange('action', act.id)}
+                    className={`py-1.5 px-1 text-center rounded-lg font-bold transition-all ${
+                      (props.action || 'set') === act.id
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                    }`}
+                  >
+                    {act.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target Storage Key */}
+            {props.action !== 'clear' && props.action !== 'list' && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Storage Key</label>
+                <input
+                  type="text"
+                  value={props.key || 'myItems'}
+                  onChange={(e) => handlePropChange('key', e.target.value)}
+                  placeholder="e.g. products, myVar, config"
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-emerald-500 outline-none font-mono text-xs font-semibold"
+                />
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-emerald-400/90 font-mono">
+                  <span>Accessible in any node as:</span>
+                  <span className="bg-emerald-950/60 px-1 py-0.5 rounded border border-emerald-800/40">
+                    &#123;&#123;{props.key || 'myItems'}&#125;&#125;
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Entry Type Selector */}
+            {['set', 'append', 'merge'].includes(props.action || 'set') && (
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                  Entry Type
+                </label>
+                <div className="grid grid-cols-5 gap-1 p-1 bg-[#0b0e14] rounded-xl border border-[#1e2433] text-[9px]">
+                  {[
+                    { id: 'array', label: 'Array', icon: Layers },
+                    { id: 'dictionary', label: 'Dictionary', icon: Database },
+                    { id: 'variable', label: 'Variable', icon: Key },
+                    { id: 'image', label: 'Image', icon: ImageIcon },
+                    { id: 'document', label: 'Document', icon: FileText },
+                  ].map((t) => {
+                    const TIcon = t.icon;
+                    const isSelected = (props.entryType || 'array') === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => handlePropChange('entryType', t.id)}
+                        className={`py-2 px-1 text-center rounded-lg font-medium transition-all flex flex-col items-center gap-1 ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-gray-400 hover:text-gray-200 hover:bg-[#151a26]'
+                        }`}
+                      >
+                        <TIcon className="w-3 h-3" />
+                        <span>{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Value Input depending on Entry Type */}
+            {['set', 'append', 'merge'].includes(props.action || 'set') && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-gray-400">
+                    {props.entryType === 'array' ? 'Array Value / Variable' :
+                     props.entryType === 'dictionary' ? 'Dictionary JSON / Variable' :
+                     props.entryType === 'image' ? 'Image URL or Data URL' :
+                     props.entryType === 'document' ? 'Document Content / Variable' : 'Variable Value'}
+                  </label>
+                  <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                </div>
+
+                {props.entryType === 'variable' ? (
+                  <input
+                    type="text"
+                    value={props.value ?? ''}
+                    onChange={(e) => handlePropChange('value', e.target.value)}
+                    placeholder="e.g. {{extractedText}} or hello world"
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-emerald-500 outline-none text-xs font-mono"
+                  />
+                ) : (
+                  <textarea
+                    rows={4}
+                    value={props.value ?? (props.entryType === 'array' ? '[]' : props.entryType === 'dictionary' ? '{}' : '')}
+                    onChange={(e) => handlePropChange('value', e.target.value)}
+                    placeholder={
+                      props.entryType === 'array' ? 'e.g. {{scrapedProducts}} or ["item1", "item2"]' :
+                      props.entryType === 'dictionary' ? 'e.g. {"status": "success", "count": 10}' :
+                      props.entryType === 'image' ? '{{screenshotUrl}} or https://...' :
+                      '# Document Content...'
+                    }
+                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-emerald-500 outline-none text-xs font-mono leading-relaxed"
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Merge Deep Toggle */}
+            {props.action === 'merge' && props.entryType === 'dictionary' && (
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.deepMerge !== false}
+                  onChange={(e) => handlePropChange('deepMerge', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-emerald-600 focus:ring-0"
+                />
+                <span className="text-[11px]">Deep Recursive Merge</span>
+              </label>
+            )}
+
+            {/* Output Variable */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Result Output Variable</label>
+              <input
+                type="text"
+                value={props.outputVariable || 'storageResult'}
+                onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                placeholder="storageResult"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-emerald-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Returns the stored/retrieved value or storage operation status.
+              </p>
             </div>
           </div>
         )}

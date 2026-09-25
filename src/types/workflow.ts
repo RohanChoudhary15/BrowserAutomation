@@ -59,6 +59,7 @@ export type NodeType =
   | 'logic_nor'
   | 'loop'
   | 'for_each'
+  | 'async_parallel'
   | 'try_catch'
   | 'break'
   | 'continue'
@@ -71,6 +72,9 @@ export type NodeType =
   | 'generate_data'
   | 'math_calculate'
   | 'export_data'
+  | 'combine_datasets'
+  | 'generate_pdf'
+  | 'simple_storage'
   // Utility
   | 'screenshot'
   | 'execute_javascript'

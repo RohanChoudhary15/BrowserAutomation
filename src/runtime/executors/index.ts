@@ -23,6 +23,28 @@ import {
   cleanPrice,
   formatDateString,
 } from '../../utils/dataPostProcessor';
+import {
+  combineDatasets,
+  CombineDatasetsOptions,
+  ColumnMapping,
+} from '../../utils/datasetCombiner';
+import {
+  orchestrateParallelBranches,
+  ParallelBranchConfig,
+  ParallelExecutionOptions,
+} from '../../utils/parallelOrchestrator';
+import {
+  generateThemedPdfDocument,
+  PdfThemeId,
+  InjectedImage,
+} from '../../utils/pdfGenerator';
+import {
+  executeStorageAction,
+  syncStorageToVariables,
+  StorageEntryType,
+  StorageAction,
+  StorageScope,
+} from '../../utils/simpleStorage';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -4026,6 +4048,451 @@ export const executeSkipTo: NodeExecutor = async (node, ctx) => {
   };
 };
 
+/**
+ * Combines multiple datasets from predecessor scrape/extract nodes or variables,
+ * aligning columns, mapping schemas, and deduplicating records.
+ */
+export const executeCombineDatasets: NodeExecutor = async (node, ctx) => {
+  const props = node.data.properties || {};
+  const sourceMode = props.sourceMode || 'incoming_edges';
+  const outVar = props.outputVariable || 'combinedDataset';
+  const mode = props.mode || 'union';
+  const deduplicate = props.deduplicate !== false;
+  const dedupStrategy = props.dedupStrategy || 'merge_coalesce';
+  const dedupKeys = Array.isArray(props.dedupKeys) ? props.dedupKeys : [];
+  const columnMappings = Array.isArray(props.columnMappings) ? props.columnMappings : [];
+  const primaryKey = props.primaryKey || 'title';
+  const missingValue = props.missingValue !== undefined ? props.missingValue : '';
+  const addSourceColumn = props.addSourceColumn !== false;
+  const sourceColumnName = props.sourceColumnName || '_source';
+  const caseSensitive = !!props.caseSensitive;
+  const normalizeUrls = props.normalizeUrls !== false;
+
+  ctx.log({
+    level: 'info',
+    message: `Combining datasets (Mode: ${mode.toUpperCase()}, Dedup: ${deduplicate ? dedupStrategy : 'off'})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: 'Resolving and merging input datasets...',
+      progress: 30,
+    },
+  });
+
+  const datasets: any[][] = [];
+  const sourceLabels: string[] = [];
+
+  if (sourceMode === 'incoming_edges') {
+    // 1. Check if converging gate inputs were recorded by the engine
+    const gateArrivals = ctx._gateInputs?.[node.id];
+    if (Array.isArray(gateArrivals) && gateArrivals.length > 0) {
+      gateArrivals.forEach((arr: any, idx: number) => {
+        const out = arr.output;
+        let items: any[] = [];
+        if (Array.isArray(out)) {
+          items = out;
+        } else if (out && Array.isArray(out.items)) {
+          items = out.items;
+        } else if (out && Array.isArray(out.dataset)) {
+          items = out.dataset;
+        } else if (out && typeof out === 'object') {
+          items = [out];
+        }
+        datasets.push(items);
+        sourceLabels.push(arr.nodeName || `Source ${idx + 1}`);
+      });
+    }
+  }
+
+  // Fallback or explicit 'variables' mode: inspect sourceVariables or ctx.variables
+  if (datasets.length === 0 || sourceMode === 'variables') {
+    const rawVars = Array.isArray(props.sourceVariables) ? props.sourceVariables : ['scrapedProducts1', 'scrapedProducts2'];
+    rawVars.forEach((rawVarName: string, idx: number) => {
+      const cleanVar = String(rawVarName).trim().replace(/^\{\{|\}\}$/g, '');
+      const val = ctx.variables[cleanVar];
+      let items: any[] = [];
+      if (Array.isArray(val)) {
+        items = val;
+      } else if (val && Array.isArray(val.items)) {
+        items = val.items;
+      } else if (val && typeof val === 'object') {
+        items = [val];
+      }
+      if (items.length > 0 || sourceMode === 'variables') {
+        datasets.push(items);
+        sourceLabels.push(cleanVar || `Var ${idx + 1}`);
+      }
+    });
+  }
+
+  // If still empty, check for common default array variables in context
+  if (datasets.length === 0) {
+    for (const [k, v] of Object.entries(ctx.variables)) {
+      if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' && v[0] !== null && k !== outVar && !k.startsWith('_')) {
+        datasets.push(v);
+        sourceLabels.push(k);
+      }
+    }
+  }
+
+  const result = combineDatasets(datasets, {
+    mode,
+    missingValue,
+    addSourceColumn,
+    sourceColumnName,
+    sourceLabels,
+    columnMappings,
+    deduplicate,
+    dedupKeys,
+    dedupStrategy,
+    caseSensitive,
+    normalizeUrls,
+    primaryKey,
+  });
+
+  ctx.variables[outVar] = result.items;
+  ctx.variables[`${outVar}_count`] = result.rowCount;
+  ctx.variables[`${outVar}_columns`] = result.columns;
+
+  ctx.log({
+    level: 'info',
+    message: `Datasets combined: ${result.rowCount} rows across ${result.columnCount} columns (${result.duplicatesRemoved} duplicates removed)`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: result,
+    variables: {
+      [outVar]: result.items,
+      [`${outVar}_count`]: result.rowCount,
+      [`${outVar}_columns`]: result.columns,
+    },
+  };
+};
+
+/**
+ * Executes multiple workflow branches or actions concurrently in parallel.
+ */
+export const executeAsyncParallel: NodeExecutor = async (node, ctx) => {
+  const props = node.data.properties || {};
+  const mode = props.mode || 'all';
+  const branches = Array.isArray(props.branches) && props.branches.length > 0
+    ? props.branches
+    : [
+        { id: 'branch_1', name: 'Branch 1' },
+        { id: 'branch_2', name: 'Branch 2' },
+      ];
+  const maxConcurrency = Number(props.maxConcurrency) || 0;
+  const timeoutMs = Number(props.timeoutMs) || 30000;
+  const continueOnError = props.continueOnError !== undefined ? !!props.continueOnError : mode === 'settled';
+  const mergeStrategy = props.mergeStrategy || 'merge';
+  const outVar = props.outputVariable || 'parallelResults';
+
+  ctx.log({
+    level: 'info',
+    message: `Async Parallel executing ${branches.length} branches (Mode: ${mode.toUpperCase()}, Concurrency: ${maxConcurrency || 'unlimited'})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: `Executing ${branches.length} branches in parallel...`,
+      progress: 20,
+    },
+  });
+
+  const orchestratorResult = await orchestrateParallelBranches(
+    branches,
+    async (branch, signal) => {
+      const branchVars: Record<string, any> = { ...ctx.variables, branchId: branch.id, branchName: branch.name };
+      return {
+        output: { branchId: branch.id, branchName: branch.name, executedAt: Date.now() },
+        variables: branchVars,
+      };
+    },
+    {
+      mode,
+      maxConcurrency,
+      timeoutMs,
+      continueOnError,
+      mergeStrategy,
+      outputVariable: outVar,
+    }
+  );
+
+  if (orchestratorResult.combinedVariables) {
+    Object.assign(ctx.variables, orchestratorResult.combinedVariables);
+  }
+  ctx.variables[outVar] = orchestratorResult;
+
+  return {
+    success: orchestratorResult.success,
+    output: orchestratorResult,
+    variables: {
+      [outVar]: orchestratorResult,
+      ...(orchestratorResult.combinedVariables || {}),
+    },
+  };
+};
+
+/**
+ * Generates an executive briefing or report PDF document with curated themes,
+ * full Markdown support, image injection, and AI content synthesis.
+ */
+export const executeGeneratePdf: NodeExecutor = async (node, ctx) => {
+  const props = node.data.properties || {};
+  const rawTitle = props.title || 'Executive Scrape Briefing';
+  const title = String(interpolateVariables(rawTitle, ctx.variables));
+  const rawSubtitle = props.subtitle || '';
+  const subtitle = rawSubtitle ? String(interpolateVariables(rawSubtitle, ctx.variables)) : undefined;
+  const rawAuthor = props.author || 'AutoFlow AI';
+  const author = rawAuthor ? String(interpolateVariables(rawAuthor, ctx.variables)) : undefined;
+  const theme = (props.theme || 'modern_clean') as PdfThemeId;
+  const useAi = !!props.useAi;
+  const rawAiPrompt = props.aiPrompt || 'Summarize the extracted items into a structured executive report with key findings table.';
+  const aiModel = props.aiModel || 'gpt-5.6-sol';
+  const rawMarkdown = props.contentMarkdown || '# Executive Summary\n\nIntelligence report generated automatically.';
+  let contentMarkdown = String(interpolateVariables(rawMarkdown, ctx.variables));
+  const pageSize = props.pageSize || 'A4';
+  const orientation = props.orientation || 'portrait';
+  const headerText = props.headerText ? String(interpolateVariables(props.headerText, ctx.variables)) : undefined;
+  const footerText = props.footerText ? String(interpolateVariables(props.footerText, ctx.variables)) : undefined;
+  const includePageNumbers = props.includePageNumbers !== false;
+  const includeTimestamp = props.includeTimestamp !== false;
+  const coverPage = !!props.coverPage;
+  const autoDownload = props.autoDownload !== false;
+  const rawFilename = props.filename || 'autoflow_report.pdf';
+  const filename = String(interpolateVariables(rawFilename, ctx.variables)).replace(/\.pdf$/i, '') + '.pdf';
+  const saveToStorage = !!props.saveToStorage;
+  const storageKey = props.storageKey ? String(interpolateVariables(props.storageKey, ctx.variables)) : 'report_pdf';
+  const outVar = props.outputVariable || 'generatedPdf';
+
+  ctx.log({
+    level: 'info',
+    message: `Generating themed PDF document: "${title}" (Theme: ${theme}, Cover: ${coverPage})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: useAi ? 'Synthesizing report via AI...' : 'Rendering PDF layout...',
+      progress: 30,
+    },
+  });
+
+  // AI Content generation if requested
+  if (useAi) {
+    try {
+      const resolvedAiPrompt = String(interpolateVariables(rawAiPrompt, ctx.variables));
+      const aiPromptFull = `${resolvedAiPrompt}\n\nFormat your entire response in GitHub-flavored Markdown including H1/H2 headings, bullet points, callout alerts ([!NOTE], [!TIP], [!WARNING]), and structured Markdown tables where appropriate. Output pure markdown only without wrapping in \`\`\`markdown backticks.`;
+
+      const aiResponse = await queryLlm(aiPromptFull, {
+        model: aiModel,
+        systemPrompt: 'You are an elite data analyst and executive briefing author. You turn raw extracted data into pristine, beautifully structured Markdown briefing documents.',
+      });
+
+      if (aiResponse && aiResponse.trim()) {
+        contentMarkdown = aiResponse.trim();
+        ctx.log({
+          level: 'info',
+          message: `AI generated structured document markdown (${contentMarkdown.length} chars)`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+      }
+    } catch (aiErr: any) {
+      ctx.log({
+        level: 'warn',
+        message: `AI synthesis failed, falling back to static Markdown template: ${aiErr.message || aiErr}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+    }
+  }
+
+  // Resolve injected images
+  const rawImages: any[] = Array.isArray(props.images) ? props.images : [];
+  const injectedImages: InjectedImage[] = [];
+
+  for (const img of rawImages) {
+    if (!img) continue;
+    let imgUrl = String(interpolateVariables(img.url || '', ctx.variables)).trim();
+    // Support resolution from simple storage
+    if (imgUrl.startsWith('storage:') || imgUrl.startsWith('storage.')) {
+      const storeKey = imgUrl.replace(/^storage[:.]/, '');
+      const stored = (ctx.variables.storage || {})[storeKey] || ctx.variables[storeKey];
+      if (stored && (stored.url || stored.dataUrl)) {
+        imgUrl = stored.dataUrl || stored.url;
+      }
+    }
+
+    if (imgUrl) {
+      injectedImages.push({
+        url: imgUrl,
+        placement: img.placement || 'inline',
+        caption: img.caption ? String(interpolateVariables(img.caption, ctx.variables)) : undefined,
+        alt: img.alt ? String(interpolateVariables(img.alt, ctx.variables)) : undefined,
+        width: img.width,
+      });
+    }
+  }
+
+  // Generate document
+  const pdfResult = generateThemedPdfDocument({
+    title,
+    subtitle,
+    author,
+    theme,
+    contentMarkdown,
+    pageSize,
+    orientation,
+    headerText,
+    footerText,
+    includePageNumbers,
+    includeTimestamp,
+    coverPage,
+    images: injectedImages,
+  });
+
+  // If saveToStorage is requested
+  if (saveToStorage) {
+    try {
+      await executeStorageAction({
+        action: 'set',
+        key: storageKey,
+        type: 'document',
+        value: {
+          title,
+          content: pdfResult.html,
+          dataUrl: pdfResult.dataUrl,
+          format: 'html',
+          timestamp: Date.now(),
+        },
+        scope: 'workflow',
+      });
+      syncStorageToVariables(ctx.variables);
+    } catch (storeErr) {
+      console.warn('[AutoFlow] Failed to save PDF to storage:', storeErr);
+    }
+  }
+
+  // Auto download if requested
+  if (autoDownload) {
+    try {
+      await triggerFileDownload(pdfResult.dataUrl, filename);
+    } catch (dlErr) {
+      console.warn('[AutoFlow] PDF auto-download failed:', dlErr);
+    }
+  }
+
+  const pdfOutput = {
+    title,
+    filename,
+    dataUrl: pdfResult.dataUrl,
+    sizeBytes: pdfResult.sizeBytes,
+    theme,
+    savedToStorage: saveToStorage ? storageKey : false,
+  };
+
+  ctx.variables[outVar] = pdfOutput;
+
+  ctx.log({
+    level: 'info',
+    message: `Themed PDF generated successfully (${pdfResult.sizeBytes} bytes, saved as ${filename})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  return {
+    success: true,
+    output: pdfOutput,
+    variables: {
+      [outVar]: pdfOutput,
+    },
+  };
+};
+
+/**
+ * Universal Simple Storage engine for Arrays, Dictionaries, Primitive Variables, Images, and Documents.
+ * Accessible across any node via {{key}} or {{storage.key}}.
+ */
+export const executeSimpleStorage: NodeExecutor = async (node, ctx) => {
+  const props = node.data.properties || {};
+  const action = (props.action || 'set') as StorageAction;
+  const rawKey = props.key || 'myItems';
+  const key = String(interpolateVariables(rawKey, ctx.variables)).trim();
+  const entryType = (props.entryType || 'variable') as StorageEntryType;
+  const scope = (props.scope || 'workflow') as StorageScope;
+  const deepMerge = props.deepMerge !== false;
+  const outVar = props.outputVariable || 'storageResult';
+
+  // Resolve value
+  let resolvedVal: any = undefined;
+  if (action === 'set' || action === 'append' || action === 'merge') {
+    const rawVal = props.value !== undefined ? props.value : '';
+    if (typeof rawVal === 'string') {
+      const trimmed = rawVal.trim();
+      const varMatch = trimmed.match(/^\{\{([a-zA-Z0-9_.-]+)\}\}$/);
+      if (varMatch && ctx.variables[varMatch[1]] !== undefined) {
+        resolvedVal = ctx.variables[varMatch[1]];
+      } else {
+        const interpolated = interpolateVariables(trimmed, ctx.variables);
+        if (entryType === 'array' || entryType === 'dictionary') {
+          try {
+            resolvedVal = JSON.parse(interpolated);
+          } catch {
+            resolvedVal = entryType === 'array' ? [interpolated] : { value: interpolated };
+          }
+        } else {
+          resolvedVal = interpolated;
+        }
+      }
+    } else {
+      resolvedVal = rawVal;
+    }
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Simple Storage action: ${action.toUpperCase()} on "${key}" (${entryType}, ${scope})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const res = await executeStorageAction({
+    action,
+    key,
+    type: entryType,
+    value: resolvedVal,
+    scope,
+    deepMerge,
+  });
+
+  // Always sync storage into execution variables so any node can access it
+  syncStorageToVariables(ctx.variables);
+
+  ctx.variables[outVar] = res.value;
+
+  return {
+    success: res.success,
+    output: res,
+    variables: {
+      [outVar]: res.value,
+      ...(key ? { [key]: res.value } : {}),
+    },
+  };
+};
+
 export const executors: Record<string, NodeExecutor> = {
   navigate: executeNavigate,
   back: executeBack,
@@ -4098,6 +4565,10 @@ export const executors: Record<string, NodeExecutor> = {
   stop_workflow: executeStopWorkflow,
   pause_workflow: executePauseWorkflow,
   skip_to: executeSkipTo,
+  combine_datasets: executeCombineDatasets,
+  async_parallel: executeAsyncParallel,
+  generate_pdf: executeGeneratePdf,
+  simple_storage: executeSimpleStorage,
 };
 
 

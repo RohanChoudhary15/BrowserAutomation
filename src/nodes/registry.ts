@@ -639,6 +639,26 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       array: '{{items}}',
     },
   },
+  async_parallel: {
+    type: 'async_parallel',
+    label: 'Async Parallel',
+    category: 'logic',
+    description: 'Execute multiple workflow branches concurrently at the same time with error tolerance and throttling',
+    icon: 'Zap',
+    reactFlowType: 'asyncParallelNode',
+    defaultProperties: {
+      mode: 'all', // 'all' | 'settled' | 'race'
+      branches: [
+        { id: 'branch_1', name: 'Branch 1' },
+        { id: 'branch_2', name: 'Branch 2' },
+      ],
+      maxConcurrency: 0,
+      timeoutMs: 30000,
+      continueOnError: false,
+      mergeStrategy: 'merge',
+      outputVariable: 'parallelResults',
+    },
+  },
   try_catch: {
     type: 'try_catch',
     label: 'Try / Catch',
@@ -778,6 +798,77 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       filterEmptyMode: 'any',
       sheetName: 'Data',
       outputVariable: 'exportedData',
+    },
+  },
+  combine_datasets: {
+    type: 'combine_datasets',
+    label: 'Combine Datasets',
+    category: 'data',
+    description: 'Combine multiple schemas and product scrapes with alignment, column mapping, and deduplication',
+    icon: 'Layers',
+    reactFlowType: 'combineDatasetsNode',
+    defaultProperties: {
+      sourceMode: 'incoming_edges', // 'incoming_edges' | 'variables'
+      sourceVariables: ['scrapedProducts1', 'scrapedProducts2'],
+      mode: 'union', // 'union' | 'intersection' | 'key_join'
+      missingValue: '',
+      addSourceColumn: true,
+      sourceColumnName: '_source',
+      columnMappings: [],
+      deduplicate: true,
+      dedupKeys: [],
+      dedupStrategy: 'merge_coalesce', // 'keep_first' | 'keep_last' | 'merge_coalesce' | 'highest_completeness'
+      caseSensitive: false,
+      normalizeUrls: true,
+      primaryKey: 'title',
+      outputVariable: 'combinedDataset',
+    },
+  },
+  generate_pdf: {
+    type: 'generate_pdf',
+    label: 'Generate PDF Document',
+    category: 'data',
+    description: 'Generate professional executive PDFs with 6 visual themes, full Markdown support, image injection, and AI content synthesis',
+    icon: 'FileText',
+    defaultProperties: {
+      title: 'Executive Scrape Briefing',
+      subtitle: 'Multi-Source Product & Market Intelligence',
+      author: 'AutoFlow AI',
+      theme: 'modern_clean', // 'modern_clean' | 'executive_dark' | 'minimalist_light' | 'corporate_blue' | 'academic_formal' | 'cyber_tech'
+      useAi: false,
+      aiPrompt: 'Summarize the extracted items in {{combinedDataset}} into a structured executive report with key findings table and strategic insights.',
+      aiModel: 'gpt-5.6-sol',
+      contentMarkdown: '# Executive Summary\n\nGenerated intelligence report based on extracted dataset.\n\n| Item | Status |\n| --- | --- |\n| Analysis | Completed |',
+      pageSize: 'A4', // 'A4' | 'Letter'
+      orientation: 'portrait', // 'portrait' | 'landscape'
+      headerText: 'AutoFlow Briefing',
+      footerText: 'AutoFlow Browser Automation',
+      includePageNumbers: true,
+      includeTimestamp: true,
+      coverPage: false,
+      images: [], // [{ url: '{{screenshotUrl}}', placement: 'cover_page', caption: 'Live View' }]
+      autoDownload: true,
+      filename: 'autoflow_report.pdf',
+      saveToStorage: false,
+      storageKey: 'report_pdf',
+      outputVariable: 'generatedPdf',
+    },
+  },
+  simple_storage: {
+    type: 'simple_storage',
+    label: 'Simple Storage',
+    category: 'data',
+    description: 'Universal shared data store for Arrays, Dictionaries, Primitive Variables, Images, and Documents accessible by any node',
+    icon: 'Archive',
+    reactFlowType: 'simpleStorageNode',
+    defaultProperties: {
+      action: 'set', // 'set' | 'get' | 'append' | 'merge' | 'delete' | 'clear' | 'list'
+      key: 'myItems',
+      entryType: 'array', // 'array' | 'dictionary' | 'variable' | 'image' | 'document'
+      value: '[]',
+      scope: 'workflow', // 'workflow' | 'persistent'
+      deepMerge: true,
+      outputVariable: 'storageResult',
     },
   },
 
