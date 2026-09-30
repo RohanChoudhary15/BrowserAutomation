@@ -757,4 +757,192 @@ describe('Free Keyless Scraper Nodes', () => {
       expect(mockCtx.variables['googItems']).toBeDefined();
     });
   });
+
+  describe('Authentic Error Handling & Zero Fake Data Guarantee', () => {
+    it('Amazon Scraper never fabricates fake "Pro Edition" items when 0 products found', async () => {
+      // Mock fetch to simulate empty or blocked response
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        text: async () => '<html>Robot Check</html>',
+      } as any);
+
+      try {
+        const node: WorkflowNode = {
+          id: 'node-amz-empty',
+          type: 'amazon_scraper',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Amazon Scraper',
+            category: 'scrapers',
+            type: 'amazon_scraper',
+            properties: {
+              engine: 'amazon_buddy',
+              query: 'nonexistent-random-product-xyz-12345',
+              outputVariable: 'amzTestOut',
+            },
+          },
+        };
+
+        const result = await executeAmazonScraper(node, mockCtx);
+        expect(result.items).toEqual([]);
+        expect(mockCtx.variables['amzTestOut']).toEqual([]);
+        expect(mockCtx.variables['amzTestOut_count']).toBe(0);
+        // Verify no fake "Pro Edition" item was created
+        const anyFake = (result.items || []).some((item: any) =>
+          String(item.title || '').includes('Pro Edition')
+        );
+        expect(anyFake).toBe(false);
+        expect(result.error).toBeDefined();
+        expect(mockCtx.updateNodeState).toHaveBeenCalledWith(
+          'node-amz-empty',
+          expect.objectContaining({ status: 'error' })
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('X / Twitter Scraper never fabricates fake "TechExplorer" items when syndication fails', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Rate Limited',
+        text: async () => 'Rate limit exceeded',
+      } as any);
+
+      try {
+        const node: WorkflowNode = {
+          id: 'node-tw-empty',
+          type: 'twitter_scraper',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Twitter Scraper',
+            category: 'scrapers',
+            type: 'twitter_scraper',
+            properties: {
+              engine: 'syndication_api',
+              username: 'some_nonexistent_user_99999',
+              outputVariable: 'twTestOut',
+            },
+          },
+        };
+
+        const result = await executeTwitterScraper(node, mockCtx);
+        expect(result.items).toEqual([]);
+        expect(mockCtx.variables['twTestOut']).toEqual([]);
+        expect(mockCtx.variables['twTestOut_count']).toBe(0);
+        // Verify no fake "TechExplorer" tweet was created
+        const anyFake = (result.items || []).some((item: any) =>
+          String(item.author || '').includes('TechExplorer') || String(item.text || '').includes('Exploring keyless')
+        );
+        expect(anyFake).toBe(false);
+        expect(result.error).toBeDefined();
+        expect(mockCtx.updateNodeState).toHaveBeenCalledWith(
+          'node-tw-empty',
+          expect.objectContaining({ status: 'error' })
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('Google Search Scraper never fabricates fake "Official Guide & Resources" items when search fails', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        text: async () => '<html>enablejs</html>',
+      } as any);
+
+      try {
+        const node: WorkflowNode = {
+          id: 'node-goog-empty',
+          type: 'google_search_scraper',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Google Scraper',
+            category: 'scrapers',
+            type: 'google_search_scraper',
+            properties: {
+              engine: 'google_sr',
+              query: 'xyznonexistenttermquery999',
+              outputVariable: 'googTestOut',
+            },
+          },
+        };
+
+        const result = await executeGoogleSearchScraper(node, mockCtx);
+        expect(result.items).toEqual([]);
+        expect(mockCtx.variables['googTestOut']).toEqual([]);
+        expect(mockCtx.variables['googTestOut_count']).toBe(0);
+        // Verify no fake "Official Guide & Resources" item was created
+        const anyFake = (result.items || []).some((item: any) =>
+          String(item.title || '').includes('Official Guide & Resources')
+        );
+        expect(anyFake).toBe(false);
+        expect(result.error).toBeDefined();
+        expect(mockCtx.updateNodeState).toHaveBeenCalledWith(
+          'node-goog-empty',
+          expect.objectContaining({ status: 'error' })
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('Amazon Scraper extracts authentic fields when real product cards are returned', async () => {
+      const sampleAmazonHtml = `
+        <div data-asin="B094QH5MWN">
+          <h2><span>E-YOOSO Wireless Mouse 4800 DPI</span></h2>
+          <span class="a-offscreen">$14.99</span>
+          <span class="a-icon-alt">4.4 out of 5 stars</span>
+          <span aria-label="8,457 ratings">8,457</span>
+          <i class="a-icon-prime"></i>
+          <img class="s-image" src="https://m.media-amazon.com/mouse.jpg" />
+        </div>
+      `;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => sampleAmazonHtml,
+      } as any);
+
+      try {
+        const node: WorkflowNode = {
+          id: 'node-amz-real',
+          type: 'amazon_scraper',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Amazon Scraper',
+            category: 'scrapers',
+            type: 'amazon_scraper',
+            properties: {
+              engine: 'amazon_buddy',
+              query: 'mouse',
+              outputVariable: 'amzRealOut',
+            },
+          },
+        };
+
+        const result = await executeAmazonScraper(node, mockCtx);
+        expect(result.items.length).toBe(1);
+        const item = result.items[0];
+        expect(item.asin).toBe('B094QH5MWN');
+        expect(item.title).toBe('E-YOOSO Wireless Mouse 4800 DPI');
+        expect(item.price).toBe('$14.99');
+        expect(item.rating).toBe('4.4 out of 5 stars');
+        expect(item.reviewsCount).toBe('8,457');
+        expect(item.isPrime).toBe(true);
+        expect(item.image).toBe('https://m.media-amazon.com/mouse.jpg');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
 });

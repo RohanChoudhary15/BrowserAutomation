@@ -3441,11 +3441,13 @@ export async function scrapeTwitter(params: {
   const maxResults = params.maxResults || 15;
   const items: Record<string, any>[] = [];
 
-  const tweetEls = document.querySelectorAll('article[data-testid="tweet"]');
+  const tweetEls = document.querySelectorAll(
+    'article[data-testid="tweet"], article[role="article"], div[data-testid="cellInnerDiv"] article'
+  );
   for (let i = 0; i < tweetEls.length && items.length < maxResults; i++) {
     const el = tweetEls[i];
     const userEl = el.querySelector('div[data-testid="User-Name"]');
-    const textEl = el.querySelector('div[data-testid="tweetText"]');
+    const textEl = el.querySelector('div[data-testid="tweetText"], div[lang]');
     const timeEl = el.querySelector('time');
     const linkEl = el.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
 
@@ -3480,7 +3482,7 @@ export async function scrapeGoogleSearch(params: {
   const maxResults = params.maxResults || 10;
   const items: Record<string, any>[] = [];
 
-  const resultCards = document.querySelectorAll('#search .g, div.tF2Cxc, div.MjjYud, div[data-sokoban-container]');
+  const resultCards = document.querySelectorAll('#search .g, div.tF2Cxc, div.MjjYud, div[data-sokoban-container], div.g');
   for (let i = 0; i < resultCards.length && items.length < maxResults; i++) {
     const card = resultCards[i];
     const titleEl = card.querySelector('h3');
@@ -3499,6 +3501,24 @@ export async function scrapeGoogleSearch(params: {
       snippet: snippetEl?.textContent?.trim() || '',
       displayedUrl: citeEl?.textContent?.trim() || '',
     });
+  }
+
+  // Fallback to all search headings if structured containers changed
+  if (items.length === 0) {
+    const allH3 = document.querySelectorAll('#rso h3, #search h3, h3');
+    for (let i = 0; i < allH3.length && items.length < maxResults; i++) {
+      const titleEl = allH3[i];
+      const linkEl = titleEl.closest('a') as HTMLAnchorElement | null;
+      if (!linkEl || !linkEl.href || linkEl.href.includes('google.com/search')) continue;
+      const container = titleEl.closest('.g') || titleEl.closest('div.MjjYud') || titleEl.parentElement?.parentElement;
+      const snippetEl = container?.querySelector('div[data-sncf], .VwiC3b, .IsZvec, .yXK7lf, div[style*="-webkit-line-clamp"]');
+      items.push({
+        title: titleEl.textContent?.trim() || '',
+        url: linkEl.href,
+        snippet: snippetEl?.textContent?.trim() || '',
+        displayedUrl: '',
+      });
+    }
   }
 
   return { success: true, items, count: items.length };

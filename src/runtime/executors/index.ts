@@ -153,6 +153,14 @@ async function sendDomAction(
     }
     return response;
   } else {
+    const isTestRunner =
+      typeof (globalThis as any).__vitest__ !== 'undefined' ||
+      (typeof process !== 'undefined' && (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true'));
+
+    if (!isTestRunner) {
+      throw new Error(`Extension DOM bridge unavailable for action "${action}". Ensure AutoFlow is running in an active Chrome extension tab.`);
+    }
+
     console.warn(`[AutoFlow Mock] Simulating DOM action: ${action}`, params);
     if (action === 'extract_dataset' || action === 'scrape_elements' || action === 'extract_cards') {
       const fields = Array.isArray(params.fields) && params.fields.length > 0 ? params.fields : [{ name: 'value', selector: '' }];
@@ -5740,7 +5748,8 @@ function formatScraperTableOutput(
   nodeId: string,
   nodeLabel: string,
   exportResult?: any,
-  extraVars: Record<string, any> = {}
+  extraVars: Record<string, any> = {},
+  errorMessage?: string
 ) {
   const headers = items.length > 0 && typeof items[0] === 'object' && items[0] !== null
     ? Object.keys(items[0])
@@ -5763,14 +5772,26 @@ function formatScraperTableOutput(
     ctx.variables[k] = v;
   }
 
-  ctx.updateNodeState(nodeId, {
-    status: 'success',
-    dynamicState: {
-      table: { headers, rows: items.slice(0, 10), count: items.length },
-      count: items.length,
-      message: `${nodeLabel}: ${items.length} items ready`,
-    },
-  });
+  if (errorMessage && items.length === 0) {
+    ctx.updateNodeState(nodeId, {
+      status: 'error',
+      dynamicState: {
+        table: { headers, rows: [], count: 0 },
+        count: 0,
+        message: `${nodeLabel}: ${errorMessage}`,
+        error: errorMessage,
+      },
+    });
+  } else {
+    ctx.updateNodeState(nodeId, {
+      status: 'success',
+      dynamicState: {
+        table: { headers, rows: items.slice(0, 10), count: items.length },
+        count: items.length,
+        message: `${nodeLabel}: ${items.length} items ready`,
+      },
+    });
+  }
 
   return {
     success: true,
@@ -5786,6 +5807,7 @@ function formatScraperTableOutput(
       ...(exportResult ? { [`${outputVariable}_dataUrl`]: exportResult.dataUrl } : {}),
       ...extraVars,
     },
+    ...(errorMessage && items.length === 0 ? { error: errorMessage } : {}),
   };
 }
 
@@ -6609,11 +6631,12 @@ export const executeAmazonScraper: NodeExecutor = async (node, ctx) => {
     });
 
     let items: any[] = [];
+    let fetchError: string | null = null;
     try {
       const searchUrl = `https://www.amazon.${domain}/s?k=${encodeURIComponent(query)}`;
       const res = await fetch(searchUrl, {
         headers: {
-          'Accept': 'text/html,application/xhtml+xml',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
         },
@@ -6621,41 +6644,87 @@ export const executeAmazonScraper: NodeExecutor = async (node, ctx) => {
       });
       if (res.ok) {
         const html = await res.text();
-        const asinMatches = Array.from(html.matchAll(/data-asin="([A-Z0-9]{10})"/g)).map((m) => m[1]);
-        const uniqueAsins = Array.from(new Set(asinMatches)).slice(0, maxResults);
-        for (let i = 0; i < uniqueAsins.length; i++) {
-          const asin = uniqueAsins[i];
-          items.push({
-            asin,
-            title: `${query} item (${asin})`,
-            url: `https://www.amazon.${domain}/dp/${asin}`,
-            price: '$29.99',
-            rating: '4.5 out of 5 stars',
-            reviewsCount: 120 + i * 45,
-            isPrime: i % 2 === 0,
-            domain,
-          });
-        }
-      }
-    } catch {}
+        const isRobotCheck = html.includes('api-services-support@amazon.com') ||
+                             html.includes('Robot Check') ||
+                             html.includes('To discuss automated access');
+        if (isRobotCheck) {
+          fetchError = `Amazon blocked direct request with an anti-bot Robot Check. Switch Engine to "Browser (DOM)" to bypass via tab session.`;
+        } else {
+          const regex = /data-asin="([A-Z0-9]{10})"([\s\S]*?)(?=(?:data-asin="[A-Z0-9]{10}")|$)/g;
+          const matches = Array.from(html.matchAll(regex));
+          const seenAsins = new Set<string>();
 
-    if (items.length === 0) {
-      for (let i = 1; i <= Math.min(maxResults, 10); i++) {
-        items.push({
-          asin: `B0${String(i).padStart(8, '0')}`,
-          title: `${query.charAt(0).toUpperCase() + query.slice(1)} Pro Edition #${i}`,
-          url: `https://www.amazon.${domain}/dp/B0${String(i).padStart(8, '0')}`,
-          price: `$${(19.99 + i * 10).toFixed(2)}`,
-          rating: '4.6 out of 5 stars',
-          reviewsCount: 250 + i * 85,
-          isPrime: i % 2 === 0,
-          domain,
-        });
+          for (const m of matches) {
+            const asin = m[1];
+            const block = m[2];
+            if (!asin || asin.length !== 10 || seenAsins.has(asin)) continue;
+
+            const titleMatch = block.match(/<h2[^>]*>([\s\S]*?)<\/h2>/);
+            const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+            if (!title) continue;
+
+            seenAsins.add(asin);
+
+            const priceMatch = block.match(/<span class="a-offscreen">([^<]+)<\/span>/) ||
+                               block.match(/<span class="a-price-whole">([^<]+)<\/span>/);
+            const price = priceMatch ? priceMatch[1].trim() : 'N/A';
+
+            const ratingMatch = block.match(/<span class="a-icon-alt">([^<]+)<\/span>/);
+            const rating = ratingMatch ? ratingMatch[1].trim() : 'N/A';
+
+            const reviewMatch = block.match(/aria-label="([0-9,]+)\s+ratings"/i) ||
+                                block.match(/<span class="a-size-base s-underline-text">([0-9,]+)<\/span>/);
+            const reviewsCount = reviewMatch ? reviewMatch[1].trim() : '0';
+
+            const isPrime = block.includes('aria-label="Prime"') || block.includes('a-icon-prime');
+
+            const imgMatch = block.match(/<img[^>]*class="s-image"[^>]*src="([^"]+)"/);
+            const image = imgMatch ? imgMatch[1] : '';
+
+            items.push({
+              asin,
+              title,
+              url: `https://www.amazon.${domain}/dp/${asin}`,
+              price,
+              rating,
+              reviewsCount,
+              isPrime,
+              image,
+              domain,
+            });
+
+            if (items.length >= maxResults) break;
+          }
+        }
+      } else {
+        fetchError = `Amazon search returned HTTP ${res.status}: ${res.statusText}.`;
       }
+    } catch (err: any) {
+      fetchError = err.message || 'Network request failed';
     }
 
     if (primeOnly) {
       items = items.filter((p: any) => p.isPrime);
+    }
+    if (minPrice > 0 || maxPrice > 0) {
+      items = items.filter((p: any) => {
+        const numPrice = Number(cleanPrice(String(p.price || ''), { mode: 'number_only' }));
+        if (isNaN(numPrice) || numPrice <= 0) return true;
+        if (minPrice > 0 && numPrice < minPrice) return false;
+        if (maxPrice > 0 && numPrice > maxPrice) return false;
+        return true;
+      });
+    }
+
+    if (items.length === 0) {
+      const errorMsg = fetchError || `No products found on Amazon for query "${query}". Switch Engine to "Browser (DOM)" in node properties to bypass bot protection.`;
+      ctx.log({
+        level: 'error',
+        message: `Amazon Scraper (zero-tab): ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
     }
 
     const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_amazon`);
@@ -6711,6 +6780,17 @@ export const executeAmazonScraper: NodeExecutor = async (node, ctx) => {
 
     if (items.length > maxResults) items = items.slice(0, maxResults);
 
+    if (items.length === 0) {
+      const errorMsg = `No Amazon products found for query "${query}".`;
+      ctx.log({
+        level: 'warn',
+        message: `Amazon Scraper: ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: true, count: 0 }, {}, errorMsg);
+    }
+
     const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_amazon`);
 
     ctx.log({
@@ -6742,52 +6822,88 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
   if (engine === 'syndication_api') {
     ctx.log({
       level: 'info',
-      message: `Running X/Twitter Scraper (react-tweet / Syndication API: Zero-tab extraction for "${query || username}")`,
+      message: `Running X/Twitter Scraper (react-tweet / Syndication engine: Zero-tab extraction for "${query || username}")`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
 
     let items: any[] = [];
-    try {
-      const targetUser = username ? username.replace(/^@/, '') : (query ? query.replace(/^@/, '') : 'Twitter');
-      const syndUrl = `https://cdn.syndication.twimg.com/timeline/profile?screen_name=${encodeURIComponent(targetUser)}`;
-      const res = await fetch(syndUrl, { signal: ctx.signal });
-      if (res.ok) {
-        const data = await res.json();
-        const entries = data?.timeline?.instructions?.[0]?.addEntries?.entries || data?.entries || [];
-        for (const entry of entries) {
-          const tweet = entry?.content?.itemContent?.tweet_results?.result?.legacy || entry?.tweet;
-          if (tweet?.full_text) {
-            items.push({
-              id: tweet.id_str || entry.entryId,
-              text: tweet.full_text,
-              author: targetUser,
-              username: `@${targetUser}`,
-              likes: tweet.favorite_count || 0,
-              retweets: tweet.retweet_count || 0,
-              replies: tweet.reply_count || 0,
-              createdAt: tweet.created_at || '',
-              url: `https://x.com/${targetUser}/status/${tweet.id_str || entry.entryId}`,
-            });
-          }
+    let fetchError: string | null = null;
+    const targetUser = username ? username.replace(/^@/, '') : (query ? query.replace(/^@/, '') : '');
+
+    // Check if query or username is a single tweet URL / ID
+    const isStatusUrl = (query && query.includes('/status/')) || (username && username.includes('/status/'));
+    const statusMatch = (query || username || '').match(/\/status\/([0-9]+)/) || (query || '').match(/^([0-9]{15,22})$/);
+    if (isStatusUrl || statusMatch) {
+      try {
+        const tweetId = statusMatch ? statusMatch[1] : '';
+        const targetUrl = isStatusUrl ? (query || username) : `https://x.com/i/status/${tweetId}`;
+        const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(targetUrl)}`;
+        const res = await fetch(oembedUrl, { signal: ctx.signal });
+        if (res.ok) {
+          const data = await res.json();
+          const htmlText = (data?.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          items.push({
+            id: tweetId || 'tweet_1',
+            text: htmlText || data?.title || '',
+            author: data?.author_name || targetUser || 'X User',
+            username: `@${data?.author_name || targetUser || 'user'}`,
+            authorUrl: data?.author_url || '',
+            url: data?.url || targetUrl,
+            likes: 0,
+            retweets: 0,
+            replies: 0,
+          });
         }
+      } catch (err: any) {
+        fetchError = err.message;
       }
-    } catch {}
+    }
+
+    // Attempt syndication timeline profile if username is available
+    if (items.length === 0 && targetUser) {
+      try {
+        const syndUrl = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${encodeURIComponent(targetUser)}`;
+        const res = await fetch(syndUrl, { signal: ctx.signal });
+        if (res.ok) {
+          const html = await res.text();
+          const tweetMatches = Array.from(html.matchAll(/<div[^>]*data-tweet-id="([0-9]+)"([\s\S]*?)<\/article>/gi));
+          for (const m of tweetMatches) {
+            const id = m[1];
+            const block = m[2];
+            const textMatch = block.match(/<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+            const text = textMatch ? textMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+            if (text) {
+              items.push({
+                id,
+                text,
+                author: targetUser,
+                username: `@${targetUser}`,
+                url: `https://x.com/${targetUser}/status/${id}`,
+                likes: 0,
+                retweets: 0,
+                replies: 0,
+              });
+              if (items.length >= maxResults) break;
+            }
+          }
+        } else if (res.status === 429) {
+          fetchError = `X/Twitter syndication API rate limited (HTTP 429).`;
+        }
+      } catch (err: any) {
+        fetchError = err.message;
+      }
+    }
 
     if (items.length === 0) {
-      for (let i = 1; i <= Math.min(maxResults, 10); i++) {
-        items.push({
-          id: `tweet_176200000000000${i}`,
-          text: `Exploring keyless automated workflows and AI agents with #${query || username || 'automation'} - post ${i}`,
-          author: username || 'TechExplorer',
-          username: username ? (username.startsWith('@') ? username : `@${username}`) : '@TechExplorer',
-          likes: 42 * i,
-          retweets: 12 * i,
-          replies: 5 * i,
-          createdAt: new Date(Date.now() - i * 3600000).toISOString(),
-          url: `https://x.com/${username ? username.replace(/^@/, '') : 'TechExplorer'}/status/176200000000000${i}`,
-        });
-      }
+      const errorMsg = fetchError || `No tweets found for "${query || username}". X/Twitter rate-limited or blocked unauthenticated syndication requests. Switch Extraction Engine to "Browser (DOM)" in node properties.`;
+      ctx.log({
+        level: 'error',
+        message: `X/Twitter Scraper (zero-tab): ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
     }
 
     if (items.length > maxResults) items = items.slice(0, maxResults);
@@ -6829,6 +6945,17 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
     let items = Array.isArray(res?.items) ? res.items : (res?.output || []);
     if (items.length > maxResults) items = items.slice(0, maxResults);
 
+    if (items.length === 0) {
+      const errorMsg = `No tweets found for "${query || username}". Please check search terms or ensure account is logged in if required.`;
+      ctx.log({
+        level: 'warn',
+        message: `X/Twitter Scraper: ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: true, count: 0 }, {}, errorMsg);
+    }
+
     const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_twitter`);
 
     ctx.log({
@@ -6857,17 +6984,20 @@ export const executeGoogleSearchScraper: NodeExecutor = async (node, ctx) => {
   if (engine === 'google_sr') {
     ctx.log({
       level: 'info',
-      message: `Running Google Search Scraper (google-sr engine: Zero-tab organic search for "${query}")`,
+      message: `Running Google Search Scraper (google-sr engine: Zero-tab organic web extraction for "${query}")`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
 
     let items: any[] = [];
+    let fetchError: string | null = null;
+
+    // Source A: DuckDuckGo Organic Search (Returns real organic web titles, URLs, and snippets without requiring JavaScript)
     try {
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${maxResults}&hl=en`;
-      const res = await fetch(searchUrl, {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const res = await fetch(ddgUrl, {
         headers: {
-          'Accept': 'text/html,application/xhtml+xml',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
         },
@@ -6875,31 +7005,83 @@ export const executeGoogleSearchScraper: NodeExecutor = async (node, ctx) => {
       });
       if (res.ok) {
         const html = await res.text();
-        const matches = Array.from(html.matchAll(/<a[^>]*href="\/url\?q=([^"&]+)[^"]*"[^>]*><h3[^>]*>([^<]+)<\/h3>/gi));
-        for (let i = 0; i < matches.length && items.length < maxResults; i++) {
-          const rawLink = decodeURIComponent(matches[i][1]);
-          const rawTitle = matches[i][2];
-          items.push({
-            position: items.length + 1,
-            title: rawTitle,
-            url: rawLink,
-            snippet: `${rawTitle} - Organic result for query: ${query}`,
-            domain: new URL(rawLink).hostname,
-          });
+        const linkMatches = Array.from(html.matchAll(/<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
+        const snippetMatches = Array.from(html.matchAll(/<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi));
+
+        for (let i = 0; i < linkMatches.length && items.length < maxResults; i++) {
+          let rawUrl = linkMatches[i][1];
+          if (rawUrl.includes('/y.js?') || rawUrl.includes('aclick') || rawUrl.includes('bing.com')) continue;
+          const uddg = rawUrl.match(/uddg=([^&]+)/);
+          if (uddg) rawUrl = decodeURIComponent(uddg[1]);
+          const title = linkMatches[i][2].replace(/<[^>]+>/g, '').trim();
+          const snippet = snippetMatches[i] ? snippetMatches[i][1].replace(/<[^>]+>/g, '').trim() : '';
+
+          if (title && rawUrl.startsWith('http')) {
+            let domain = '';
+            try { domain = new URL(rawUrl).hostname; } catch {}
+            items.push({
+              position: items.length + 1,
+              title,
+              url: rawUrl,
+              snippet,
+              domain,
+            });
+          }
         }
       }
-    } catch {}
+    } catch (err: any) {
+      fetchError = err.message;
+    }
+
+    // Source B: Google News RSS Search fallback (Live Google indexed news and articles feed)
+    if (items.length === 0) {
+      try {
+        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+        const res = await fetch(rssUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: ctx.signal,
+        });
+        if (res.ok) {
+          const xml = await res.text();
+          const itemMatches = Array.from(xml.matchAll(/<item>([\s\S]*?)<\/item>/g));
+          for (let i = 0; i < itemMatches.length && items.length < maxResults; i++) {
+            const itemBlock = itemMatches[i][1];
+            const titleMatch = itemBlock.match(/<title>([\s\S]*?)<\/title>/);
+            const linkMatch = itemBlock.match(/<link>([\s\S]*?)<\/link>/);
+            const descMatch = itemBlock.match(/<description>([\s\S]*?)<\/description>/);
+            const sourceMatch = itemBlock.match(/<source[^>]*>([\s\S]*?)<\/source>/);
+
+            if (titleMatch && linkMatch) {
+              const title = titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
+              const link = linkMatch[1].trim();
+              const snippet = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
+              let domain = '';
+              try { domain = new URL(link).hostname; } catch {}
+
+              items.push({
+                position: items.length + 1,
+                title,
+                url: link,
+                snippet,
+                domain: sourceMatch ? sourceMatch[1].trim() : domain,
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        fetchError = err.message;
+      }
+    }
 
     if (items.length === 0) {
-      for (let i = 1; i <= Math.min(maxResults, 10); i++) {
-        items.push({
-          position: i,
-          title: `${query.charAt(0).toUpperCase() + query.slice(1)} - Official Guide & Resources (${i})`,
-          url: `https://www.google.com/search?q=${encodeURIComponent(query)}#result-${i}`,
-          snippet: `Comprehensive overview and complete walkthrough of ${query}. Learn best practices, keyless automation, and top tools.`,
-          domain: 'google.com',
-        });
-      }
+      const errorMsg = fetchError || `No search results found for "${query}". Google anti-bot protection blocked automated access. Switch Extraction Engine to "Browser (DOM)" in node properties to search interactively via Chrome.`;
+      ctx.log({
+        level: 'error',
+        message: `Google Search Scraper (zero-tab): ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
     }
 
     if (items.length > maxResults) items = items.slice(0, maxResults);
@@ -6929,6 +7111,17 @@ export const executeGoogleSearchScraper: NodeExecutor = async (node, ctx) => {
     const res = await sendDomAction('google_search_scraper', { mode, maxResults }, ctx);
     let items = Array.isArray(res?.items) ? res.items : (res?.output || []);
     if (items.length > maxResults) items = items.slice(0, maxResults);
+
+    if (items.length === 0) {
+      const errorMsg = `No Google search results found for "${query}".`;
+      ctx.log({
+        level: 'warn',
+        message: `Google Search Scraper: ${errorMsg}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: true, count: 0 }, {}, errorMsg);
+    }
 
     const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_google`);
 
