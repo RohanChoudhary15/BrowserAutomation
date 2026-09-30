@@ -41,6 +41,22 @@ import {
   GitFork,
   Palette,
   HardDrive,
+  Compass,
+  Link2,
+  Calendar,
+  Cookie,
+  ListOrdered,
+  FileCode,
+  Braces,
+  RotateCcw,
+  Gauge,
+  UserCheck,
+  PlaySquare,
+  Camera,
+  Briefcase,
+  ShoppingCart,
+  AtSign,
+  Search,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels } from '../../ai/aiService';
@@ -54,6 +70,9 @@ import {
   BotCredential,
   MessagingPlatform,
 } from '../../storage/credentialStore';
+import { ScraperPropertiesPanel } from './scrapers/ScraperPropertiesPanel';
+import { DataNodesProperties } from './sections/DataNodesProperties';
+import { ControlFlowProperties } from './sections/ControlFlowProperties';
 
 const getImagePreviews = (output: any): string[] => {
   if (!output) return [];
@@ -405,6 +424,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       [key]: value,
     });
   };
+
+  const renderScraperExecutionConfig = (accentBorder: string = 'border-orange-500') => (
+    <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-200 select-none">
+          <input
+            type="checkbox"
+            checked={!!props.headless}
+            onChange={(e) => handlePropChange('headless', e.target.checked)}
+            className="rounded border-[#232a3b] bg-[#161a24] text-orange-500 focus:ring-0 w-3.5 h-3.5"
+          />
+          <span className="font-medium">Headless Mode</span>
+        </label>
+        <span className="text-[10px] font-mono text-purple-400 bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-500/30">
+          Background Tab
+        </span>
+      </div>
+      <p className="text-[10px] text-gray-500 leading-tight">
+        Launches extraction in a dedicated background tab without stealing window focus.
+      </p>
+
+      <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-300 select-none pt-1 border-t border-[#1c2230]">
+        <input
+          type="checkbox"
+          checked={props.autoCloseTab !== false}
+          onChange={(e) => handlePropChange('autoCloseTab', e.target.checked)}
+          className="rounded border-[#232a3b] bg-[#161a24] text-orange-500 focus:ring-0 w-3.5 h-3.5"
+        />
+        <span className="text-[11px] text-gray-400">Auto-close tab when extraction finishes</span>
+      </label>
+    </div>
+  );
 
   const [isLocalGeneratingSchema, setIsLocalGeneratingSchema] = useState(false);
   const effectiveGeneratingSchema = isGeneratingSchema || isLocalGeneratingSchema;
@@ -3830,14 +3881,33 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <label className="block text-[11px] font-medium text-gray-400 mb-1">Image Model</label>
               <select
                 value={props.model || 'dall-e-3'}
-                onChange={(e) => handlePropChange('model', e.target.value)}
+                onChange={(e) => {
+                  const newModel = e.target.value;
+                  handlePropChange('model', newModel);
+                  if (newModel === 'hy-image-v3.5-preview') {
+                    if (!props.size || props.size === '1024x1024') {
+                      handlePropChange('size', '1920x1080');
+                    }
+                  }
+                }}
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               >
-                <option value="dall-e-3">DALL-E 3 (Highest Quality, Flagship)</option>
-                <option value="dall-e-2">DALL-E 2 (Fast & Lightweight)</option>
+                <option value="dall-e-3">DALL-E 3 (OpenAI - Flagship)</option>
+                <option value="dall-e-2">DALL-E 2 (OpenAI - Fast & Lightweight)</option>
+                <option value="hy-image-v3.5-preview">Hunyuan Image 3.5 (GMI Cloud - hy-image-v3.5-preview)</option>
                 <option value="custom">Custom Model (e.g. Flux, Stable Diffusion, SDXL)...</option>
               </select>
             </div>
+
+            {props.model === 'hy-image-v3.5-preview' && (
+              <div className="p-2.5 rounded-lg bg-purple-950/20 border border-purple-500/30 flex items-center justify-between text-xs text-purple-300">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  <span>GMI Cloud Request Queue</span>
+                </span>
+                <span className="text-[10px] font-mono bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">hy-image-v3.5-preview</span>
+              </div>
+            )}
 
             {props.model === 'custom' && (
               <div>
@@ -3859,20 +3929,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-gray-300">Dedicated API & Base URL Settings</span>
-                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#1c2230] text-gray-400 font-mono">Optional</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#1c2230] text-gray-400 font-mono">
+                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud Key' : 'Optional'}
+                </span>
               </div>
               <p className="text-[10px] text-gray-500 leading-normal">
-                By default, this node uses your global AI Settings. Specify a separate API key or custom OpenAI-compatible gateway (e.g. OpenRouter, Together AI, ExperientialLabs, local endpoint) below if needed.
+                {props.model === 'hy-image-v3.5-preview'
+                  ? 'GMI Cloud requires an API key from console.gmicloud.ai. Enter your key below or in global AI Settings.'
+                  : 'By default, this node uses your global AI Settings. Specify a separate API key or custom OpenAI-compatible gateway (e.g. OpenRouter, Together AI, ExperientialLabs, local endpoint) below if needed.'}
               </p>
 
               <div>
-                <label className="block text-[10px] font-medium text-gray-400 mb-1">Separate API Key</label>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud API Key' : 'Separate API Key'}
+                </label>
                 <div className="relative">
                   <input
                     type={showImageApiKey ? 'text' : 'password'}
                     value={props.apiKey || ''}
                     onChange={(e) => handlePropChange('apiKey', e.target.value)}
-                    placeholder="sk-... (Leave empty to use global key)"
+                    placeholder={props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud API Key (Bearer token)' : 'sk-... (Leave empty to use global key)'}
                     className="w-full bg-[#0b0e14] text-white p-1.5 pr-8 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
                   />
                   <button
@@ -3887,12 +3963,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </div>
 
               <div>
-                <label className="block text-[10px] font-medium text-gray-400 mb-1">Separate Base URL</label>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud Endpoint (Optional override)' : 'Separate Base URL'}
+                </label>
                 <input
                   type="text"
                   value={props.baseUrl || ''}
                   onChange={(e) => handlePropChange('baseUrl', e.target.value)}
-                  placeholder="https://api.openai.com/v1 or custom gateway"
+                  placeholder={
+                    props.model === 'hy-image-v3.5-preview'
+                      ? 'https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey/requests (Default)'
+                      : 'https://api.openai.com/v1 or custom gateway'
+                  }
                   className="w-full bg-[#0b0e14] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
                 />
               </div>
@@ -3900,21 +3982,31 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
             {/* Image Resolution & Dimensions */}
             <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Image Size</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Image Size / Resolution</label>
+                <span className="text-[10px] text-gray-400 font-mono">{props.size || (props.model === 'hy-image-v3.5-preview' ? '1920x1080' : '1024x1024')}</span>
+              </div>
               <div className="grid grid-cols-3 gap-1">
-                {[
+                {(props.model === 'hy-image-v3.5-preview' ? [
+                  { id: '1920x1080', label: '1920x1080', desc: 'Full HD 16:9 Landscape' },
+                  { id: '1080x1920', label: '1080x1920', desc: 'Full HD 9:16 Portrait' },
+                  { id: '1024x1024', label: '1024x1024', desc: 'Square 1:1' },
+                  { id: '3840x2160', label: '3840x2160', desc: '4K Ultra HD 16:9' },
+                  { id: '1280x720', label: '1280x720', desc: 'HD 16:9' },
+                  { id: '2048x2048', label: '2048x2048', desc: '2K Square' },
+                ] : [
                   { id: '1024x1024', label: '1024x1024', desc: 'Square 1:1' },
                   { id: '1024x1792', label: '1024x1792', desc: 'Portrait 9:16' },
                   { id: '1792x1024', label: '1792x1024', desc: 'Landscape 16:9' },
                   { id: '512x512', label: '512x512', desc: 'DALL-E 2' },
                   { id: '256x256', label: '256x256', desc: 'Thumbnail' },
-                ].map((s) => (
+                ]).map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => handlePropChange('size', s.id)}
                     className={`py-1 px-1.5 text-center rounded border text-[10px] font-mono transition-colors ${
-                      (props.size || '1024x1024') === s.id
+                      (props.size || (props.model === 'hy-image-v3.5-preview' ? '1920x1080' : '1024x1024')) === s.id
                         ? 'bg-indigo-600 text-white border-indigo-500 font-semibold'
                         : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white'
                     }`}
@@ -7025,142 +7117,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* General Timeout Property */}
-        {['navigate', 'click', 'type_text', 'wait_for_element', 'wait_for_text', 'wait_for_navigation', 'extract_text', 'contains', 'contains_text'].includes(selectedNode.data.type) && (
-          <div className="pt-2 border-t border-[#1c2230]">
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-medium text-gray-400">Timeout (ms)</label>
-              <span className="text-[10px] text-gray-500">Max wait limit</span>
-            </div>
-            <input
-              type="number"
-              value={props.timeout ?? (selectedNode.data.type === 'contains_text' ? 3000 : 10000)}
-              onChange={(e) => handlePropChange('timeout', Number(e.target.value))}
-              min={500}
-              step={1000}
-              className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
-            />
-            <div className="flex items-center gap-1.5 mt-2">
-              {[2000, 5000, 10000, 15000, 30000].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => handlePropChange('timeout', preset)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    (props.timeout ?? (selectedNode.data.type === 'contains_text' ? 3000 : 10000)) === preset
-                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
-                      : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
-                  }`}
-                >
-                  {preset / 1000}s
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Context & Data Nodes */}
+        <DataNodesProperties
+          selectedNode={selectedNode}
+          onPropChange={handlePropChange}
+        />
 
-        {/* Live Execution Output Inspector for Selected Node */}
-        {runtimeState && (
-          <div className="p-3 rounded-xl bg-[#11141c] border border-[#1c2230] space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] font-semibold">
-              <span className="text-gray-400">Node State</span>
-              <span
-                className={`uppercase text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                  runtimeState.status === 'success'
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : runtimeState.status === 'error'
-                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                    : runtimeState.status === 'running'
-                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                    : 'bg-gray-800 text-gray-400'
-                }`}
-              >
-                {runtimeState.status}
-              </span>
-            </div>
+        {/* Control Flow & Branching Nodes */}
+        <ControlFlowProperties
+          selectedNode={selectedNode}
+          onPropChange={handlePropChange}
+        />
 
-            {runtimeState.durationMs !== undefined && (
-              <div className="text-[10px] text-gray-400 font-mono">
-                Duration: {runtimeState.durationMs}ms
-              </div>
-            )}
-
-            {runtimeState.output !== undefined && (
-              <div className="mt-1">
-                <span className="text-[10px] text-gray-400 block mb-0.5">Output:</span>
-                {imagePreviews.length > 0 ? (
-                  <div className="space-y-1.5">
-                    <div className="p-1.5 rounded-lg bg-black/60 border border-[#232a3b] flex items-center justify-center">
-                      <img
-                        src={imagePreviews[0]}
-                        alt="Output Preview"
-                        className="max-h-32 max-w-full object-contain rounded"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-indigo-400 font-mono">
-                        {imagePreviews[0].startsWith('data:image/') ? `Base64 Image (${Math.round(imagePreviews[0].length / 1024)} KB)` : 'Image URL'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowRawOutput(!showRawOutput)}
-                        className="text-gray-400 hover:text-white underline cursor-pointer"
-                      >
-                        {showRawOutput ? 'Hide String' : 'Show Raw String'}
-                      </button>
-                    </div>
-                    {showRawOutput && (
-                      <pre className="bg-[#161a24] text-emerald-400 p-2 rounded text-[10px] font-mono overflow-x-auto max-h-24 break-all">
-                        {typeof runtimeState.output === 'object'
-                          ? JSON.stringify(runtimeState.output, null, 2)
-                          : String(runtimeState.output)}
-                      </pre>
-                    )}
-                  </div>
-                ) : (
-                  <pre className="bg-[#161a24] text-emerald-400 p-2 rounded text-[10px] font-mono overflow-x-auto max-h-24">
-                    {typeof runtimeState.output === 'object'
-                      ? JSON.stringify(runtimeState.output, null, 2)
-                      : String(runtimeState.output)}
-                  </pre>
-                )}
-              </div>
-            )}
-
-            {runtimeState.error && (
-              <div className="mt-1">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-rose-400 font-semibold">Error:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(runtimeState.error || '');
-                      setCopiedNodeError(true);
-                      setTimeout(() => setCopiedNodeError(false), 2000);
-                    }}
-                    className="flex items-center gap-1 text-[10px] text-rose-300 hover:text-rose-100 bg-rose-950/40 hover:bg-rose-900/50 px-1.5 py-0.5 rounded border border-rose-800/40 transition-colors"
-                  >
-                    {copiedNodeError ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedNodeError ? 'Copied!' : 'Copy Error'}</span>
-                  </button>
-                </div>
-                <p className="bg-[#161a24] text-rose-400 p-2 rounded text-[10px] font-mono">
-                  {runtimeState.error}
-                </p>
-                {runtimeState.errorDetails?.suggestions && (
-                  <div className="mt-2 space-y-1">
-                    <span className="text-[10px] text-gray-400 font-medium">Suggestions:</span>
-                    <ul className="list-disc list-inside text-[10px] text-gray-400 space-y-0.5">
-                      {runtimeState.errorDetails.suggestions.map((s, idx) => (
-                        <li key={idx}>{s}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Free Scraper Nodes */}
+        <ScraperPropertiesPanel
+          selectedNode={selectedNode}
+          runtimeState={runtimeState}
+          onPropChange={handlePropChange}
+        />
       </div>
 
       {/* Footer Controls: Copy, Disable & Delete */}

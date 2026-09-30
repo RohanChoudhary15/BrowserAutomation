@@ -11,7 +11,9 @@
     "sidePanel",
     "webNavigation",
     "downloads",
-    "notifications"
+    "notifications",
+    "cookies",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"

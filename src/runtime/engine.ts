@@ -4,6 +4,7 @@ import { executors, globalActiveTimers, globalPendingStopTimers } from './execut
 import { generateId } from '../utils/id';
 import { createFriendlyError } from '../utils/formatters';
 import { interpolateVariables, getNestedValue } from './interpolator';
+import { evaluateCondition, ConditionRule } from './evaluator';
 import { HumanConfig, nodeThinkTime, randomBetween, resolveHumanConfig, wait } from '../utils/human';
 import { runThrottled } from '../utils/parallelOrchestrator';
 import { syncStorageToVariables } from '../utils/simpleStorage';
@@ -296,8 +297,8 @@ export class WorkflowEngine {
       return;
     }
 
-    // Handle Loop / For Each Node
-    if (node.data.type === 'loop' || node.data.type === 'for_each') {
+    // Handle Loop / For Each / While Loop Node
+    if (node.data.type === 'loop' || node.data.type === 'for_each' || node.data.type === 'while_loop') {
       await this.executeLoop(node, ctx);
       return;
     }
@@ -558,6 +559,99 @@ export class WorkflowEngine {
    * Executes a loop construct
    */
   private async executeLoop(loopNode: WorkflowNode, ctx: ExecutionContext): Promise<void> {
+    const isWhileLoop = loopNode.data.type === 'while_loop';
+
+    if (isWhileLoop) {
+      const maxIterations = Math.max(1, Math.min(Number(loopNode.data.properties?.maxIterations) || 50, 2000));
+      const delayMs = Math.max(0, Number(loopNode.data.properties?.delayBetweenMs) || 0);
+      const outVar = loopNode.data.properties?.outputVariable || 'whileIteration';
+
+      const bodyNodes = this.getNextNodes(loopNode.id, 'loop_body');
+      const doneNodes = this.getNextNodes(loopNode.id, 'loop_done');
+
+      let iter = 0;
+      this.log({
+        level: 'info',
+        message: `Starting While Loop (safety limit: ${maxIterations} iterations)`,
+        nodeId: loopNode.id,
+        nodeName: loopNode.data.label,
+      });
+
+      while (iter < maxIterations) {
+        if (ctx.signal.aborted) break;
+
+        const leftVal = interpolateVariables(loopNode.data.properties?.leftValue || '', ctx.variables);
+        const rightVal = interpolateVariables(loopNode.data.properties?.rightValue || '', ctx.variables);
+        const operator = loopNode.data.properties?.operator || 'equals';
+        const caseSensitive = !!loopNode.data.properties?.caseSensitive;
+
+        const rule: ConditionRule = {
+          type: 'variable',
+          leftValue: leftVal,
+          operator,
+          rightValue: rightVal,
+          caseSensitive,
+        };
+        const conditionMet = evaluateCondition(rule, ctx.variables);
+
+        if (!conditionMet) {
+          this.log({
+            level: 'info',
+            message: `While Loop exit condition reached: "${leftVal}" ${operator} "${rightVal}" (completed ${iter} iterations)`,
+            nodeId: loopNode.id,
+            nodeName: loopNode.data.label,
+          });
+          break;
+        }
+
+        iter++;
+        ctx.variables[outVar] = iter;
+        ctx.variables.index = iter - 1;
+        this.events.onVariablesChange?.(this.variables);
+
+        this.updateNodeState(loopNode.id, {
+          status: 'running',
+          dynamicState: {
+            currentIteration: iter,
+            totalIterations: maxIterations,
+            progress: Math.min(100, Math.round((iter / maxIterations) * 100)),
+            message: `While Loop iteration ${iter}/${maxIterations}`,
+            detail: `${leftVal} ${operator} ${rightVal}`,
+          },
+        });
+
+        // Reset logic gate states for fresh evaluation in each iteration
+        this.triggeredGates.clear();
+        this.gateInputsState.clear();
+
+        await Promise.all(bodyNodes.map((bNode) => this.traverseAndExecute(bNode, ctx)));
+
+        if (delayMs > 0 && iter < maxIterations) {
+          await wait(delayMs, ctx.signal);
+        }
+      }
+
+      this.updateNodeState(loopNode.id, {
+        status: 'success',
+        dynamicState: {
+          currentIteration: iter,
+          totalIterations: iter,
+          progress: 100,
+          message: `Completed ${iter} iterations`,
+        },
+      });
+
+      const continuationNodes = doneNodes.length > 0
+        ? doneNodes
+        : this.getNextNodes(loopNode.id).filter(n => !bodyNodes.some(bn => bn.id === n.id));
+
+      for (const dNode of continuationNodes) {
+        if (ctx.signal.aborted) break;
+        await this.traverseAndExecute(dNode, ctx);
+      }
+      return;
+    }
+
     const isForEach = loopNode.data.type === 'for_each';
     let iterations: any[] = [];
 

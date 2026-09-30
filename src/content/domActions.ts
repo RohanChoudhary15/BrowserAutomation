@@ -2756,4 +2756,753 @@ export async function findAndClickNextPage(
   };
 }
 
+export function getPageInfo(): {
+  url: string;
+  title: string;
+  domain: string;
+  origin: string;
+  pathname: string;
+  search: string;
+  hash: string;
+  referrer: string;
+  canonicalUrl: string;
+  metaDescription: string;
+  ogImage: string;
+  keywords: string;
+  contentType: string;
+  docStatus: string;
+  searchParams: Record<string, string>;
+} {
+  const loc = typeof window !== 'undefined' ? window.location : ({} as any);
+  const doc = typeof document !== 'undefined' ? document : ({} as any);
+
+  const searchParams: Record<string, string> = {};
+  try {
+    if (loc.search) {
+      const sp = new URLSearchParams(loc.search);
+      sp.forEach((v, k) => {
+        searchParams[k] = v;
+      });
+    }
+  } catch {}
+
+  const canonicalUrl = doc.querySelector?.('link[rel="canonical"]')?.getAttribute('href') || '';
+  const metaDescription =
+    doc.querySelector?.('meta[name="description"]')?.getAttribute('content') ||
+    doc.querySelector?.('meta[property="og:description"]')?.getAttribute('content') ||
+    '';
+  const ogImage =
+    doc.querySelector?.('meta[property="og:image"]')?.getAttribute('content') ||
+    doc.querySelector?.('meta[name="twitter:image"]')?.getAttribute('content') ||
+    '';
+  const keywords = doc.querySelector?.('meta[name="keywords"]')?.getAttribute('content') || '';
+
+  return {
+    url: loc.href || '',
+    title: doc.title || '',
+    domain: loc.hostname || '',
+    origin: loc.origin || '',
+    pathname: loc.pathname || '',
+    search: loc.search || '',
+    hash: loc.hash || '',
+    referrer: doc.referrer || '',
+    canonicalUrl,
+    metaDescription,
+    ogImage,
+    keywords,
+    contentType: doc.contentType || '',
+    docStatus: doc.readyState || '',
+    searchParams,
+  };
+}
+
+// ==========================================
+// FREE DOM SCRAPERS (KEYLESS)
+// ==========================================
+
+export async function scrapeYouTube(params: {
+  mode?: 'search' | 'video_details' | 'comments' | 'video_script';
+  maxResults?: number;
+  scriptLanguage?: string;
+  scriptFormat?: string;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number; fullScript?: string }> {
+  const mode = params.mode || 'search';
+  const maxResults = params.maxResults || 20;
+  const items: Record<string, any>[] = [];
+
+  const isWatchPage = window.location.pathname.includes('/watch') || window.location.href.includes('watch?v=');
+
+  // Video Script (Subtitles / Captions / Transcript) Extraction Mode
+  if (mode === 'video_script') {
+    let captionTracks: any[] = [];
+    try {
+      const playerResponse = (window as any).ytInitialPlayerResponse ||
+        (window as any).ytplayer?.config?.args?.raw_player_response;
+      if (playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+        captionTracks = playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
+      }
+    } catch {}
+
+    if (captionTracks.length === 0) {
+      const scripts = Array.from(document.querySelectorAll('script'));
+      for (const s of scripts) {
+        const text = s.textContent || '';
+        if (text.includes('captionTracks') && text.includes('baseUrl')) {
+          const match = text.match(/"captionTracks":\s*(\[.+?\])/s);
+          if (match) {
+            try {
+              captionTracks = JSON.parse(match[1]);
+              if (captionTracks.length > 0) break;
+            } catch {}
+          }
+        }
+      }
+    }
+
+    if (captionTracks.length > 0) {
+      const preferredLang = params.scriptLanguage || 'en';
+      const track = captionTracks.find((t: any) => t.languageCode === preferredLang || t.languageCode?.startsWith(preferredLang)) ||
+        captionTracks.find((t: any) => t.languageCode === 'en') ||
+        captionTracks[0];
+
+      if (track?.baseUrl) {
+        try {
+          const fetchUrl = track.baseUrl.includes('fmt=') ? track.baseUrl : `${track.baseUrl}&fmt=json3`;
+          const res = await fetch(fetchUrl, { credentials: 'include' });
+          if (res.ok) {
+            const raw = await res.text();
+            if (raw.trim().startsWith('{')) {
+              const json = JSON.parse(raw);
+              const events = json.events || [];
+              for (const ev of events) {
+                if (!ev.segs) continue;
+                const text = ev.segs.map((s: any) => s.utf8 || '').join('').trim();
+                if (!text || text === '\n') continue;
+                const startSec = (ev.tStartMs || 0) / 1000;
+                const durSec = (ev.dDurationMs || 0) / 1000;
+                const mins = Math.floor(startSec / 60);
+                const secs = Math.floor(startSec % 60);
+                const timestamp = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                items.push({
+                  index: items.length + 1,
+                  timestamp,
+                  startSeconds: startSec,
+                  duration: durSec,
+                  text,
+                });
+              }
+            } else {
+              const parser = new DOMParser();
+              const xml = parser.parseFromString(raw, 'text/xml');
+              const textNodes = Array.from(xml.querySelectorAll('text'));
+              for (const node of textNodes) {
+                const start = parseFloat(node.getAttribute('start') || '0');
+                const dur = parseFloat(node.getAttribute('dur') || '0');
+                const text = node.textContent?.trim() || '';
+                if (text) {
+                  const mins = Math.floor(start / 60);
+                  const secs = Math.floor(start % 60);
+                  const timestamp = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                  items.push({
+                    index: items.length + 1,
+                    timestamp,
+                    startSeconds: start,
+                    duration: dur,
+                    text,
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[AutoFlow] Captions fetch error:', e);
+        }
+      }
+    }
+
+    // Fallback: DOM Transcript panel
+    if (items.length === 0) {
+      // 1. Expand description first if needed
+      const expandBtn = document.querySelector(
+        'tp-yt-paper-button#expand, #expand, #description-inline-expander, ytd-text-inline-expander #expand, #expand-sizer'
+      ) as HTMLElement | null;
+      if (expandBtn) {
+        expandBtn.click();
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      // 2. Find genuine "Show transcript" button (exclude filter chips like ytChipShapeButtonReset)
+      let transcriptBtn = (document.querySelector(
+        'button[aria-label="Show transcript"], yt-button-shape button[aria-label="Show transcript"], ytd-video-description-transcript-section-renderer button, button[aria-label*="Show transcript" i]'
+      ) || Array.from(document.querySelectorAll('button, yt-button-shape')).find(
+        (b) => {
+          const txt = (b.textContent || '').trim().toLowerCase();
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          return (txt.includes('show transcript') || aria.includes('show transcript')) && !b.classList.contains('ytChipShapeButtonReset');
+        }
+      )) as HTMLElement | null;
+
+      // 3. If not found in description, inspect "More actions" (...) menu
+      if (!transcriptBtn) {
+        const moreBtn = document.querySelector(
+          '#top-level-buttons-computed ~ #button-shape button, button[aria-label*="More actions" i], ytd-menu-renderer yt-button-shape button, ytd-menu-renderer yt-icon-button button'
+        ) as HTMLElement | null;
+        if (moreBtn) {
+          moreBtn.click();
+          await new Promise((r) => setTimeout(r, 400));
+          transcriptBtn = (document.querySelector(
+            'ytd-menu-service-item-renderer, tp-yt-paper-item, ytd-menu-navigation-item-renderer'
+          ) || Array.from(document.querySelectorAll('tp-yt-paper-item, ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer, div[role="menuitem"], button')).find(
+            (el) => (el.textContent || '').toLowerCase().includes('transcript')
+          )) as HTMLElement | null;
+        }
+      }
+
+      if (transcriptBtn) {
+        transcriptBtn.click();
+      }
+
+      // 4. Poll up to 6 seconds for transcript segments to render (supports modern and classic YouTube)
+      let segs: Element[] = [];
+      for (let poll = 0; poll < 20; poll++) {
+        await new Promise((r) => setTimeout(r, 300));
+        segs = Array.from(document.querySelectorAll(
+          'transcript-segment-view-model, ytd-transcript-segment-renderer, .ytwTranscriptSegmentViewModelHost, macro-markers-panel-item-view-model'
+        ));
+        if (segs.length > 0) break;
+      }
+
+      if (segs.length > 0) {
+        // If modern transcript-segment-view-model is inside macro-markers-panel-item-view-model, filter to avoid duplicate counts
+        const hasSpecificSegments = segs.some(s => s.tagName.toLowerCase() === 'transcript-segment-view-model' || s.tagName.toLowerCase() === 'ytd-transcript-segment-renderer');
+        const targetSegs = hasSpecificSegments
+          ? segs.filter(s => s.tagName.toLowerCase() === 'transcript-segment-view-model' || s.tagName.toLowerCase() === 'ytd-transcript-segment-renderer')
+          : segs;
+
+        for (let i = 0; i < targetSegs.length; i++) {
+          const seg = targetSegs[i];
+          const time = seg.querySelector('.ytwTranscriptSegmentViewModelTimestamp, .segment-timestamp, [class*="Timestamp"]')?.textContent?.trim() || '';
+          const text = seg.querySelector('[role="text"], .ytAttributedStringHost, .segment-text, [class*="segment-text"], yt-formatted-string')?.textContent?.trim() || '';
+          if (text) {
+            items.push({
+              index: items.length + 1,
+              timestamp: time,
+              text,
+            });
+          }
+        }
+      }
+    }
+
+    const fullScript = items.map((i) => (i.timestamp ? `[${i.timestamp}] ${i.text}` : i.text)).join('\n');
+    return {
+      success: true,
+      items,
+      count: items.length,
+      fullScript,
+    };
+  }
+
+  if (mode === 'comments' || (isWatchPage && mode === 'search' && !document.querySelector('ytd-video-renderer, ytd-rich-item-renderer'))) {
+    const commentEls = document.querySelectorAll('ytd-comment-thread-renderer, #comment');
+    for (let i = 0; i < commentEls.length && items.length < maxResults; i++) {
+      const el = commentEls[i];
+      const authorEl = el.querySelector('#author-text span, #author-text, .ytd-comment-view-model__author');
+      const textEl = el.querySelector('#content-text, .yt-core-attributed-string');
+      const likesEl = el.querySelector('#vote-count-middle, [aria-label*="likes"]');
+      const timeEl = el.querySelector('.published-time-text a, #header-author span.published-time-text');
+      const avatarEl = el.querySelector('#author-thumbnail img, img.yt-img-shadow') as HTMLImageElement | null;
+
+      const author = authorEl?.textContent?.trim() || '';
+      const text = textEl?.textContent?.trim() || '';
+      if (text || author) {
+        items.push({
+          author,
+          text,
+          likes: likesEl?.textContent?.trim() || '0',
+          published: timeEl?.textContent?.trim() || '',
+          avatar: avatarEl?.src || '',
+        });
+      }
+    }
+  }
+
+  if (mode === 'video_details' || (isWatchPage && items.length === 0)) {
+    const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1 yt-formatted-string') || document.querySelector('title');
+    const channelEl = document.querySelector('ytd-video-owner-renderer #channel-name a, #channel-name a, ytd-channel-name a');
+    const subsEl = document.querySelector('#owner-sub-count');
+    const viewsEl = document.querySelector('#info-container #info span:first-child, meta[itemprop="interactionCount"], ytd-watch-info-text #info span');
+    const likesEl = document.querySelector('like-button-view-model button, #top-level-buttons-computed button, button[aria-label*="like"]');
+    const descEl = document.querySelector('#description-inline-expander, #description yt-formatted-string, ytd-text-inline-expander');
+    const metaThumb = (document.querySelector('meta[property="og:image"]') as HTMLMetaElement)?.content ||
+      (document.querySelector('link[rel="image_src"]') as HTMLLinkElement)?.href || '';
+    const commentsCountEl = document.querySelector('#comments #count, ytd-comments-header-renderer #count, #comments-header #count');
+    const topCommentEl = document.querySelector('#comments ytd-comment-thread-renderer #content-text');
+
+    const videoTitle = titleEl?.textContent?.trim() || '';
+    if (videoTitle) {
+      const rawViews = viewsEl?.textContent?.trim() || (viewsEl?.getAttribute?.('content') ?? '');
+      const rawLikes = likesEl?.textContent?.trim() || likesEl?.getAttribute?.('aria-label') || '';
+      const cleanLikes = rawLikes.includes('along with')
+        ? (rawLikes.match(/along with ([\d,]+)/i)?.[1] || rawLikes)
+        : rawLikes;
+
+      items.push({
+        title: videoTitle,
+        url: window.location.href,
+        channel: channelEl?.textContent?.trim() || '',
+        channelUrl: (channelEl as HTMLAnchorElement)?.href || '',
+        subscribers: subsEl?.textContent?.trim() || '',
+        channelSubscribers: subsEl?.textContent?.trim() || '',
+        views: rawViews,
+        totalViews: rawViews,
+        likes: cleanLikes,
+        description: descEl?.textContent?.trim() || '',
+        thumbnail: metaThumb,
+        commentsCount: commentsCountEl?.textContent?.trim() || '',
+        topComment: topCommentEl?.textContent?.trim() || '',
+      });
+      if (mode === 'video_details') {
+        return { success: true, items, count: items.length };
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    const videoNodes = document.querySelectorAll(
+      'ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-playlist-video-renderer'
+    );
+    for (let i = 0; i < videoNodes.length && items.length < maxResults; i++) {
+      const node = videoNodes[i];
+      const titleLink = (node.querySelector('a#video-title, #video-title-link, a#thumbnail, a.ytd-thumbnail, h3 a, a[href*="/watch?v="]') || node.closest('a')) as HTMLAnchorElement | null;
+      const titleEl = node.querySelector('#video-title, yt-formatted-string#video-title, h3, #video-title-link, .title');
+      const title = titleEl?.textContent?.trim() || titleLink?.getAttribute('title') || titleLink?.textContent?.trim() || '';
+
+      let href = titleLink?.href || (node.querySelector('a#thumbnail') as HTMLAnchorElement)?.href || '';
+      if (!href && titleLink?.getAttribute) {
+        const rel = titleLink.getAttribute('href') || '';
+        if (rel) href = rel.startsWith('http') ? rel : `https://www.youtube.com${rel}`;
+      }
+
+      if (!title || !href || href.includes('channel/') || href.includes('/@')) continue;
+
+      const channelEl = node.querySelector('#channel-name a, .ytd-channel-name a, #byline a') as HTMLAnchorElement | null;
+      const metaSpans = node.querySelectorAll('#metadata-line span, .ytd-video-meta-block span');
+      const views = metaSpans[0]?.textContent?.trim() || '';
+      const uploaded = metaSpans[1]?.textContent?.trim() || '';
+      const durationEl = node.querySelector('ytd-thumbnail-overlay-time-status-renderer span, .badge-shape-wiz__text, badge-shape-wiz');
+      const thumbEl = node.querySelector('ytd-thumbnail img, img.yt-core-image, img') as HTMLImageElement | null;
+
+      items.push({
+        title,
+        url: href,
+        channel: channelEl?.textContent?.trim() || '',
+        channelUrl: channelEl?.href || '',
+        views,
+        uploaded,
+        duration: durationEl?.textContent?.trim() || '',
+        thumbnail: thumbEl?.src || '',
+      });
+    }
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeInstagram(params: {
+  mode?: 'profile_posts' | 'hashtag_posts' | 'profile_info';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const mode = params.mode || 'profile_posts';
+  const maxResults = params.maxResults || 15;
+  const items: Record<string, any>[] = [];
+
+  const isPostPage = window.location.pathname.includes('/p/') || window.location.pathname.includes('/reel/');
+
+  if (mode === 'profile_info' || (!isPostPage && document.querySelector('header'))) {
+    const header = document.querySelector('header');
+    const usernameEl = header?.querySelector('h1, h2, section span');
+    const statItems = header?.querySelectorAll('ul li') || [];
+    const bioEl = header?.querySelector('div > span, section > div:last-child, ._aa_c');
+    const avatarEl = header?.querySelector('img') as HTMLImageElement | null;
+
+    if (usernameEl || statItems.length > 0) {
+      items.push({
+        username: usernameEl?.textContent?.trim() || window.location.pathname.replace(/\//g, ''),
+        postsCount: statItems[0]?.textContent?.trim() || '',
+        followers: statItems[1]?.textContent?.trim() || '',
+        following: statItems[2]?.textContent?.trim() || '',
+        bio: bioEl?.textContent?.trim() || '',
+        avatar: avatarEl?.src || '',
+        url: window.location.href,
+      });
+      if (mode === 'profile_info') {
+        return { success: true, items, count: items.length };
+      }
+    }
+  }
+
+  // Single post page
+  if (isPostPage && items.length === 0) {
+    const authorEl = document.querySelector('article header a, article h2 a');
+    const captionEl = document.querySelector('article ul li h1, article ul li span, article h1');
+    const imgEl = document.querySelector('article img[srcset], article img') as HTMLImageElement | null;
+    const likesEl = document.querySelector('section a[href*="/liked_by/"] span, section span');
+
+    items.push({
+      author: authorEl?.textContent?.trim() || '',
+      caption: captionEl?.textContent?.trim() || '',
+      url: window.location.href,
+      image: imgEl?.src || '',
+      likes: likesEl?.textContent?.trim() || '',
+      isVideo: !!document.querySelector('video'),
+    });
+    return { success: true, items, count: items.length };
+  }
+
+  const postLinks = document.querySelectorAll(
+    'main a[href*="/p/"], main a[href*="/reel/"], article a[href*="/p/"], article a[href*="/reel/"], a[role="link"][href*="/p/"]'
+  );
+  const seen = new Set<string>();
+
+  for (let i = 0; i < postLinks.length && items.length < maxResults; i++) {
+    const link = postLinks[i] as HTMLAnchorElement;
+    let href = link.href || link.getAttribute('href') || '';
+    if (href.startsWith('/')) href = `https://www.instagram.com${href}`;
+    if (!href || seen.has(href)) continue;
+    seen.add(href);
+
+    const img = link.querySelector('img') as HTMLImageElement | null;
+    const isReel = href.includes('/reel/');
+
+    items.push({
+      url: href,
+      caption: img?.alt || '',
+      image: img?.src || '',
+      isVideo: isReel || !!link.querySelector('video, svg[aria-label*="Clip"], svg[aria-label*="Reels"]'),
+    });
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeReddit(params: {
+  mode?: 'subreddit' | 'search' | 'post_comments';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const maxResults = params.maxResults || 25;
+  const items: Record<string, any>[] = [];
+
+  const isPostPage = window.location.pathname.includes('/comments/');
+
+  if (params.mode === 'post_comments' || isPostPage) {
+    const postTitle = document.querySelector('h1[slot="title"], h1, shreddit-post')?.textContent?.trim() || '';
+    const postAuthor = document.querySelector('shreddit-post')?.getAttribute('author') || '';
+
+    const commentEls = document.querySelectorAll('shreddit-comment, div[data-testid="comment"]');
+    for (let i = 0; i < commentEls.length && items.length < maxResults; i++) {
+      const el = commentEls[i];
+      const author = el.getAttribute('author') || el.querySelector('a[href*="/user/"]')?.textContent?.trim() || '';
+      const score = el.getAttribute('score') || el.querySelector('[score]')?.getAttribute('score') || '';
+      const textEl = el.querySelector('[slot="comment"], div.-m-1, .md, p');
+
+      items.push({
+        postTitle,
+        postAuthor,
+        author,
+        score,
+        text: textEl?.textContent?.trim() || '',
+      });
+    }
+
+    if (items.length > 0) {
+      return { success: true, items, count: items.length };
+    }
+  }
+
+  // Posts listing
+  const postEls = document.querySelectorAll('shreddit-post, div[data-testid="post-container"], .Post, .thing');
+  for (let i = 0; i < postEls.length && items.length < maxResults; i++) {
+    const el = postEls[i];
+    const title = el.getAttribute('post-title') || el.querySelector('a[slot="title"], h3, .title a')?.textContent?.trim() || '';
+    const permalink = el.getAttribute('permalink') || (el.querySelector('a[slot="title"], a[data-click-id="body"], .title a') as HTMLAnchorElement)?.href || '';
+    const author = el.getAttribute('author') || el.querySelector('a[href*="/user/"], .author')?.textContent?.trim() || '';
+    const score = el.getAttribute('score') || el.querySelector('[score], .score')?.getAttribute('score') || el.querySelector('.score')?.textContent?.trim() || '';
+    const comments = el.getAttribute('comment-count') || el.querySelector('a[data-click-id="comments"], .comments')?.textContent?.trim() || '';
+    const subreddit = el.getAttribute('subreddit-prefixed-name') || el.querySelector('a[href*="/r/"]')?.textContent?.trim() || '';
+
+    const fullUrl = permalink.startsWith('http') ? permalink : `https://www.reddit.com${permalink}`;
+
+    if (title) {
+      items.push({
+        title,
+        url: fullUrl,
+        author,
+        score,
+        commentsCount: comments,
+        subreddit,
+      });
+    }
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeLinkedIn(params: {
+  mode?: 'jobs_search' | 'job_detail' | 'public_profile';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const mode = params.mode || 'jobs_search';
+  const maxResults = params.maxResults || 15;
+  const items: Record<string, any>[] = [];
+
+  const isProfilePage = window.location.pathname.includes('/in/');
+  const isJobViewPage = window.location.pathname.includes('/jobs/view/');
+
+  if (mode === 'public_profile' || isProfilePage) {
+    const nameEl = document.querySelector('h1.top-card-layout__title, h1, .text-heading-xlarge');
+    const headlineEl = document.querySelector('h2.top-card-layout__headline, .text-body-medium');
+    const locationEl = document.querySelector('.top-card-layout__first-subline, .profile-location, .text-body-small.inline');
+    const aboutEl = document.querySelector('section.summary div, [data-section="summary"], .display-flex.ph5.pv3');
+
+    if (nameEl) {
+      items.push({
+        name: nameEl?.textContent?.trim() || '',
+        headline: headlineEl?.textContent?.trim() || '',
+        location: locationEl?.textContent?.trim() || '',
+        about: aboutEl?.textContent?.trim() || '',
+        url: window.location.href,
+      });
+      return { success: true, items, count: items.length };
+    }
+  }
+
+  if (mode === 'job_detail' || isJobViewPage) {
+    const titleEl = document.querySelector('h1.topcard__title, h1.job-details-jobs-unified-top-card__job-title, h1');
+    const companyEl = document.querySelector('a.topcard__org-name-link, .job-details-jobs-unified-top-card__company-name, .topcard__flavor a');
+    const locationEl = document.querySelector('.topcard__flavor--bullet, .job-details-jobs-unified-top-card__workplace-type, .topcard__flavor');
+    const descEl = document.querySelector('.description__text, .jobs-description__content, #job-details');
+
+    if (titleEl) {
+      items.push({
+        title: titleEl?.textContent?.trim() || '',
+        company: companyEl?.textContent?.trim() || '',
+        companyUrl: (companyEl as HTMLAnchorElement)?.href || '',
+        location: locationEl?.textContent?.trim() || '',
+        description: descEl?.textContent?.trim() || '',
+        url: window.location.href,
+      });
+      return { success: true, items, count: items.length };
+    }
+  }
+
+  const jobCards = document.querySelectorAll(
+    'ul.jobs-search__results-list li, .job-search-card, .base-card, .jobs-search-results__list-item, div[data-job-id]'
+  );
+  for (let i = 0; i < jobCards.length && items.length < maxResults; i++) {
+    const card = jobCards[i];
+    const titleEl = card.querySelector('.base-search-card__title, h3.base-search-card__title, .job-card-list__title, h3');
+    const companyEl = card.querySelector('.base-search-card__subtitle, h4.base-search-card__subtitle, .job-card-container__company-name, h4');
+    const locationEl = card.querySelector('.job-search-card__location, .job-card-container__metadata-item');
+    const linkEl = card.querySelector('a.base-card__full-link, a.job-card-list__title, a') as HTMLAnchorElement | null;
+    const dateEl = card.querySelector('time');
+
+    const title = titleEl?.textContent?.trim() || '';
+    if (!title) continue;
+
+    items.push({
+      title,
+      company: companyEl?.textContent?.trim() || '',
+      location: locationEl?.textContent?.trim() || '',
+      url: linkEl?.href || '',
+      datePosted: dateEl?.textContent?.trim() || dateEl?.getAttribute('datetime') || '',
+    });
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeAmazon(params: {
+  mode?: 'search' | 'product_reviews';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const mode = params.mode || 'search';
+  const maxResults = params.maxResults || 20;
+  const items: Record<string, any>[] = [];
+
+  const isProductDetailPage = window.location.pathname.includes('/dp/') || window.location.pathname.includes('/gp/product/');
+  const isReviewsPage = window.location.pathname.includes('/product-reviews/');
+
+  if (mode === 'product_reviews' || isReviewsPage) {
+    const reviewCards = document.querySelectorAll('div[data-hook="review"], .review');
+    for (let i = 0; i < reviewCards.length && items.length < maxResults; i++) {
+      const card = reviewCards[i];
+      const reviewer = card.querySelector('.a-profile-name')?.textContent?.trim() || '';
+      const title = card.querySelector('[data-hook="review-title"] span, .review-title')?.textContent?.trim() || '';
+      const rating = card.querySelector('[data-hook="review-star-rating"] span, i.a-icon-star span, .review-rating')?.textContent?.trim() || '';
+      const date = card.querySelector('[data-hook="review-date"]')?.textContent?.trim() || '';
+      const body = card.querySelector('[data-hook="review-body"] span, .review-text')?.textContent?.trim() || '';
+      const verified = !!card.querySelector('[data-hook="avp-badge"]');
+
+      items.push({
+        reviewer,
+        title,
+        rating,
+        date,
+        text: body,
+        verified,
+      });
+    }
+    if (items.length > 0) {
+      return { success: true, items, count: items.length };
+    }
+  }
+
+  // If user opened a product detail page manually, extract full product info!
+  if (isProductDetailPage) {
+    const titleEl = document.querySelector('#productTitle, #title');
+    const title = titleEl?.textContent?.trim() || '';
+    if (title) {
+      const priceWhole = document.querySelector('.a-price-whole')?.textContent?.trim() || '';
+      const priceFraction = document.querySelector('.a-price-fraction')?.textContent?.trim() || '';
+      const offscreenPrice = document.querySelector('.a-price .a-offscreen, #priceblock_ourprice, #priceblock_dealprice')?.textContent?.trim() || '';
+      const price = offscreenPrice || (priceWhole ? `${priceWhole}${priceFraction ? '.' + priceFraction : ''}` : '');
+      const rating = document.querySelector('#acrPopover')?.getAttribute('title') || document.querySelector('i.a-icon-star span')?.textContent?.trim() || '';
+      const reviewsCount = document.querySelector('#acrCustomerReviewText')?.textContent?.trim() || '';
+      const isPrime = !!document.querySelector('#primeSavingsUpper, #primeBadge, .a-icon-prime');
+      const img = (document.querySelector('#landingImage, #imgBlkFront') as HTMLImageElement)?.src || '';
+      const asinMatch = window.location.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || window.location.href.match(/\/dp\/([A-Z0-9]{10})/i);
+      const asin = asinMatch ? asinMatch[1] : '';
+
+      items.push({
+        asin,
+        title,
+        price,
+        rating,
+        reviewsCount,
+        isPrime,
+        url: window.location.href,
+        thumbnail: img,
+      });
+      return { success: true, items, count: items.length };
+    }
+  }
+
+  // Search Results
+  const productCards = document.querySelectorAll(
+    'div[data-component-type="s-search-result"], .s-result-item[data-asin]:not([data-asin=""])'
+  );
+  for (let i = 0; i < productCards.length && items.length < maxResults; i++) {
+    const card = productCards[i];
+    const asin = card.getAttribute('data-asin') || '';
+    if (!asin) continue;
+
+    const titleEl = card.querySelector('h2 a span, h2 span, h2 a');
+    const title = titleEl?.textContent?.trim() || '';
+    if (!title) continue;
+
+    const linkEl = card.querySelector('h2 a') as HTMLAnchorElement | null;
+    let url = linkEl?.href || '';
+    if (url.startsWith('/')) url = `https://www.amazon.com${url}`;
+
+    const priceWhole = card.querySelector('.a-price-whole')?.textContent?.trim() || '';
+    const priceFraction = card.querySelector('.a-price-fraction')?.textContent?.trim() || '';
+    const offscreenPrice = card.querySelector('.a-price .a-offscreen')?.textContent?.trim() || '';
+    const price = offscreenPrice || (priceWhole ? `${priceWhole}${priceFraction ? '.' + priceFraction : ''}` : '');
+
+    const ratingEl = card.querySelector('i.a-icon-star-small span, span[aria-label*="out of 5 stars"]');
+    const rating = ratingEl?.textContent?.trim() || ratingEl?.getAttribute('aria-label') || '';
+
+    const reviewsEl = card.querySelector('span[aria-label*="out of 5 stars"] ~ span, a[href*="#customerReviews"] span');
+    const reviewsCount = reviewsEl?.textContent?.trim() || '';
+
+    const imgEl = card.querySelector('img.s-image') as HTMLImageElement | null;
+    const isPrime = !!card.querySelector('.a-icon-prime, span[aria-label="Amazon Prime"]');
+
+    items.push({
+      asin,
+      title,
+      price,
+      rating,
+      reviewsCount,
+      isPrime,
+      url,
+      thumbnail: imgEl?.src || '',
+    });
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeTwitter(params: {
+  mode?: 'search' | 'profile_tweets';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const maxResults = params.maxResults || 15;
+  const items: Record<string, any>[] = [];
+
+  const tweetEls = document.querySelectorAll('article[data-testid="tweet"]');
+  for (let i = 0; i < tweetEls.length && items.length < maxResults; i++) {
+    const el = tweetEls[i];
+    const userEl = el.querySelector('div[data-testid="User-Name"]');
+    const textEl = el.querySelector('div[data-testid="tweetText"]');
+    const timeEl = el.querySelector('time');
+    const linkEl = el.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
+
+    const replyEl = el.querySelector('div[data-testid="reply"]');
+    const retweetEl = el.querySelector('div[data-testid="retweet"]');
+    const likeEl = el.querySelector('div[data-testid="like"]');
+
+    const author = userEl?.querySelector('span')?.textContent?.trim() || '';
+    const text = textEl?.textContent?.trim() || '';
+    const href = linkEl?.href || '';
+
+    if (text || author) {
+      items.push({
+        author,
+        text,
+        url: href,
+        timestamp: timeEl?.getAttribute('datetime') || timeEl?.textContent?.trim() || '',
+        replies: replyEl?.textContent?.trim() || '0',
+        retweets: retweetEl?.textContent?.trim() || '0',
+        likes: likeEl?.textContent?.trim() || '0',
+      });
+    }
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+export async function scrapeGoogleSearch(params: {
+  mode?: 'organic_search' | 'news_search';
+  maxResults?: number;
+}): Promise<{ success: boolean; items: Record<string, any>[]; count: number }> {
+  const maxResults = params.maxResults || 10;
+  const items: Record<string, any>[] = [];
+
+  const resultCards = document.querySelectorAll('#search .g, div.tF2Cxc, div.MjjYud, div[data-sokoban-container]');
+  for (let i = 0; i < resultCards.length && items.length < maxResults; i++) {
+    const card = resultCards[i];
+    const titleEl = card.querySelector('h3');
+    if (!titleEl) continue;
+
+    const linkEl = (card.querySelector('a[href^="http"]') || titleEl.closest('a') || card.querySelector('a')) as HTMLAnchorElement | null;
+    const href = linkEl?.href || '';
+    if (!href || href.includes('google.com/search')) continue;
+
+    const snippetEl = card.querySelector('div[data-sncf], .VwiC3b, .IsZvec, .yXK7lf');
+    const citeEl = card.querySelector('cite');
+
+    items.push({
+      title: titleEl.textContent?.trim() || '',
+      url: href,
+      snippet: snippetEl?.textContent?.trim() || '',
+      displayedUrl: citeEl?.textContent?.trim() || '',
+    });
+  }
+
+  return { success: true, items, count: items.length };
+}
+
+
 

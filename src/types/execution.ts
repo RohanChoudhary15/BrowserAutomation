@@ -76,6 +76,7 @@ export interface ActiveTimer {
 export interface NodeResult {
   success: boolean;
   output?: any;
+  items?: any[];
   variables?: Record<string, any>;
   error?: string;
   nextBranch?: string; // 'true' | 'false' | 'loop_body' | 'loop_done' | 'try' | 'catch' | 'default'

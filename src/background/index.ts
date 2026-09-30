@@ -1,4 +1,10 @@
 import { ExtensionMessage } from '../types/messages';
+import {
+  scrapeYouTubeSearch,
+  scrapeYouTubeVideoDetails,
+  scrapeYouTubeTranscript,
+  scrapeYouTubeComments,
+} from '../utils/youtubeService';
 
 console.log('⚡ AutoFlow Background Service Worker active');
 
@@ -7,7 +13,38 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 }
 
-export const REQUIRED_CONTENT_VERSION = '1.4.1-card-scraper';
+// Configure CORS-bypass rules for YouTube requests via declarativeNetRequest
+if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.updateDynamicRules) {
+  chrome.declarativeNetRequest.updateDynamicRules({
+    addRules: [
+      {
+        id: 991,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          requestHeaders: [
+            { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com' },
+            { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com/' },
+          ],
+          responseHeaders: [
+            { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+            { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, OPTIONS, HEAD' },
+            { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+          ],
+        },
+        condition: {
+          urlFilter: '||youtube.com',
+          resourceTypes: [
+            chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+          ],
+        },
+      },
+    ],
+    removeRuleIds: [991],
+  }).catch((e) => console.warn('Could not register declarativeNetRequest rules:', e));
+}
+
+export const REQUIRED_CONTENT_VERSION = '1.5.0-scrapers';
 
 // Tracks the editor tab ID to return focus after element picking
 let lastEditorTabId: number | null = null;
@@ -38,8 +75,9 @@ async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
 /**
  * Resolves the genuine target webpage tab for automation and element picking,
  * avoiding extension editor tabs and restricted browser URLs.
+ * Supports urlPattern to locate manually opened tabs for specific platforms (e.g. YouTube, Amazon, Reddit).
  */
-export async function getTargetTab(preferredTabId?: number): Promise<chrome.tabs.Tab | null> {
+export async function getTargetTab(preferredTabId?: number, urlPattern?: string): Promise<chrome.tabs.Tab | null> {
   // 1. If preferred tab ID is specified, verify it is accessible and not restricted
   if (preferredTabId) {
     const tab = await chrome.tabs.get(preferredTabId).catch(() => null);
@@ -56,11 +94,26 @@ export async function getTargetTab(preferredTabId?: number): Promise<chrome.tabs
     return null;
   }
 
-  // Check if there is an active web tab in any window
+  // 3. If urlPattern is provided, prioritize a tab whose URL matches the platform pattern
+  if (urlPattern) {
+    const cleanPattern = urlPattern.toLowerCase();
+    const matchingTab = webTabs.find((t) => {
+      if (!t.url) return false;
+      const u = t.url.toLowerCase();
+      if (cleanPattern.includes('|')) {
+        const parts = cleanPattern.split('|');
+        return parts.some((p) => p.trim() && u.includes(p.trim()));
+      }
+      return u.includes(cleanPattern);
+    });
+    if (matchingTab) return matchingTab;
+  }
+
+  // 4. Check if there is an active web tab in any window
   const activeWebTab = webTabs.find((t) => t.active);
   if (activeWebTab) return activeWebTab;
 
-  // Fallback: return the most recently accessed web tab
+  // 5. Fallback: return the most recently accessed web tab
   webTabs.sort((a, b) => ((b as any).lastAccessed || 0) - ((a as any).lastAccessed || 0));
   return webTabs[0] || null;
 }
@@ -144,6 +197,23 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
       }
 
       switch (message.type) {
+        case 'YOUTUBE_SCRAPE': {
+          const { action, params } = message.payload || {};
+          let data: any;
+          if (action === 'search') {
+            data = await scrapeYouTubeSearch(params.query, params.maxResults);
+          } else if (action === 'video_details') {
+            data = await scrapeYouTubeVideoDetails(params.target);
+          } else if (action === 'video_script') {
+            data = await scrapeYouTubeTranscript(params.target, params.scriptLanguage, params.scriptFormat);
+          } else if (action === 'comments') {
+            data = await scrapeYouTubeComments(params.target, params.maxResults);
+          } else {
+            throw new Error(`Unknown YouTube scrape action: ${action}`);
+          }
+          return { success: true, data };
+        }
+
         case 'GET_ACTIVE_TAB': {
           const tab = await getTargetTab();
           return { success: true, tab };
@@ -345,6 +415,69 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
           return { success: true, dataUrl };
         }
 
+        case 'GET_COOKIES': {
+          if (!chrome.cookies) throw new Error('chrome.cookies API is not available.');
+          const { url, name, domain } = message.payload || {};
+          let targetUrl = url;
+          if (!targetUrl && !domain) {
+            const activeTab = await getTargetTab();
+            targetUrl = activeTab?.url;
+          }
+          if (name) {
+            if (targetUrl) {
+              const cookie = await chrome.cookies.get({ url: targetUrl, name });
+              return { success: true, cookie, value: cookie?.value || '' };
+            } else {
+              const all = await chrome.cookies.getAll({ domain: domain || undefined, name });
+              const cookie = all[0] || null;
+              return { success: true, cookie, value: cookie?.value || '', cookies: all };
+            }
+          } else {
+            const cookies = await chrome.cookies.getAll({
+              ...(targetUrl ? { url: targetUrl } : {}),
+              ...(domain ? { domain } : {}),
+            });
+            return { success: true, cookies, count: cookies.length };
+          }
+        }
+
+        case 'SET_COOKIE': {
+          if (!chrome.cookies) throw new Error('chrome.cookies API is not available.');
+          const { url, name, value, domain, path, secure, httpOnly, sameSite, expirationDate } = message.payload || {};
+          let targetUrl = url;
+          if (!targetUrl) {
+            const activeTab = await getTargetTab();
+            targetUrl = activeTab?.url;
+          }
+          if (!targetUrl) throw new Error('A URL or active tab is required to set cookies.');
+          const cookieDetails: chrome.cookies.SetDetails = {
+            url: targetUrl,
+            name,
+            value: String(value ?? ''),
+            ...(path ? { path } : {}),
+            ...(domain ? { domain } : {}),
+            ...(secure !== undefined ? { secure: !!secure } : {}),
+            ...(httpOnly !== undefined ? { httpOnly: !!httpOnly } : {}),
+            ...(sameSite ? { sameSite: sameSite as any } : {}),
+            ...(expirationDate ? { expirationDate } : {}),
+          };
+          const cookie = await chrome.cookies.set(cookieDetails);
+          return { success: true, cookie };
+        }
+
+        case 'DELETE_COOKIE': {
+          if (!chrome.cookies) throw new Error('chrome.cookies API is not available.');
+          const { url, name } = message.payload || {};
+          let targetUrl = url;
+          if (!targetUrl) {
+            const activeTab = await getTargetTab();
+            targetUrl = activeTab?.url;
+          }
+          if (!targetUrl) throw new Error('A URL or active tab is required to delete cookies.');
+          const result = await chrome.cookies.remove({ url: targetUrl, name });
+          return { success: true, result };
+        }
+
         case 'START_ELEMENT_PICKER': {
           let tabId = message.payload?.tabId;
           const targetTab = await getTargetTab(tabId);
@@ -388,7 +521,18 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
         case 'EXECUTE_DOM_ACTION': {
           // Route message to content script in the genuine target tab
           let tabId = message.payload?.tabId;
-          const targetTab = await getTargetTab(tabId);
+          let pattern = message.payload?.urlPattern;
+          if (!pattern && message.payload?.action) {
+            const act = String(message.payload.action).toLowerCase();
+            if (act.includes('youtube')) pattern = 'youtube.com';
+            else if (act.includes('instagram')) pattern = 'instagram.com';
+            else if (act.includes('reddit')) pattern = 'reddit.com';
+            else if (act.includes('linkedin')) pattern = 'linkedin.com';
+            else if (act.includes('amazon')) pattern = 'amazon.';
+            else if (act.includes('twitter')) pattern = 'twitter.com|x.com';
+            else if (act.includes('google')) pattern = 'google.com';
+          }
+          const targetTab = await getTargetTab(tabId, pattern);
 
           if (!targetTab || !targetTab.id) {
             throw new Error(

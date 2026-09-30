@@ -7,6 +7,8 @@ import { LogicGateNode } from './LogicGateNode';
 import { CombineDatasetsNode } from './CombineDatasetsNode';
 import { AsyncParallelNode } from './AsyncParallelNode';
 import { SimpleStorageNode } from './SimpleStorageNode';
+import { SwitchNode } from './SwitchNode';
+import { ScraperNode } from './ScraperNode';
 
 export const nodeTypes = {
   customNode: BaseNode,
@@ -18,5 +20,7 @@ export const nodeTypes = {
   combineDatasetsNode: CombineDatasetsNode,
   asyncParallelNode: AsyncParallelNode,
   simpleStorageNode: SimpleStorageNode,
+  switchNode: SwitchNode,
+  scraperNode: ScraperNode,
 };
 

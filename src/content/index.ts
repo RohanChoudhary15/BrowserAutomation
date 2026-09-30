@@ -5,7 +5,7 @@ import * as domActions from './domActions';
 import { ExtensionMessage } from '../types/messages';
 import { HumanConfig } from '../utils/human';
 
-export const CONTENT_SCRIPT_VERSION = '1.4.1-card-scraper';
+export const CONTENT_SCRIPT_VERSION = '1.5.0-scrapers';
 console.log('🤖 AutoFlow Content Script loaded on', window.location.href, `(v${CONTENT_SCRIPT_VERSION})`);
 
 // Expose latest version and action executor on window so re-injected scripts or existing listeners use latest logic
@@ -113,6 +113,10 @@ async function executeAction(
   const normAction = (action || '').toLowerCase().trim().replace(/[\s\-]+/g, '_');
 
   switch (normAction) {
+    case 'get_page_info':
+    case 'page_info':
+      return { success: true, ...domActions.getPageInfo() };
+
     case 'get_interactive_snapshot':
       return { success: true, elements: domActions.getInteractiveElementsSnapshot() };
 
@@ -356,6 +360,57 @@ async function executeAction(
         },
         undefined
       );
+
+    case 'youtube_scraper':
+    case 'scrape_youtube':
+      return await domActions.scrapeYouTube({
+        mode: params.mode,
+        maxResults: params.maxResults,
+        scriptLanguage: params.scriptLanguage,
+        scriptFormat: params.scriptFormat,
+      });
+
+    case 'instagram_scraper':
+    case 'scrape_instagram':
+      return await domActions.scrapeInstagram({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
+
+    case 'reddit_scraper':
+    case 'scrape_reddit':
+      return await domActions.scrapeReddit({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
+
+    case 'linkedin_scraper':
+    case 'scrape_linkedin':
+      return await domActions.scrapeLinkedIn({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
+
+    case 'amazon_scraper':
+    case 'scrape_amazon':
+      return await domActions.scrapeAmazon({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
+
+    case 'twitter_scraper':
+    case 'scrape_twitter':
+      return await domActions.scrapeTwitter({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
+
+    case 'google_search_scraper':
+    case 'scrape_google':
+      return await domActions.scrapeGoogleSearch({
+        mode: params.mode,
+        maxResults: params.maxResults,
+      });
 
     default:
       throw new Error(`Unsupported DOM action: ${action}`);

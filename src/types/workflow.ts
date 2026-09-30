@@ -3,6 +3,7 @@ export type NodeCategory =
   | 'interaction'
   | 'wait'
   | 'extraction'
+  | 'scrapers'
   | 'logic'
   | 'data'
   | 'utility'
@@ -10,6 +11,14 @@ export type NodeCategory =
   | 'command';
 
 export type NodeType =
+  // Scrapers
+  | 'youtube_scraper'
+  | 'instagram_scraper'
+  | 'reddit_scraper'
+  | 'linkedin_scraper'
+  | 'amazon_scraper'
+  | 'twitter_scraper'
+  | 'google_search_scraper'
   // Browser
   | 'navigate'
   | 'back'
@@ -59,11 +68,23 @@ export type NodeType =
   | 'logic_nor'
   | 'loop'
   | 'for_each'
+  | 'while_loop'
+  | 'switch_case'
+  | 'retry_block'
+  | 'rate_limiter'
+  | 'manual_approval'
   | 'async_parallel'
   | 'try_catch'
   | 'break'
   | 'continue'
   // Data
+  | 'get_page_info'
+  | 'get_url_details'
+  | 'date_time'
+  | 'cookie_manager'
+  | 'array_operation'
+  | 'string_template'
+  | 'json_query'
   | 'set_variable'
   | 'get_variable'
   | 'transform'

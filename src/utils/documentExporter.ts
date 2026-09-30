@@ -1127,3 +1127,49 @@ export function createExportDocument(
     }
   }
 }
+
+/**
+ * Universal file download trigger (Chrome downloads API with DOM anchor fallback)
+ */
+export async function triggerFileDownload(dataUrl: string, filename: string, saveAs = false): Promise<any> {
+  let resolvedFilename = filename;
+  if (dataUrl.startsWith('data:application/pdf') && !resolvedFilename.toLowerCase().endsWith('.pdf')) {
+    resolvedFilename += '.pdf';
+  }
+
+  if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+    try {
+      return await chrome.downloads.download({
+        url: dataUrl,
+        filename: resolvedFilename,
+        saveAs,
+      });
+    } catch (e) {
+      console.warn('[AutoFlow] Chrome download API failed, falling back to DOM anchor:', e);
+    }
+  }
+
+  if (typeof document !== 'undefined') {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = resolvedFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return true;
+  }
+}
+
+/**
+ * Formats dataset and triggers immediate client file download (CSV, XLSX, JSON, TSV, HTML)
+ */
+export async function exportAndDownloadDataset(
+  items: any[],
+  format: ExportDataFormat = 'csv',
+  filename = 'scraped_table'
+): Promise<ExportDocumentResult> {
+  const doc = createExportDocument(items, format, { filename });
+  await triggerFileDownload(doc.dataUrl, doc.filename);
+  return doc;
+}
+

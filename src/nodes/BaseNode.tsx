@@ -40,6 +40,24 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'stop_workflow') summary = `Exit Workflow (${data.properties?.exitStatus || 'completed'})`;
   else if (data.type === 'pause_workflow') summary = data.properties?.message ? `"${data.properties.message.slice(0, 26)}"` : 'Wait for Resume';
   else if (data.type === 'skip_to') summary = `Jump to: ${data.properties?.targetNodeId || 'Select node'}`;
+  else if (data.type === 'youtube_scraper') summary = `YouTube: ${data.properties?.mode || 'search'} (${data.properties?.query || data.properties?.url || 'auto'})`;
+  else if (data.type === 'instagram_scraper') summary = `Instagram: @${data.properties?.target || 'target'} (${data.properties?.mode || 'profile_posts'})`;
+  else if (data.type === 'reddit_scraper') summary = `Reddit: ${data.properties?.mode === 'subreddit' ? `r/${data.properties?.subreddit}` : (data.properties?.query || 'search')}`;
+  else if (data.type === 'linkedin_scraper') summary = `LinkedIn: ${data.properties?.keywords || 'Jobs'} in ${data.properties?.location || 'Remote'}`;
+  else if (data.type === 'amazon_scraper') summary = `Amazon: "${data.properties?.query || 'items'}" (${data.properties?.domain || 'com'})`;
+  else if (data.type === 'twitter_scraper') summary = `X/Twitter: ${data.properties?.query ? `"${data.properties?.query}"` : `@${data.properties?.username || 'user'}`}`;
+  else if (data.type === 'google_search_scraper') summary = `Google Search: "${data.properties?.query || 'query'}"`;
+  else if (data.type === 'get_page_info') summary = `Page Info -> {{${data.properties?.outputVariable || 'pageInfo'}}}`;
+  else if (data.type === 'get_url_details') summary = `URL: ${data.properties?.sourceUrl || 'current'}${data.properties?.targetParam ? ` (${data.properties.targetParam})` : ''}`;
+  else if (data.type === 'date_time') summary = `${data.properties?.mode || 'current_time'} (${data.properties?.format || 'iso'})`;
+  else if (data.type === 'cookie_manager') summary = `${(data.properties?.action || 'get').toUpperCase()}: ${data.properties?.name || 'all'}`;
+  else if (data.type === 'array_operation') summary = `${data.properties?.operation || 'deduplicate'}: ${data.properties?.array || '{{items}}'}`;
+  else if (data.type === 'string_template') summary = `Template -> {{${data.properties?.outputVariable || 'renderedTemplate'}}}`;
+  else if (data.type === 'json_query') summary = `${data.properties?.queryPath || 'query'}`;
+  else if (data.type === 'while_loop') summary = `while (${data.properties?.leftValue || 'val'} ${data.properties?.operator || '=='} ${data.properties?.rightValue || ''})`;
+  else if (data.type === 'retry_block') summary = `Retry up to ${data.properties?.maxRetries || 3}x (${data.properties?.backoffMode || 'exponential'})`;
+  else if (data.type === 'rate_limiter') summary = `Throttle: ${data.properties?.mode || 'jitter'}`;
+  else if (data.type === 'manual_approval') summary = `Prompt: "${(data.properties?.promptMessage || 'Approval required').slice(0, 24)}..."`;
   else if (data.type === 'wait') {
     const timerPrefix = data.properties?.timerName ? `[${data.properties.timerName}] ` : '';
     if (data.properties?.stopCondition?.enabled) {
