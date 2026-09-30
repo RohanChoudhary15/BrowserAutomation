@@ -383,5 +383,259 @@ describe('AI Image Generator Node', () => {
         /GMI Cloud Image Generation error \(402\): Insufficient balance/
       );
     });
+
+    it('supports image input option for GMI Cloud (img2img / reference)', async () => {
+      (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+        if (msg.type === 'PROXY_FETCH') {
+          interceptedFetchCalls.push({ url: msg.payload.url, init: msg.payload.options });
+          return {
+            success: true,
+            response: {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'content-type': 'application/json' },
+              text: JSON.stringify({
+                request_id: 'img2img-job-123',
+                status: 'success',
+                outcome: {
+                  media_urls: [{ url: 'https://storage.googleapis.com/test-bucket/img2img_out.png', type: 'image' }],
+                },
+              }),
+            },
+          };
+        }
+        return { success: true };
+      });
+
+      const node: WorkflowNode = {
+        id: 'node_gmi_img2img',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          type: 'generate_image',
+          label: 'AI Image Generator',
+          properties: {
+            prompt: 'Transform into watercolor oil painting',
+            inputImage: 'https://example.com/source_photo.jpg',
+            model: 'hy-image-v3.5-preview',
+            apiKey: 'gmi-key',
+            outputVariable: 'paintedImage',
+          },
+        },
+      };
+
+      const result = await executeGenerateImage(node, mockContext);
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('https://storage.googleapis.com/test-bucket/img2img_out.png');
+
+      expect(interceptedFetchCalls.length).toBe(1);
+      const payload = JSON.parse(interceptedFetchCalls[0].init?.body as string).payload;
+      expect(payload.image).toBe('https://example.com/source_photo.jpg');
+      expect(payload.image_url).toBe('https://example.com/source_photo.jpg');
+      expect(payload.messages[0].content[1].image_url.url).toBe('https://example.com/source_photo.jpg');
+    });
+
+    it('supports asynchronous image generation (4 images) with GMI Cloud', async () => {
+      let reqCount = 0;
+      (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+        if (msg.type === 'PROXY_FETCH') {
+          interceptedFetchCalls.push({ url: msg.payload.url, init: msg.payload.options });
+          reqCount++;
+          return {
+            success: true,
+            response: {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'content-type': 'application/json' },
+              text: JSON.stringify({
+                request_id: `async-job-${reqCount}`,
+                status: 'success',
+                outcome: {
+                  media_urls: [
+                    {
+                      url: `https://storage.googleapis.com/test-bucket/async_variation_${reqCount}.png`,
+                      type: 'image',
+                    },
+                  ],
+                },
+              }),
+            },
+          };
+        }
+        return { success: true };
+      });
+
+      const node: WorkflowNode = {
+        id: 'node_gmi_async_4',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          type: 'generate_image',
+          label: 'AI Image Generator',
+          properties: {
+            prompt: 'Futuristic sci-fi vehicle concept art',
+            model: 'hy-image-v3.5-preview',
+            asyncCount: 4,
+            apiKey: 'gmi-key-async-batch',
+            outputVariable: 'vehicleVariations',
+          },
+        },
+      };
+
+      const result = await executeGenerateImage(node, mockContext);
+      expect(result.success).toBe(true);
+      expect(Array.isArray(result.output)).toBe(true);
+      expect((result.output as string[]).length).toBe(4);
+      expect(result.variables?.vehicleVariations_count).toBe(4);
+      expect(result.variables?.vehicleVariations_images?.length).toBe(4);
+      expect(interceptedFetchCalls.length).toBe(4);
+    });
+  });
+
+  describe('Asynchronous Generation & Image Input for OpenAI / Custom models', () => {
+    it('supports image input (img2img) with variable interpolation', async () => {
+      mockContext.variables['refLogo'] = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+      (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+        if (msg.type === 'PROXY_FETCH') {
+          interceptedFetchCalls.push({ url: msg.payload.url, init: msg.payload.options });
+          return {
+            success: true,
+            response: {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'content-type': 'application/json' },
+              text: JSON.stringify({
+                data: [{ url: 'https://images.openai.com/generated/img2img_result.png' }],
+              }),
+            },
+          };
+        }
+        return { success: true };
+      });
+
+      const node: WorkflowNode = {
+        id: 'node_openai_img2img',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          type: 'generate_image',
+          label: 'AI Image Generator',
+          properties: {
+            prompt: 'Embossed chrome 3D version of {{brand}} logo',
+            inputImage: '{{refLogo}}',
+            model: 'dall-e-2',
+            outputVariable: 'embossedLogo',
+          },
+        },
+      };
+
+      const result = await executeGenerateImage(node, mockContext);
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('https://images.openai.com/generated/img2img_result.png');
+
+      const body = JSON.parse(interceptedFetchCalls[0].init?.body as string);
+      expect(body.image).toContain('data:image/png;base64,');
+      expect(body.image_url).toContain('data:image/png;base64,');
+      expect(body.prompt).toContain('AeroTech');
+    });
+
+    it('generates 8 images asynchronously in parallel', async () => {
+      let callIndex = 0;
+      (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+        if (msg.type === 'PROXY_FETCH') {
+          interceptedFetchCalls.push({ url: msg.payload.url, init: msg.payload.options });
+          callIndex++;
+          return {
+            success: true,
+            response: {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'content-type': 'application/json' },
+              text: JSON.stringify({
+                data: [{ url: `https://images.openai.com/generated/batch_art_${callIndex}.png` }],
+              }),
+            },
+          };
+        }
+        return { success: true };
+      });
+
+      const node: WorkflowNode = {
+        id: 'node_async_8',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          type: 'generate_image',
+          label: 'AI Image Generator',
+          properties: {
+            prompt: 'Neon cyberpunk portrait collection',
+            model: 'dall-e-3',
+            asyncCount: 8,
+            outputVariable: 'cyberPortraits',
+          },
+        },
+      };
+
+      const result = await executeGenerateImage(node, mockContext);
+      expect(result.success).toBe(true);
+      expect(Array.isArray(result.output)).toBe(true);
+      expect((result.output as string[]).length).toBe(8);
+      expect(result.variables?.cyberPortraits_images?.length).toBe(8);
+      expect(result.variables?.cyberPortraits_count).toBe(8);
+      expect(interceptedFetchCalls.length).toBe(8);
+    });
+
+    it('auto-downloads all generated variations with numbered filenames', async () => {
+      const downloadedFiles: string[] = [];
+      (globalThis as any).chrome.downloads = {
+        download: vi.fn(({ filename }: any, cb: any) => {
+          downloadedFiles.push(filename);
+          cb(123);
+        }),
+      };
+
+      let callIndex = 0;
+      (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+        if (msg.type === 'PROXY_FETCH') {
+          interceptedFetchCalls.push({ url: msg.payload.url, init: msg.payload.options });
+          callIndex++;
+          return {
+            success: true,
+            response: {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'content-type': 'application/json' },
+              text: JSON.stringify({
+                data: [{ url: `https://images.openai.com/generated/download_test_${callIndex}.png` }],
+              }),
+            },
+          };
+        }
+        return { success: true };
+      });
+
+      const node: WorkflowNode = {
+        id: 'node_async_dl',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          type: 'generate_image',
+          label: 'AI Image Generator',
+          properties: {
+            prompt: 'Landscape wallpapers',
+            asyncCount: 2,
+            autoDownload: true,
+            downloadFilename: 'wallpaper',
+            outputVariable: 'wallpapers',
+          },
+        },
+      };
+
+      const result = await executeGenerateImage(node, mockContext);
+      expect(result.success).toBe(true);
+      expect(downloadedFiles).toEqual(['wallpaper_1.png', 'wallpaper_2.png']);
+    });
   });
 });
+

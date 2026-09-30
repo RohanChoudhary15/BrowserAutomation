@@ -29,7 +29,12 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   // Summary of primary configuration
   let summary = '';
   if (data.type === 'smart_scroll') summary = `${data.properties?.mode || 'to_bottom'} • ${data.properties?.scrollSpeed || 'normal'} (${data.properties?.maxScrolls || 5} passes)`;
-  else if (data.type === 'generate_image') summary = `${data.properties?.model || 'dall-e-3'} • ${data.properties?.size || '1024x1024'}`;
+  else if (data.type === 'generate_image') {
+    const asyncCount = Number(data.properties?.asyncCount || data.properties?.count || 1);
+    const asyncStr = asyncCount > 1 ? ` • ${asyncCount}x async` : '';
+    const imgStr = data.properties?.inputImage ? ' • img2img' : '';
+    summary = `${data.properties?.model || 'dall-e-3'} • ${data.properties?.size || '1024x1024'}${asyncStr}${imgStr}`;
+  }
   else if (data.type === 'firecrawl') summary = `${data.properties?.mode || 'scrape'}: ${data.properties?.url || '{{currentUrl}}'}`;
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;

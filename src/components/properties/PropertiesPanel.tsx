@@ -57,6 +57,8 @@ import {
   ShoppingCart,
   AtSign,
   Search,
+  Upload,
+  X,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels } from '../../ai/aiService';
@@ -3876,6 +3878,108 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </p>
             </div>
 
+            {/* Input Image (img2img / Reference) */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-medium text-gray-300 flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Input Image (img2img / Reference)</span>
+                </label>
+                <span className="text-[10px] text-purple-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <p className="text-[10px] text-gray-500 leading-normal">
+                Optional reference image for Image-to-Image editing, variations, or style matching. Enter an image URL, base64 data URI, variable (e.g. <code className="text-purple-300">&#123;&#123;screenshotUrl&#125;&#125;</code>), or upload a file.
+              </p>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={props.inputImage || ''}
+                  onChange={(e) => handlePropChange('inputImage', e.target.value)}
+                  placeholder="https://... or {{screenshotUrl}} or data:image/..."
+                  className="flex-1 bg-[#0b0e14] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
+                />
+                <label className="px-2 py-1.5 bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white rounded border border-[#2a3449] cursor-pointer flex items-center gap-1 text-[11px] font-medium transition-colors shrink-0" title="Upload local image">
+                  <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Upload</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (evt) => {
+                          if (evt.target?.result) {
+                            handlePropChange('inputImage', evt.target.result as string);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+                {props.inputImage && (
+                  <button
+                    type="button"
+                    onClick={() => handlePropChange('inputImage', '')}
+                    className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-950/20 rounded transition-colors"
+                    title="Clear input image"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {props.inputImage && (props.inputImage.startsWith('http') || props.inputImage.startsWith('data:image')) && (
+                <div className="flex items-center gap-2 pt-1 border-t border-[#1c2230]">
+                  <img
+                    src={props.inputImage}
+                    alt="Input reference preview"
+                    className="w-10 h-10 object-cover rounded border border-[#2a3449]"
+                  />
+                  <div className="text-[10px] text-gray-400 truncate flex-1">
+                    <span className="font-semibold text-gray-300 block">Reference Loaded</span>
+                    {props.inputImage.startsWith('data:') ? 'Base64 image data' : props.inputImage}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Asynchronous Image Generation (upto 8: 1, 2, 4, 8) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Asynchronous Image Generation</span>
+                </label>
+                <span className="text-[10px] font-mono text-amber-300 bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-500/20">
+                  {Number(props.asyncCount || 1) === 1 ? '1 image' : `${props.asyncCount || 1} images async`}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 mb-1.5">
+                Generate variations concurrently in parallel (up to 8 images).
+              </p>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[1, 2, 4, 8].map((count) => {
+                  const isSelected = Number(props.asyncCount || 1) === count;
+                  return (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => handlePropChange('asyncCount', count)}
+                      className={`py-1.5 px-2 text-center rounded border text-xs font-mono font-medium transition-all ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-500 font-semibold shadow-sm shadow-amber-900/30'
+                          : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white hover:bg-[#161a24]'
+                      }`}
+                    >
+                      {count === 1 ? '1 (Single)' : `${count} Async`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Model Selection */}
             <div>
               <label className="block text-[11px] font-medium text-gray-400 mb-1">Image Model</label>
@@ -4089,31 +4193,78 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
 
             {/* Generated Image Preview if available */}
-            {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable])) && (
+            {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable]) || (props.outputVariable && variables[`${props.outputVariable}_images`])) && (
               <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2 mt-2">
                 <div className="text-[11px] font-semibold text-emerald-400 flex items-center justify-between">
                   <span>Generated Image Preview</span>
+                  {Array.isArray(variables[`${props.outputVariable}_images`]) && variables[`${props.outputVariable}_images`].length > 1 && (
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      {variables[`${props.outputVariable}_images`].length} images generated
+                    </span>
+                  )}
                 </div>
-                <div className="rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 max-h-48 flex items-center justify-center">
-                  <img
-                    src={String(runtimeState?.output || variables[props.outputVariable])}
-                    alt="Generated Preview"
-                    className="w-full max-h-48 object-contain"
-                  />
-                </div>
+
+                {Array.isArray(variables[`${props.outputVariable}_images`]) && variables[`${props.outputVariable}_images`].length > 1 ? (
+                  <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto p-1 bg-black/40 rounded border border-[#232a3b]">
+                    {variables[`${props.outputVariable}_images`].map((imgUrl: string, idx: number) => (
+                      <div key={idx} className="relative group rounded overflow-hidden border border-[#2a3449] bg-black/60 aspect-video flex flex-col justify-end">
+                        <img
+                          src={imgUrl}
+                          alt={`Generated variation ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity">
+                          <a
+                            href={imgUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-semibold transition-colors"
+                            title="Open full size"
+                          >
+                            Open
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(imgUrl);
+                              setCopiedBase64(true);
+                              setTimeout(() => setCopiedBase64(false), 2000);
+                            }}
+                            className="p-1 rounded bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-[9px] transition-colors"
+                            title="Copy image URL"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <span className="absolute bottom-1 right-1 text-[9px] bg-black/80 text-white px-1 py-0.5 rounded font-mono">
+                          #{idx + 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 max-h-48 flex items-center justify-center">
+                    <img
+                      src={String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable]))}
+                      alt="Generated Preview"
+                      className="w-full max-h-48 object-contain"
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2 pt-1">
                   <a
-                    href={String(runtimeState?.output || variables[props.outputVariable])}
+                    href={String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable]))}
                     target="_blank"
                     rel="noreferrer"
                     className="flex-1 py-1 text-center rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold transition-colors"
                   >
-                    Open Image in New Tab
+                    Open Primary Image
                   </a>
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(String(runtimeState?.output || variables[props.outputVariable]));
+                      navigator.clipboard.writeText(String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable])));
                       setCopiedBase64(true);
                       setTimeout(() => setCopiedBase64(false), 2000);
                     }}

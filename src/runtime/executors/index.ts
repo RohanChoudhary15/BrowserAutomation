@@ -2774,6 +2774,14 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
     throw new Error('Image Generator requires a prompt.');
   }
 
+  // Image input option (URL, data URI, or variable interpolation)
+  const rawInputImage = node.data.properties.inputImage || node.data.properties.imageUrl || '';
+  const inputImage = String(interpolateVariables(rawInputImage, ctx.variables) ?? '').trim();
+
+  // Asynchronous image generation count (1, 2, 4, 8)
+  const rawAsyncCount = Number(node.data.properties.asyncCount || node.data.properties.count || 1);
+  const asyncCount = [1, 2, 4, 8].includes(rawAsyncCount) ? rawAsyncCount : Math.min(Math.max(1, rawAsyncCount || 1), 8);
+
   const aiConfig = await getAiConfig();
   const customApiKey = node.data.properties.apiKey?.trim();
   const apiKey = customApiKey || aiConfig.apiKey;
@@ -2797,13 +2805,149 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
   const rawDownloadFilename = node.data.properties.downloadFilename || `${outputVariable}_image`;
   const downloadFilename = String(interpolateVariables(rawDownloadFilename, ctx.variables) ?? `${outputVariable}_image`);
 
+  const downloadSingleImage = async (url: string, filename: string) => {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        await new Promise<number | undefined>((resolve, reject) => {
+          chrome.downloads.download(
+            {
+              url,
+              filename,
+              saveAs: false,
+            },
+            (downloadId) => {
+              if (chrome.runtime?.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+              } else {
+                resolve(downloadId);
+              }
+            }
+          );
+        });
+      } else if (typeof document !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      ctx.log({ level: 'info', message: `Downloaded generated image as ${filename}`, nodeId: node.id });
+    } catch (dlErr: any) {
+      ctx.log({ level: 'warn', message: `Auto-download image warning: ${dlErr.message}`, nodeId: node.id });
+    }
+  };
+
   // 1. GMI Cloud Queue Engine (hy-image-v3.5-preview & Hunyuan Image)
   if (isGmiCloud) {
     const endpoint = baseUrl || 'https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey/requests';
 
+    const generateGmiSingle = async (idx: number) => {
+      const requestBody: Record<string, any> = {
+        model,
+        payload: {
+          prompt,
+          size,
+        },
+      };
+
+      if (inputImage) {
+        requestBody.payload.image = inputImage;
+        requestBody.payload.image_url = inputImage;
+        requestBody.payload.image_urls = [inputImage];
+        requestBody.payload.messages = [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: inputImage } },
+            ],
+          },
+        ];
+      }
+
+      const res = await safeFetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        let parsedMsg = errText;
+        try {
+          const errJson = JSON.parse(errText);
+          parsedMsg = errJson.message || errJson.error || errText;
+        } catch {}
+        const fullErr = `GMI Cloud Image Generation error (${res.status}): ${parsedMsg}`;
+        ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
+        throw new Error(fullErr);
+      }
+
+      let json = await res.json();
+      const requestId = json.request_id || json.id || json.outcome?.request_id;
+      let imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
+
+      // If job was queued or status is not yet success, poll for outcome
+      if (!imageUrl && requestId && json.status !== 'failed' && json.status !== 'error') {
+        const baseQueueUrl = endpoint.replace(/\/+$/, '');
+        const pollUrl = baseQueueUrl.endsWith(requestId) ? baseQueueUrl : `${baseQueueUrl}/${requestId}`;
+        const startTime = Date.now();
+        const maxWaitMs = 120000;
+
+        while (Date.now() - startTime < maxWaitMs) {
+          if (ctx.signal?.aborted) {
+            throw new Error('Image generation aborted by user.');
+          }
+          await new Promise((r) => setTimeout(r, 2000));
+          ctx.log({
+            level: 'info',
+            message: `Waiting for GMI Cloud job ${requestId}${asyncCount > 1 ? ` [${idx}/${asyncCount}]` : ''} (status: ${json.status || 'processing'})...`,
+            nodeId: node.id,
+            nodeName: node.data.label,
+          });
+
+          const pollRes = await safeFetch(pollUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          });
+
+          if (pollRes.ok) {
+            json = await pollRes.json();
+            imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
+            if ((json.status === 'success' || !json.status) && imageUrl) {
+              break;
+            }
+            if (json.status === 'failed' || json.status === 'error') {
+              throw new Error(`GMI Cloud image generation failed: ${json.error || json.message || 'Task failed in queue'}`);
+            }
+          }
+        }
+      }
+
+      if (!imageUrl) {
+        throw new Error(json.error || json.message || 'No image was returned by GMI Cloud API.');
+      }
+
+      return {
+        url: imageUrl,
+        thumbnail: json.outcome?.thumbnail_image_url || imageUrl,
+        requestId,
+        mediaUrls: json.outcome?.media_urls || [{ url: imageUrl, type: 'image' }],
+        json,
+      };
+    };
+
     ctx.log({
       level: 'info',
-      message: `Generating image with GMI Cloud ${model} (${size}): "${prompt.slice(0, 45)}..."`,
+      message: asyncCount > 1
+        ? `Asynchronously generating ${asyncCount} images with GMI Cloud ${model} (${size})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 40)}..."`
+        : `Generating image with GMI Cloud ${model} (${size})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 45)}..."`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
@@ -2811,127 +2955,31 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
     ctx.updateNodeState(node.id, {
       status: 'running',
       dynamicState: {
-        message: `Submitting job to GMI Cloud (${model})...`,
-        detail: size,
+        message: asyncCount > 1 ? `Submitting ${asyncCount} async jobs to GMI Cloud...` : `Submitting job to GMI Cloud (${model})...`,
+        detail: `${size}${asyncCount > 1 ? ` • ${asyncCount}x async` : ''}`,
       },
     });
 
-    const requestBody = {
-      model,
-      payload: {
-        prompt,
-        size,
-      },
-    };
+    const taskPromises = Array.from({ length: asyncCount }, (_, i) => generateGmiSingle(i + 1));
+    const results = await Promise.all(taskPromises);
 
-    const res = await safeFetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    const imageUrls = results.map(r => r.url);
+    const primaryUrl = imageUrls[0];
 
-    if (!res.ok) {
-      const errText = await res.text();
-      let parsedMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        parsedMsg = errJson.message || errJson.error || errText;
-      } catch {}
-      const fullErr = `GMI Cloud Image Generation error (${res.status}): ${parsedMsg}`;
-      ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
-      throw new Error(fullErr);
-    }
-
-    let json = await res.json();
-    const requestId = json.request_id || json.id || json.outcome?.request_id;
-    let imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
-
-    // If job was queued or status is not yet success, poll for outcome
-    if (!imageUrl && requestId && json.status !== 'failed' && json.status !== 'error') {
-      const baseQueueUrl = endpoint.replace(/\/+$/, '');
-      const pollUrl = baseQueueUrl.endsWith(requestId) ? baseQueueUrl : `${baseQueueUrl}/${requestId}`;
-      const startTime = Date.now();
-      const maxWaitMs = 120000;
-
-      while (Date.now() - startTime < maxWaitMs) {
-        if (ctx.signal?.aborted) {
-          throw new Error('Image generation aborted by user.');
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-        ctx.log({
-          level: 'info',
-          message: `Waiting for GMI Cloud job ${requestId} (status: ${json.status || 'processing'})...`,
-          nodeId: node.id,
-          nodeName: node.data.label,
-        });
-
-        const pollRes = await safeFetch(pollUrl, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        });
-
-        if (pollRes.ok) {
-          json = await pollRes.json();
-          imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
-          if ((json.status === 'success' || !json.status) && imageUrl) {
-            break;
-          }
-          if (json.status === 'failed' || json.status === 'error') {
-            throw new Error(`GMI Cloud image generation failed: ${json.error || json.message || 'Task failed in queue'}`);
-          }
-        }
-      }
-    }
-
-    if (!imageUrl) {
-      throw new Error(json.error || json.message || 'No image was returned by GMI Cloud API.');
-    }
-
-    if (autoDownload && imageUrl) {
-      try {
-        const finalFilename = downloadFilename.endsWith('.png') || downloadFilename.endsWith('.jpg') || downloadFilename.endsWith('.webp')
-          ? downloadFilename
-          : `${downloadFilename}.png`;
-
-        if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
-          await new Promise<number | undefined>((resolve, reject) => {
-            chrome.downloads.download(
-              {
-                url: imageUrl,
-                filename: finalFilename,
-                saveAs: false,
-              },
-              (downloadId) => {
-                if (chrome.runtime?.lastError) {
-                  reject(new Error(chrome.runtime.lastError.message));
-                } else {
-                  resolve(downloadId);
-                }
-              }
-            );
-          });
-        } else if (typeof document !== 'undefined') {
-          const a = document.createElement('a');
-          a.href = imageUrl;
-          a.download = finalFilename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }
-        ctx.log({ level: 'info', message: `Downloaded generated image as ${finalFilename}`, nodeId: node.id });
-      } catch (dlErr: any) {
-        ctx.log({ level: 'warn', message: `Auto-download image warning: ${dlErr.message}`, nodeId: node.id });
+    if (autoDownload) {
+      for (let i = 0; i < imageUrls.length; i++) {
+        const baseName = downloadFilename.replace(/\.(png|jpg|jpeg|webp)$/i, '');
+        const ext = downloadFilename.match(/\.(png|jpg|jpeg|webp)$/i)?.[0] || '.png';
+        const finalFilename = imageUrls.length > 1 ? `${baseName}_${i + 1}${ext}` : `${baseName}${ext}`;
+        await downloadSingleImage(imageUrls[i], finalFilename);
       }
     }
 
     ctx.log({
       level: 'success',
-      message: `Image generated successfully via GMI Cloud (${model})`,
+      message: asyncCount > 1
+        ? `Successfully generated ${imageUrls.length} images asynchronously via GMI Cloud (${model})`
+        : `Image generated successfully via GMI Cloud (${model})`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
@@ -2939,22 +2987,27 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
     ctx.updateNodeState(node.id, {
       status: 'success',
       dynamicState: {
-        message: 'Image generated',
-        previewUrl: imageUrl,
-        detail: `${model} • ${size}`,
+        message: asyncCount > 1 ? `${imageUrls.length} images generated (async)` : 'Image generated',
+        previewUrl: primaryUrl,
+        detail: `${model} • ${size}${asyncCount > 1 ? ` • ${asyncCount} images` : ''}`,
       },
     });
 
     return {
       success: true,
-      output: imageUrl,
+      output: asyncCount > 1 ? imageUrls : primaryUrl,
       variables: {
-        [outputVariable]: imageUrl,
-        [`${outputVariable}_media_urls`]: json.outcome?.media_urls || [{ url: imageUrl, type: 'image' }],
-        [`${outputVariable}_thumbnail`]: json.outcome?.thumbnail_image_url || imageUrl,
-        [`${outputVariable}_request_id`]: json.request_id || json.outcome?.request_id || '',
+        [outputVariable]: primaryUrl,
+        [`${outputVariable}_images`]: imageUrls,
+        [`${outputVariable}_urls`]: imageUrls,
+        [`${outputVariable}_count`]: imageUrls.length,
+        [`${outputVariable}_media_urls`]: results.flatMap(r => r.mediaUrls),
+        [`${outputVariable}_thumbnail`]: results[0]?.thumbnail || primaryUrl,
+        [`${outputVariable}_request_id`]: results[0]?.requestId || '',
+        [`${outputVariable}_request_ids`]: results.map(r => r.requestId).filter(Boolean),
         [`${outputVariable}_revised_prompt`]: prompt,
       },
+      items: imageUrls.map((url, idx) => ({ id: idx + 1, url, prompt, index: idx })),
     };
   }
 
@@ -2970,9 +3023,70 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
 
   const endpoint = baseUrl.endsWith('/images/generations') ? baseUrl : `${baseUrl}/images/generations`;
 
+  const generateOpenAiSingle = async (idx: number) => {
+    const requestBody: Record<string, any> = {
+      prompt,
+      model,
+      n: 1,
+      size,
+      response_format: responseFormat,
+    };
+
+    if (model.toLowerCase().includes('dall-e-3')) {
+      requestBody.quality = quality;
+      requestBody.style = style;
+    }
+
+    if (inputImage) {
+      requestBody.image = inputImage;
+      requestBody.image_url = inputImage;
+      requestBody.init_image = inputImage;
+    }
+
+    const res = await safeFetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      let parsedMsg = errText;
+      try {
+        const errJson = JSON.parse(errText);
+        parsedMsg = errJson.error?.message || errJson.message || errText;
+      } catch {}
+      const fullErr = `OpenAI Image Generation error (${res.status}): ${parsedMsg}`;
+      ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
+      throw new Error(fullErr);
+    }
+
+    const json = await res.json();
+    const item = json.data?.[0];
+    if (!item) {
+      throw new Error('No image was returned by the image generation API.');
+    }
+
+    const imageUrl = responseFormat === 'b64_json' && item.b64_json
+      ? `data:image/png;base64,${item.b64_json}`
+      : (item.url || (item.b64_json ? `data:image/png;base64,${item.b64_json}` : ''));
+    const revisedPrompt = item.revised_prompt || prompt;
+
+    return {
+      url: imageUrl,
+      revisedPrompt,
+      rawItem: item,
+    };
+  };
+
   ctx.log({
     level: 'info',
-    message: `Generating image with ${model} (${size}, ${quality}): "${prompt.slice(0, 45)}..."`,
+    message: asyncCount > 1
+      ? `Asynchronously generating ${asyncCount} images with ${model} (${size}, ${quality})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 40)}..."`
+      : `Generating image with ${model} (${size}, ${quality})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 45)}..."`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -2980,96 +3094,32 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
   ctx.updateNodeState(node.id, {
     status: 'running',
     dynamicState: {
-      message: `Generating image with ${model}...`,
-      detail: `${size} • ${quality}`,
+      message: asyncCount > 1 ? `Generating ${asyncCount} images asynchronously...` : `Generating image with ${model}...`,
+      detail: `${size} • ${quality}${asyncCount > 1 ? ` • ${asyncCount}x async` : ''}`,
     },
   });
 
-  const requestBody: Record<string, any> = {
-    prompt,
-    model,
-    n: 1,
-    size,
-    response_format: responseFormat,
-  };
+  const taskPromises = Array.from({ length: asyncCount }, (_, i) => generateOpenAiSingle(i + 1));
+  const results = await Promise.all(taskPromises);
 
-  if (model.toLowerCase().includes('dall-e-3')) {
-    requestBody.quality = quality;
-    requestBody.style = style;
-  }
+  const imageUrls = results.map(r => r.url);
+  const primaryUrl = imageUrls[0];
+  const revisedPrompt = results[0]?.revisedPrompt || prompt;
 
-  const res = await safeFetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    let parsedMsg = errText;
-    try {
-      const errJson = JSON.parse(errText);
-      parsedMsg = errJson.error?.message || errJson.message || errText;
-    } catch {}
-    const fullErr = `OpenAI Image Generation error (${res.status}): ${parsedMsg}`;
-    ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
-    throw new Error(fullErr);
-  }
-
-  const json = await res.json();
-  const item = json.data?.[0];
-  if (!item) {
-    throw new Error('No image was returned by the image generation API.');
-  }
-
-  const imageUrl = responseFormat === 'b64_json' && item.b64_json
-    ? `data:image/png;base64,${item.b64_json}`
-    : (item.url || (item.b64_json ? `data:image/png;base64,${item.b64_json}` : ''));
-  const revisedPrompt = item.revised_prompt || prompt;
-
-  if (autoDownload && imageUrl) {
-    try {
-      const finalFilename = downloadFilename.endsWith('.png') || downloadFilename.endsWith('.jpg') || downloadFilename.endsWith('.webp')
-        ? downloadFilename
-        : `${downloadFilename}.png`;
-
-      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
-        await new Promise<number | undefined>((resolve, reject) => {
-          chrome.downloads.download(
-            {
-              url: imageUrl,
-              filename: finalFilename,
-              saveAs: false,
-            },
-            (downloadId) => {
-              if (chrome.runtime?.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-              } else {
-                resolve(downloadId);
-              }
-            }
-          );
-        });
-      } else if (typeof document !== 'undefined') {
-        const a = document.createElement('a');
-        a.href = imageUrl;
-        a.download = finalFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
-      ctx.log({ level: 'info', message: `Downloaded generated image as ${finalFilename}`, nodeId: node.id });
-    } catch (dlErr: any) {
-      ctx.log({ level: 'warn', message: `Auto-download image warning: ${dlErr.message}`, nodeId: node.id });
+  if (autoDownload) {
+    for (let i = 0; i < imageUrls.length; i++) {
+      const baseName = downloadFilename.replace(/\.(png|jpg|jpeg|webp)$/i, '');
+      const ext = downloadFilename.match(/\.(png|jpg|jpeg|webp)$/i)?.[0] || '.png';
+      const finalFilename = imageUrls.length > 1 ? `${baseName}_${i + 1}${ext}` : `${baseName}${ext}`;
+      await downloadSingleImage(imageUrls[i], finalFilename);
     }
   }
 
   ctx.log({
     level: 'success',
-    message: `Image generated successfully (${model})`,
+    message: asyncCount > 1
+      ? `Successfully generated ${imageUrls.length} images asynchronously (${model})`
+      : `Image generated successfully (${model})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -3077,19 +3127,23 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
   ctx.updateNodeState(node.id, {
     status: 'success',
     dynamicState: {
-      message: 'Image generated',
-      previewUrl: imageUrl,
-      detail: `${model} • ${size}`,
+      message: asyncCount > 1 ? `${imageUrls.length} images generated (async)` : 'Image generated',
+      previewUrl: primaryUrl,
+      detail: `${model} • ${size}${asyncCount > 1 ? ` • ${asyncCount} images` : ''}`,
     },
   });
 
   return {
     success: true,
-    output: imageUrl,
+    output: asyncCount > 1 ? imageUrls : primaryUrl,
     variables: {
-      [outputVariable]: imageUrl,
+      [outputVariable]: primaryUrl,
+      [`${outputVariable}_images`]: imageUrls,
+      [`${outputVariable}_urls`]: imageUrls,
+      [`${outputVariable}_count`]: imageUrls.length,
       [`${outputVariable}_revised_prompt`]: revisedPrompt,
     },
+    items: imageUrls.map((url, idx) => ({ id: idx + 1, url, prompt, index: idx })),
   };
 };
 

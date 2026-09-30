@@ -1359,6 +1359,8 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     icon: 'ImagePlus',
     defaultProperties: {
       prompt: 'A futuristic digital illustration of {{pageTitle}}',
+      inputImage: '', // Optional Image URL, base64 data URI, or {{variable}} for img2img / reference
+      asyncCount: 1, // 1 | 2 | 4 | 8 (asynchronous generation count)
       model: 'dall-e-3', // 'dall-e-3' | 'dall-e-2' | 'hy-image-v3.5-preview' | 'custom'
       size: '1024x1024',
       quality: 'standard',
