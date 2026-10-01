@@ -218,7 +218,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   useEffect(() => {
-    if (['telegram_message', 'telegram_watch', 'discord_message', 'slack_message'].includes(selectedNode?.data.type || '')) {
+    if (['telegram_message', 'telegram_watch', 'discord_message', 'discord_watch', 'slack_message', 'slack_watch'].includes(selectedNode?.data.type || '')) {
       loadBotCredentials();
     }
   }, [selectedNode?.id, selectedNode?.data.type]);
@@ -6117,30 +6117,107 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
 
             {/* Timeout & Polling Interval */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Timeout (seconds)</label>
-                <input
-                  type="number"
-                  min="5"
-                  max="3600"
-                  value={props.timeoutSeconds !== undefined ? props.timeoutSeconds : 60}
-                  onChange={(e) => handlePropChange('timeoutSeconds', Math.max(5, parseInt(e.target.value) || 60))}
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
-                />
+            {/* Timeout & Unlimited Wait Controls */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Waiting Timeout & Duration</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-amber-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.unlimitedTimeout}
+                    onChange={(e) => handlePropChange('unlimitedTimeout', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Remove Timer (Unlimited Time)</span>
+                </label>
               </div>
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Poll Interval (ms)</label>
-                <input
-                  type="number"
-                  min="500"
-                  max="10000"
-                  step="500"
-                  value={props.pollIntervalMs !== undefined ? props.pollIntervalMs : 2000}
-                  onChange={(e) => handlePropChange('pollIntervalMs', Math.max(500, parseInt(e.target.value) || 2000))}
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
-                />
+
+              {!props.unlimitedTimeout ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (seconds)</label>
+                    <input
+                      type="number"
+                      min="5"
+                      max="86400"
+                      value={props.timeoutSeconds !== undefined ? props.timeoutSeconds : 60}
+                      onChange={(e) => handlePropChange('timeoutSeconds', Math.max(5, parseInt(e.target.value) || 60))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Poll Interval (ms)</label>
+                    <input
+                      type="number"
+                      min="500"
+                      max="10000"
+                      step="500"
+                      value={props.pollIntervalMs !== undefined ? props.pollIntervalMs : 2000}
+                      onChange={(e) => handlePropChange('pollIntervalMs', Math.max(500, parseInt(e.target.value) || 2000))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed">
+                  Timer removed: The node will wait indefinitely for incoming Telegram messages without timing out or erroring.
+                </div>
+              )}
+            </div>
+
+            {/* Recurring / Continuous Listening Mode */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Recurring / Continuous Listening</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-indigo-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.recurring}
+                    onChange={(e) => handlePropChange('recurring', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Enable Recurring Loop</span>
+                </label>
               </div>
+
+              {props.recurring && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Watches continuously for each incoming message. Downstream nodes will execute for each received message, then loop back to listen again.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Max Messages (0 = unlimited)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={props.maxIterations !== undefined ? props.maxIterations : 0}
+                        onChange={(e) => handlePropChange('maxIterations', Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Delay Between Checks (ms)</label>
+                      <input
+                        type="number"
+                        min="100"
+                        max="60000"
+                        step="500"
+                        value={props.delayBetweenMs !== undefined ? props.delayBetweenMs : 1000}
+                        onChange={(e) => handlePropChange('delayBetweenMs', Math.max(100, parseInt(e.target.value) || 1000))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Checkbox Options */}
@@ -6581,6 +6658,398 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
+        {/* Watch Discord Updates Node */}
+        {selectedNode.data.type === 'discord_watch' && (
+          <div className="space-y-3">
+            {/* Header info card */}
+            <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-semibold text-indigo-400">
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                <span>Discord Live Message Watcher</span>
+              </div>
+              <p className="text-[11px] text-gray-300 leading-relaxed">
+                Listens for incoming messages in a Discord channel via your Discord Bot. When a message is posted, it extracts author, content, channel ID, attachments, and raw JSON into variables.
+              </p>
+            </div>
+
+            {/* Account / Credential Selector */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Discord Bot Account</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCredModalPlatform('discord');
+                    setIsCredModalOpen(true);
+                  }}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Manage Accounts
+                </button>
+              </div>
+
+              <select
+                value={props.credentialId || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  handlePropChange('credentialId', val);
+                  if (val) {
+                    const match = savedDiscordCreds.find((c) => c.id === val);
+                    if (match?.botToken) handlePropChange('botToken', match.botToken);
+                    if (match?.channelId && !props.channelId) handlePropChange('channelId', match.channelId);
+                  }
+                }}
+                className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none text-xs"
+              >
+                <option value="">Manual / Custom Credentials</option>
+                {savedDiscordCreds.map((cred) => (
+                  <option key={cred.id} value={cred.id}>
+                    Saved: {cred.name} ({cred.mode === 'bot' ? 'Bot Token' : 'Webhook'})
+                  </option>
+                ))}
+              </select>
+
+              {(!props.credentialId || props.credentialId === '') && (
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-gray-400">Bot Token</label>
+                      <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                    </div>
+                    <input
+                      type="password"
+                      value={props.botToken || ''}
+                      onChange={(e) => handlePropChange('botToken', e.target.value)}
+                      placeholder="Discord Bot Token or {{discordToken}}"
+                      className="w-full bg-[#161a24] text-white p-2 rounded-lg border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      Obtain from the <span className="text-gray-300">Discord Developer Portal</span> under Bot &gt; Token.
+                    </p>
+                  </div>
+
+                  {props.botToken && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const accountName = prompt('Enter a name for this Discord account:', 'My Discord Bot');
+                        if (accountName) {
+                          const saved = await saveCredential({
+                            platform: 'discord',
+                            name: accountName,
+                            mode: 'bot',
+                            botToken: props.botToken,
+                            channelId: props.channelId,
+                          });
+                          await loadBotCredentials();
+                          handlePropChange('credentialId', saved.id);
+                        }
+                      }}
+                      className="w-full py-1 px-2 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Bookmark className="w-3 h-3" /> Save this token as a reusable account
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Channel ID */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Discord Channel ID</label>
+                <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <input
+                type="text"
+                value={props.channelId || ''}
+                onChange={(e) => handlePropChange('channelId', e.target.value)}
+                placeholder="123456789012345678 or {{channelId}}"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Right-click the Discord channel with Developer Mode enabled and click &ldquo;Copy Channel ID&rdquo;.
+              </p>
+            </div>
+
+            {/* Filter by User ID */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Filter by User ID / Username (Optional)</label>
+                <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <input
+                type="text"
+                value={props.allowedUserId || ''}
+                onChange={(e) => handlePropChange('allowedUserId', e.target.value)}
+                placeholder="Leave blank for any user, or user_id / username"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+            </div>
+
+            {/* Timeout & Unlimited Wait Controls */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Waiting Timeout & Duration</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-amber-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.unlimitedTimeout}
+                    onChange={(e) => handlePropChange('unlimitedTimeout', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Remove Timer (Unlimited Time)</span>
+                </label>
+              </div>
+
+              {!props.unlimitedTimeout ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (seconds)</label>
+                    <input
+                      type="number"
+                      min="5"
+                      max="86400"
+                      value={props.timeoutSeconds !== undefined ? props.timeoutSeconds : 60}
+                      onChange={(e) => handlePropChange('timeoutSeconds', Math.max(5, parseInt(e.target.value) || 60))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Poll Interval (ms)</label>
+                    <input
+                      type="number"
+                      min="500"
+                      max="10000"
+                      step="500"
+                      value={props.pollIntervalMs !== undefined ? props.pollIntervalMs : 2000}
+                      onChange={(e) => handlePropChange('pollIntervalMs', Math.max(500, parseInt(e.target.value) || 2000))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed">
+                  Timer removed: The node will wait indefinitely for incoming Discord messages without timing out or erroring.
+                </div>
+              )}
+            </div>
+
+            {/* Recurring / Continuous Listening Mode */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Recurring / Continuous Listening</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-indigo-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.recurring}
+                    onChange={(e) => handlePropChange('recurring', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Enable Recurring Loop</span>
+                </label>
+              </div>
+
+              {props.recurring && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Watches continuously for each incoming Discord message. Downstream nodes will execute for each message, then loop back to listen again.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Max Messages (0 = unlimited)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={props.maxIterations !== undefined ? props.maxIterations : 0}
+                        onChange={(e) => handlePropChange('maxIterations', Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Delay Between Checks (ms)</label>
+                      <input
+                        type="number"
+                        min="100"
+                        max="60000"
+                        step="500"
+                        value={props.delayBetweenMs !== undefined ? props.delayBetweenMs : 1000}
+                        onChange={(e) => handlePropChange('delayBetweenMs', Math.max(100, parseInt(e.target.value) || 1000))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Checkbox Options */}
+            <div className="pt-2 border-t border-[#1c2230] space-y-2">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.onlyNewMessages !== false}
+                  onChange={(e) => handlePropChange('onlyNewMessages', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Only New Messages (ignore messages prior to node start)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.ignoreBots !== false}
+                  onChange={(e) => handlePropChange('ignoreBots', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Ignore Bot Messages (prevent infinite feedback loops)</span>
+              </label>
+            </div>
+
+            {/* Output Variables Configuration */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2.5">
+              <div className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Extracted Variables Mapping</span>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">Message Content Variable</label>
+                <input
+                  type="text"
+                  value={props.textVariable || 'discordMessage'}
+                  onChange={(e) => handlePropChange('textVariable', e.target.value)}
+                  placeholder="discordMessage"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Author Username</label>
+                  <input
+                    type="text"
+                    value={props.authorVariable || 'discordUsername'}
+                    onChange={(e) => handlePropChange('authorVariable', e.target.value)}
+                    placeholder="discordUsername"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Author Display Name</label>
+                  <input
+                    type="text"
+                    value={props.senderNameVariable || 'discordSenderName'}
+                    onChange={(e) => handlePropChange('senderNameVariable', e.target.value)}
+                    placeholder="discordSenderName"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Author ID</label>
+                  <input
+                    type="text"
+                    value={props.authorIdVariable || 'discordAuthorId'}
+                    onChange={(e) => handlePropChange('authorIdVariable', e.target.value)}
+                    placeholder="discordAuthorId"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Channel ID Variable</label>
+                  <input
+                    type="text"
+                    value={props.channelIdVariable || 'discordChannelId'}
+                    onChange={(e) => handlePropChange('channelIdVariable', e.target.value)}
+                    placeholder="discordChannelId"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Attachment / Image URL</label>
+                  <input
+                    type="text"
+                    value={props.attachmentUrlVariable || 'discordAttachmentUrl'}
+                    onChange={(e) => handlePropChange('attachmentUrlVariable', e.target.value)}
+                    placeholder="discordAttachmentUrl"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Raw Message JSON</label>
+                  <input
+                    type="text"
+                    value={props.rawUpdateVariable || 'discordUpdate'}
+                    onChange={(e) => handlePropChange('rawUpdateVariable', e.target.value)}
+                    placeholder="discordUpdate"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Live Status or Last Received Message Preview */}
+            {(() => {
+              const liveMsg =
+                runtimeState?.output ||
+                (props.textVariable && variables[props.textVariable]) ||
+                (props.outputVariable && variables[props.outputVariable]);
+              const detail =
+                runtimeState?.dynamicState?.detail ||
+                (props.channelIdVariable && variables[props.channelIdVariable]
+                  ? `From ${variables[props.senderNameVariable || 'discordSenderName'] || variables[props.authorVariable || 'discordUsername'] || 'User'} in #${variables[props.channelIdVariable]}`
+                  : undefined);
+
+              if (!liveMsg) return null;
+
+              return (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5" /> Discord Message Received
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)
+                        );
+                      }}
+                      className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      <Copy className="w-2.5 h-2.5" /> Copy Text
+                    </button>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-emerald-500/20 text-xs font-mono text-emerald-200 break-words max-h-32 overflow-y-auto">
+                    {typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)}
+                  </div>
+                  {detail && (
+                    <p className="text-[10px] text-gray-400 font-mono">
+                      {detail}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         {/* Slack Message Node */}
         {selectedNode.data.type === 'slack_message' && (
           <div className="space-y-3">
@@ -6855,6 +7324,374 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
               />
             </div>
+          </div>
+        )}
+
+        {/* Watch Slack Updates Node */}
+        {selectedNode.data.type === 'slack_watch' && (
+          <div className="space-y-3">
+            {/* Header info card */}
+            <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                <span>Slack Live Message Watcher</span>
+              </div>
+              <p className="text-[11px] text-gray-300 leading-relaxed">
+                Listens for incoming messages in a Slack channel using your Slack Bot Token. When a message is posted, it extracts sender, text, channel ID, timestamp, and raw JSON into variables.
+              </p>
+            </div>
+
+            {/* Account / Credential Selector */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Slack Workspace Account</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCredModalPlatform('slack');
+                    setIsCredModalOpen(true);
+                  }}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Manage Accounts
+                </button>
+              </div>
+
+              <select
+                value={props.credentialId || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  handlePropChange('credentialId', val);
+                  if (val) {
+                    const match = savedSlackCreds.find((c) => c.id === val);
+                    if (match?.botToken) handlePropChange('botToken', match.botToken);
+                    if (match?.channel && !props.channel) handlePropChange('channel', match.channel);
+                  }
+                }}
+                className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none text-xs"
+              >
+                <option value="">Manual / Custom Credentials</option>
+                {savedSlackCreds.map((cred) => (
+                  <option key={cred.id} value={cred.id}>
+                    Saved: {cred.name} ({cred.mode === 'bot' ? 'Bot OAuth Token' : 'Webhook'})
+                  </option>
+                ))}
+              </select>
+
+              {(!props.credentialId || props.credentialId === '') && (
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-gray-400">Slack Bot User OAuth Token</label>
+                      <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                    </div>
+                    <input
+                      type="password"
+                      value={props.botToken || ''}
+                      onChange={(e) => handlePropChange('botToken', e.target.value)}
+                      placeholder="xoxb-1234567890-..."
+                      className="w-full bg-[#161a24] text-white p-2 rounded-lg border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      Requires <span className="text-gray-300 font-mono">channels:history</span> scope in your Slack App OAuth permissions.
+                    </p>
+                  </div>
+
+                  {props.botToken && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const accountName = prompt('Enter a name for this Slack account:', 'My Slack Workspace');
+                        if (accountName) {
+                          const saved = await saveCredential({
+                            platform: 'slack',
+                            name: accountName,
+                            mode: 'bot',
+                            botToken: props.botToken,
+                            channel: props.channel,
+                          });
+                          await loadBotCredentials();
+                          handlePropChange('credentialId', saved.id);
+                        }
+                      }}
+                      className="w-full py-1 px-2 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Bookmark className="w-3 h-3" /> Save this token as a reusable account
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Channel */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Slack Channel (ID or Name)</label>
+                <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <input
+                type="text"
+                value={props.channel || ''}
+                onChange={(e) => handlePropChange('channel', e.target.value)}
+                placeholder="C0123456789, #general, or {{slackChannel}}"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Channel ID (e.g. C0123456789) is recommended. To get it, right-click channel name in Slack &gt; Copy link &gt; extract the ID at end of link.
+              </p>
+            </div>
+
+            {/* Filter by User ID */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Filter by Sender User ID (Optional)</label>
+                <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <input
+                type="text"
+                value={props.allowedUserId || ''}
+                onChange={(e) => handlePropChange('allowedUserId', e.target.value)}
+                placeholder="Leave blank for any user, or U01234567"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+            </div>
+
+            {/* Timeout & Unlimited Wait Controls */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Waiting Timeout & Duration</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-amber-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.unlimitedTimeout}
+                    onChange={(e) => handlePropChange('unlimitedTimeout', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Remove Timer (Unlimited Time)</span>
+                </label>
+              </div>
+
+              {!props.unlimitedTimeout ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Timeout (seconds)</label>
+                    <input
+                      type="number"
+                      min="5"
+                      max="86400"
+                      value={props.timeoutSeconds !== undefined ? props.timeoutSeconds : 60}
+                      onChange={(e) => handlePropChange('timeoutSeconds', Math.max(5, parseInt(e.target.value) || 60))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-0.5">Poll Interval (ms)</label>
+                    <input
+                      type="number"
+                      min="500"
+                      max="10000"
+                      step="500"
+                      value={props.pollIntervalMs !== undefined ? props.pollIntervalMs : 2000}
+                      onChange={(e) => handlePropChange('pollIntervalMs', Math.max(500, parseInt(e.target.value) || 2000))}
+                      className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed">
+                  Timer removed: The node will wait indefinitely for incoming Slack messages without timing out or erroring.
+                </div>
+              )}
+            </div>
+
+            {/* Recurring / Continuous Listening Mode */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Recurring / Continuous Listening</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-indigo-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!props.recurring}
+                    onChange={(e) => handlePropChange('recurring', e.target.checked)}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                  />
+                  <span className="text-[11px] font-medium">Enable Recurring Loop</span>
+                </label>
+              </div>
+
+              {props.recurring && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Watches continuously for each incoming Slack message. Downstream nodes will execute for each message, then loop back to listen again.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Max Messages (0 = unlimited)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={props.maxIterations !== undefined ? props.maxIterations : 0}
+                        onChange={(e) => handlePropChange('maxIterations', Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-400 mb-0.5">Delay Between Checks (ms)</label>
+                      <input
+                        type="number"
+                        min="100"
+                        max="60000"
+                        step="500"
+                        value={props.delayBetweenMs !== undefined ? props.delayBetweenMs : 1000}
+                        onChange={(e) => handlePropChange('delayBetweenMs', Math.max(100, parseInt(e.target.value) || 1000))}
+                        className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Checkbox Options */}
+            <div className="pt-2 border-t border-[#1c2230] space-y-2">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.onlyNewMessages !== false}
+                  onChange={(e) => handlePropChange('onlyNewMessages', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Only New Messages (ignore messages prior to node start)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.ignoreBots !== false}
+                  onChange={(e) => handlePropChange('ignoreBots', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Ignore Bot Messages (prevent infinite feedback loops)</span>
+              </label>
+            </div>
+
+            {/* Output Variables Configuration */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2.5">
+              <div className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Extracted Variables Mapping</span>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">Message Content Variable</label>
+                <input
+                  type="text"
+                  value={props.textVariable || 'slackMessage'}
+                  onChange={(e) => handlePropChange('textVariable', e.target.value)}
+                  placeholder="slackMessage"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Sender User ID Variable</label>
+                  <input
+                    type="text"
+                    value={props.userIdVariable || 'slackUserId'}
+                    onChange={(e) => handlePropChange('userIdVariable', e.target.value)}
+                    placeholder="slackUserId"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Channel Variable</label>
+                  <input
+                    type="text"
+                    value={props.channelVariable || 'slackChannel'}
+                    onChange={(e) => handlePropChange('channelVariable', e.target.value)}
+                    placeholder="slackChannel"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">Timestamp (ts) Variable</label>
+                <input
+                  type="text"
+                  value={props.timestampVariable || 'slackTimestamp'}
+                  onChange={(e) => handlePropChange('timestampVariable', e.target.value)}
+                  placeholder="slackTimestamp"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">Raw Update JSON</label>
+                <input
+                  type="text"
+                  value={props.rawUpdateVariable || 'slackUpdate'}
+                  onChange={(e) => handlePropChange('rawUpdateVariable', e.target.value)}
+                  placeholder="slackUpdate"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Live Status or Last Received Message Preview */}
+            {(() => {
+              const liveMsg =
+                runtimeState?.output ||
+                (props.textVariable && variables[props.textVariable]) ||
+                (props.outputVariable && variables[props.outputVariable]);
+              const detail =
+                runtimeState?.dynamicState?.detail ||
+                (props.channelVariable && variables[props.channelVariable]
+                  ? `From ${variables[props.userIdVariable || 'slackUserId'] || 'User'} in ${variables[props.channelVariable]}`
+                  : undefined);
+
+              if (!liveMsg) return null;
+
+              return (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5" /> Slack Message Received
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)
+                        );
+                      }}
+                      className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      <Copy className="w-2.5 h-2.5" /> Copy Text
+                    </button>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-emerald-500/20 text-xs font-mono text-emerald-200 break-words max-h-32 overflow-y-auto">
+                    {typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)}
+                  </div>
+                  {detail && (
+                    <p className="text-[10px] text-gray-400 font-mono">
+                      {detail}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 

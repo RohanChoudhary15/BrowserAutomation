@@ -54,6 +54,9 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'twitter_scraper') summary = `X/Twitter: ${data.properties?.query ? `"${data.properties?.query}"` : `@${data.properties?.username || 'user'}`}`;
   else if (data.type === 'google_search_scraper') summary = `Google Search: "${data.properties?.query || 'query'}"`;
   else if (data.type === 'get_page_info') summary = `Page Info -> {{${data.properties?.outputVariable || 'pageInfo'}}}`;
+  else if (data.type === 'telegram_watch') summary = `${data.properties?.recurring ? 'Recurring: ' : ''}Watch Telegram${data.properties?.unlimitedTimeout ? ' (Unlimited)' : ` (${data.properties?.timeoutSeconds || 60}s)`}`;
+  else if (data.type === 'discord_watch') summary = `${data.properties?.recurring ? 'Recurring: ' : ''}Watch Discord${data.properties?.unlimitedTimeout ? ' (Unlimited)' : ` (${data.properties?.timeoutSeconds || 60}s)`}`;
+  else if (data.type === 'slack_watch') summary = `${data.properties?.recurring ? 'Recurring: ' : ''}Watch Slack${data.properties?.unlimitedTimeout ? ' (Unlimited)' : ` (${data.properties?.timeoutSeconds || 60}s)`}`;
   else if (data.type === 'get_url_details') summary = `URL: ${data.properties?.sourceUrl || 'current'}${data.properties?.targetParam ? ` (${data.properties.targetParam})` : ''}`;
   else if (data.type === 'date_time') summary = `${data.properties?.mode || 'current_time'} (${data.properties?.format || 'iso'})`;
   else if (data.type === 'cookie_manager') summary = `${(data.properties?.action || 'get').toUpperCase()}: ${data.properties?.name || 'all'}`;
@@ -313,11 +316,36 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
       )}
 
       {/* Source Handle (Output) */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!w-3 !h-3 !bg-[#323c52] !border-2 !border-[#11141c] hover:!bg-indigo-400 transition-colors"
-      />
+      {data.properties?.recurring ? (
+        <div className="mt-2 pt-1 border-t border-[#1c2230]">
+          <div className="flex items-center justify-between px-1 text-[9px] font-semibold mb-1">
+            <span className="text-indigo-400">On Message</span>
+            <span className="text-gray-400">Done</span>
+          </div>
+          <Handle
+            id="loop_body"
+            type="source"
+            position={Position.Bottom}
+            style={{ left: '25%' }}
+            className="!w-3 !h-3 !bg-indigo-500 !border-2 !border-[#11141c] hover:!bg-indigo-400 transition-colors"
+            title="Executed for every incoming message"
+          />
+          <Handle
+            id="loop_done"
+            type="source"
+            position={Position.Bottom}
+            style={{ left: '75%' }}
+            className="!w-3 !h-3 !bg-gray-400 !border-2 !border-[#11141c] hover:!bg-gray-300 transition-colors"
+            title="Executed when recurring listener completes"
+          />
+        </div>
+      ) : (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="!w-3 !h-3 !bg-[#323c52] !border-2 !border-[#11141c] hover:!bg-indigo-400 transition-colors"
+        />
+      )}
     </div>
   );
 });

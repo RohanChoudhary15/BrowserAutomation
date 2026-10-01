@@ -3421,7 +3421,8 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
 
   const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
   const rawAllowedChatId = node.data.properties.allowedChatId || node.data.properties.chatId || '';
-  const timeoutSeconds = Math.max(5, Number(node.data.properties.timeoutSeconds) || 60);
+  const unlimitedTimeout = !!node.data.properties.unlimitedTimeout || Number(node.data.properties.timeoutSeconds) === 0;
+  const timeoutSeconds = unlimitedTimeout ? 0 : Math.max(5, Number(node.data.properties.timeoutSeconds) || 60);
   const pollIntervalMs = Math.max(500, Number(node.data.properties.pollIntervalMs) || 1500);
   const markAsRead = node.data.properties.markAsRead !== false;
   const onlyNewMessages = node.data.properties.onlyNewMessages !== false;
@@ -3442,7 +3443,7 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
 
   ctx.log({
     level: 'info',
-    message: `Waiting for Telegram messages (Timeout: ${timeoutSeconds}s)${allowedChatId ? ` filtered to chat: ${allowedChatId}` : ''}...`,
+    message: `Waiting for Telegram messages (${unlimitedTimeout ? 'Unlimited time' : `Timeout: ${timeoutSeconds}s`})${allowedChatId ? ` filtered to chat: ${allowedChatId}` : ''}...`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -3450,8 +3451,8 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
   ctx.updateNodeState(node.id, {
     status: 'running',
     dynamicState: {
-      message: 'Listening for Telegram messages...',
-      remainingSeconds: timeoutSeconds,
+      message: unlimitedTimeout ? 'Listening for Telegram (unlimited time)...' : 'Listening for Telegram messages...',
+      remainingSeconds: unlimitedTimeout ? undefined : timeoutSeconds,
     },
   });
 
@@ -3473,19 +3474,19 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
   }
 
   const startTime = Date.now();
-  const maxEndTime = startTime + timeoutSeconds * 1000;
+  const maxEndTime = unlimitedTimeout ? Infinity : startTime + timeoutSeconds * 1000;
 
   while (Date.now() < maxEndTime) {
     if (ctx.signal?.aborted) {
       throw new Error('Telegram message watcher was cancelled.');
     }
 
-    const remainingSec = Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000));
+    const remainingSec = unlimitedTimeout ? '∞' : `${Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000))}s`;
     ctx.updateNodeState(node.id, {
       status: 'running',
       dynamicState: {
-        message: `Listening (${remainingSec}s left)...`,
-        remainingSeconds: remainingSec,
+        message: unlimitedTimeout ? 'Listening for Telegram (unlimited)...' : `Listening (${remainingSec} left)...`,
+        remainingSeconds: unlimitedTimeout ? undefined : Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000)),
       },
     });
 
@@ -3568,6 +3569,9 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 2000)));
   }
 
+  if (unlimitedTimeout) {
+    throw new Error('Telegram message watcher stopped.');
+  }
   throw new Error(`Timed out after ${timeoutSeconds}s waiting for a Telegram message.`);
 };
 
@@ -3736,6 +3740,179 @@ export const executeDiscordMessage: NodeExecutor = async (node, ctx) => {
     output: resData,
     variables: { [outputVariable]: resData },
   };
+};
+
+export const executeDiscordWatch: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawChannelId = node.data.properties.channelId || savedCred?.channelId || '';
+  const rawAllowedUserId = node.data.properties.allowedUserId || '';
+  const unlimitedTimeout = !!node.data.properties.unlimitedTimeout || Number(node.data.properties.timeoutSeconds) === 0;
+  const timeoutSeconds = unlimitedTimeout ? 0 : Math.max(5, Number(node.data.properties.timeoutSeconds) || 60);
+  const pollIntervalMs = Math.max(20, Number(node.data.properties.pollIntervalMs) || 2000);
+  const onlyNewMessages = node.data.properties.onlyNewMessages !== false;
+  const ignoreBots = node.data.properties.ignoreBots !== false;
+
+  const textVariable = node.data.properties.textVariable || 'discordMessage';
+  const authorVariable = node.data.properties.authorVariable || 'discordUsername';
+  const senderNameVariable = node.data.properties.senderNameVariable || 'discordSenderName';
+  const authorIdVariable = node.data.properties.authorIdVariable || 'discordAuthorId';
+  const channelIdVariable = node.data.properties.channelIdVariable || 'discordChannelId';
+  const attachmentUrlVariable = node.data.properties.attachmentUrlVariable || 'discordAttachmentUrl';
+  const rawUpdateVariable = node.data.properties.rawUpdateVariable || 'discordUpdate';
+  const outputVariable = node.data.properties.outputVariable || 'discordMessage';
+
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const channelId = String(interpolateVariables(rawChannelId, ctx.variables)).trim();
+  const allowedUserId = String(interpolateVariables(rawAllowedUserId, ctx.variables)).trim();
+
+  if (!botToken) {
+    throw new Error('Discord Bot Token is required to watch for updates. Provide a bot token or select a saved Discord credential.');
+  }
+  if (!channelId) {
+    throw new Error('Discord Channel ID is required to watch for messages.');
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Waiting for Discord messages in channel ${channelId} (${unlimitedTimeout ? 'Unlimited time' : `Timeout: ${timeoutSeconds}s`})${allowedUserId ? ` filtered to user: ${allowedUserId}` : ''}...`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: 'Listening for Discord messages...',
+      remainingSeconds: unlimitedTimeout ? undefined : timeoutSeconds,
+    },
+  });
+
+  // 1. Initial poll to establish baseline newest message ID if onlyNewMessages is true
+  let lastMessageId: string | undefined = undefined;
+  if (onlyNewMessages) {
+    try {
+      const initUrl = `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`;
+      const initRes = await safeFetch(initUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: ctx.signal,
+      });
+      if (initRes.ok) {
+        const initData = await initRes.json();
+        if (Array.isArray(initData) && initData.length > 0 && initData[0].id) {
+          lastMessageId = initData[0].id;
+        }
+      }
+    } catch {
+      // ignore init offset error
+    }
+  }
+
+  const startTime = Date.now();
+  const maxEndTime = unlimitedTimeout ? Infinity : startTime + timeoutSeconds * 1000;
+
+  while (Date.now() < maxEndTime) {
+    if (ctx.signal?.aborted) {
+      throw new Error('Discord message watcher was cancelled.');
+    }
+
+    const remainingSec = unlimitedTimeout ? '∞' : `${Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000))}s`;
+    ctx.updateNodeState(node.id, {
+      status: 'running',
+      dynamicState: {
+        message: unlimitedTimeout ? 'Listening for Discord (unlimited)...' : `Listening (${remainingSec} left)...`,
+        remainingSeconds: unlimitedTimeout ? undefined : Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000)),
+      },
+    });
+
+    try {
+      const afterParam = lastMessageId ? `&after=${lastMessageId}` : '';
+      const pollUrl = `https://discord.com/api/v10/channels/${channelId}/messages?limit=10${afterParam}`;
+      const res = await safeFetch(pollUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: ctx.signal,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          // Discord returns messages in reverse chronological order (newest first).
+          // Reverse them so we process in order of arrival.
+          const sorted = [...data].reverse();
+          for (const msg of sorted) {
+            if (msg.id) {
+              lastMessageId = msg.id;
+            }
+
+            if (ignoreBots && msg.author?.bot) {
+              continue;
+            }
+
+            const authorId = String(msg.author?.id ?? '');
+            if (allowedUserId && authorId !== allowedUserId && msg.author?.username !== allowedUserId) {
+              continue;
+            }
+
+            const messageText = msg.content || '';
+            const authorUsername = msg.author?.username || '';
+            const authorDisplayName = msg.author?.global_name || authorUsername;
+            const messageId = msg.id;
+            const timestamp = msg.timestamp || new Date().toISOString();
+            const attachmentUrl = msg.attachments?.[0]?.url || '';
+
+            ctx.log({
+              level: 'success',
+              message: `Received Discord message from ${authorDisplayName} (#${channelId}): "${messageText.slice(0, 50)}"`,
+              nodeId: node.id,
+              nodeName: node.data.label,
+            });
+
+            ctx.updateNodeState(node.id, {
+              status: 'success',
+              output: messageText,
+              dynamicState: {
+                message: `Received: "${messageText.slice(0, 24)}"`,
+                detail: `From ${authorDisplayName} in #${channelId}`,
+              },
+            });
+
+            const resultVariables: Record<string, any> = {
+              [textVariable]: messageText,
+              [authorVariable]: authorUsername,
+              [senderNameVariable]: authorDisplayName,
+              [authorIdVariable]: authorId,
+              [channelIdVariable]: channelId,
+              [attachmentUrlVariable]: attachmentUrl,
+              [`${textVariable}_id`]: messageId,
+              [`${textVariable}_timestamp`]: timestamp,
+              [rawUpdateVariable]: msg,
+              [outputVariable]: messageText,
+            };
+            Object.assign(ctx.variables, resultVariables);
+
+            return {
+              success: true,
+              output: messageText,
+              variables: resultVariables,
+            };
+          }
+        }
+      }
+    } catch (pollErr: any) {
+      if (ctx.signal?.aborted) throw pollErr;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 3000)));
+  }
+
+  if (unlimitedTimeout) {
+    throw new Error('Discord message watcher stopped.');
+  }
+  throw new Error(`Timed out after ${timeoutSeconds}s waiting for a Discord message.`);
 };
 
 export const executeSlackMessage: NodeExecutor = async (node, ctx) => {
@@ -3934,6 +4111,173 @@ export const executeSlackMessage: NodeExecutor = async (node, ctx) => {
     output: resData,
     variables: { [outputVariable]: resData },
   };
+};
+
+export const executeSlackWatch: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawChannel = node.data.properties.channel || savedCred?.channel || '';
+  const rawAllowedUserId = node.data.properties.allowedUserId || '';
+  const unlimitedTimeout = !!node.data.properties.unlimitedTimeout || Number(node.data.properties.timeoutSeconds) === 0;
+  const timeoutSeconds = unlimitedTimeout ? 0 : Math.max(5, Number(node.data.properties.timeoutSeconds) || 60);
+  const pollIntervalMs = Math.max(20, Number(node.data.properties.pollIntervalMs) || 2000);
+  const onlyNewMessages = node.data.properties.onlyNewMessages !== false;
+  const ignoreBots = node.data.properties.ignoreBots !== false;
+
+  const textVariable = node.data.properties.textVariable || 'slackMessage';
+  const userIdVariable = node.data.properties.userIdVariable || 'slackUserId';
+  const channelVariable = node.data.properties.channelVariable || 'slackChannel';
+  const timestampVariable = node.data.properties.timestampVariable || 'slackTimestamp';
+  const rawUpdateVariable = node.data.properties.rawUpdateVariable || 'slackUpdate';
+  const outputVariable = node.data.properties.outputVariable || 'slackMessage';
+
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const channel = String(interpolateVariables(rawChannel, ctx.variables)).trim();
+  const allowedUserId = String(interpolateVariables(rawAllowedUserId, ctx.variables)).trim();
+
+  if (!botToken) {
+    throw new Error('Slack Bot Token (xoxb-...) is required to watch for Slack messages. Provide a bot token or select a saved Slack credential.');
+  }
+  if (!channel) {
+    throw new Error('Slack Channel (ID or name) is required to watch for messages.');
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Waiting for Slack messages in ${channel} (${unlimitedTimeout ? 'Unlimited time' : `Timeout: ${timeoutSeconds}s`})${allowedUserId ? ` filtered to user: ${allowedUserId}` : ''}...`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: 'Listening for Slack messages...',
+      remainingSeconds: unlimitedTimeout ? undefined : timeoutSeconds,
+    },
+  });
+
+  // 1. Initial poll to establish baseline timestamp if onlyNewMessages is true
+  let lastTs: string = onlyNewMessages ? (Date.now() / 1000).toFixed(6) : '0';
+  if (onlyNewMessages) {
+    try {
+      const initUrl = `https://slack.com/api/conversations.history?channel=${encodeURIComponent(channel)}&limit=1`;
+      const initRes = await safeFetch(initUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${botToken}` },
+        signal: ctx.signal,
+      });
+      if (initRes.ok) {
+        const initData = await initRes.json();
+        if (initData.ok && Array.isArray(initData.messages) && initData.messages.length > 0 && initData.messages[0].ts) {
+          lastTs = initData.messages[0].ts;
+        }
+      }
+    } catch {
+      // ignore init offset error
+    }
+  }
+
+  const startTime = Date.now();
+  const maxEndTime = unlimitedTimeout ? Infinity : startTime + timeoutSeconds * 1000;
+
+  while (Date.now() < maxEndTime) {
+    if (ctx.signal?.aborted) {
+      throw new Error('Slack message watcher was cancelled.');
+    }
+
+    const remainingSec = unlimitedTimeout ? '∞' : `${Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000))}s`;
+    ctx.updateNodeState(node.id, {
+      status: 'running',
+      dynamicState: {
+        message: unlimitedTimeout ? 'Listening for Slack (unlimited)...' : `Listening (${remainingSec} left)...`,
+        remainingSeconds: unlimitedTimeout ? undefined : Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000)),
+      },
+    });
+
+    try {
+      const oldestParam = lastTs && lastTs !== '0' ? `&oldest=${lastTs}` : '';
+      const pollUrl = `https://slack.com/api/conversations.history?channel=${encodeURIComponent(channel)}${oldestParam}&limit=10`;
+      const res = await safeFetch(pollUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${botToken}` },
+        signal: ctx.signal,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.messages) && data.messages.length > 0) {
+          // Slack returns newest first; reverse so oldest unread is processed first
+          const sorted = [...data.messages].reverse();
+          for (const msg of sorted) {
+            // Skip the baseline message if its ts is older or equal to lastTs
+            if (lastTs !== '0' && msg.ts && Number(msg.ts) <= Number(lastTs)) {
+              continue;
+            }
+            if (msg.ts) {
+              lastTs = msg.ts;
+            }
+
+            if (ignoreBots && (msg.subtype === 'bot_message' || msg.bot_id)) {
+              continue;
+            }
+
+            const senderUser = String(msg.user || msg.username || '');
+            if (allowedUserId && senderUser !== allowedUserId) {
+              continue;
+            }
+
+            const messageText = msg.text || '';
+            const timestamp = msg.ts ? new Date(Number(msg.ts) * 1000).toISOString() : new Date().toISOString();
+
+            ctx.log({
+              level: 'success',
+              message: `Received Slack message from ${senderUser} in ${channel}: "${messageText.slice(0, 50)}"`,
+              nodeId: node.id,
+              nodeName: node.data.label,
+            });
+
+            ctx.updateNodeState(node.id, {
+              status: 'success',
+              output: messageText,
+              dynamicState: {
+                message: `Received: "${messageText.slice(0, 24)}"`,
+                detail: `From ${senderUser} in ${channel}`,
+              },
+            });
+
+            const resultVariables: Record<string, any> = {
+              [textVariable]: messageText,
+              [userIdVariable]: senderUser,
+              [channelVariable]: channel,
+              [timestampVariable]: msg.ts,
+              [`${textVariable}_timestamp`]: timestamp,
+              [rawUpdateVariable]: msg,
+              [outputVariable]: messageText,
+            };
+            Object.assign(ctx.variables, resultVariables);
+
+            return {
+              success: true,
+              output: messageText,
+              variables: resultVariables,
+            };
+          }
+        }
+      }
+    } catch (pollErr: any) {
+      if (ctx.signal?.aborted) throw pollErr;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 3000)));
+  }
+
+  if (unlimitedTimeout) {
+    throw new Error('Slack message watcher stopped.');
+  }
+  throw new Error(`Timed out after ${timeoutSeconds}s waiting for a Slack message.`);
 };
 
 // ----------------- NEW DYNAMIC EXECUTORS -----------------
@@ -7618,7 +7962,9 @@ export const executors: Record<string, NodeExecutor> = {
   telegram_message: executeTelegramMessage,
   telegram_watch: executeTelegramWatch,
   discord_message: executeDiscordMessage,
+  discord_watch: executeDiscordWatch,
   slack_message: executeSlackMessage,
+  slack_watch: executeSlackWatch,
   stop_timer: executeStopTimer,
   reset_timer: executeResetTimer,
   stop_workflow: executeStopWorkflow,

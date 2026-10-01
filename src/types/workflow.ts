@@ -112,7 +112,9 @@ export type NodeType =
   | 'telegram_message'
   | 'telegram_watch'
   | 'discord_message'
+  | 'discord_watch'
   | 'slack_message'
+  | 'slack_watch'
   // Commands & Workflow Control
   | 'stop_timer'
   | 'reset_timer'

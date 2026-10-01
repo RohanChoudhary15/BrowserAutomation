@@ -333,6 +333,15 @@ export class WorkflowEngine {
       return;
     }
 
+    // Handle Recurring Watch Nodes (telegram_watch, discord_watch, slack_watch)
+    if (
+      ['telegram_watch', 'discord_watch', 'slack_watch'].includes(node.data.type) &&
+      node.data.properties?.recurring
+    ) {
+      await this.executeRecurringWatchNode(node, ctx);
+      return;
+    }
+
     // Execute standard node
     const startTime = Date.now();
 
@@ -901,6 +910,105 @@ export class WorkflowEngine {
       nodeId: node.id,
       nodeName: node.data.label,
     });
+  }
+
+  /**
+   * Executes a recurring message watcher node (telegram_watch, discord_watch, slack_watch)
+   * in continuous listening mode, executing downstream branches for every incoming message.
+   */
+  private async executeRecurringWatchNode(node: WorkflowNode, ctx: ExecutionContext): Promise<void> {
+    const maxIterations = Number(node.data.properties?.maxIterations) || 0; // 0 = unlimited / continuous
+    const delayBetweenMs = Math.max(100, Number(node.data.properties?.delayBetweenMs) || 1000);
+    const bodyNodes = this.getNextNodes(node.id, 'loop_body');
+    const standardNextNodes = this.getNextNodes(node.id);
+    const targets = bodyNodes.length > 0 ? bodyNodes : standardNextNodes;
+
+    let iter = 0;
+    this.log({
+      level: 'info',
+      message: `Starting Recurring Watcher on ${node.data.label} (${maxIterations > 0 ? `limit: ${maxIterations} updates` : 'continuous listening'})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    while (!ctx.signal.aborted && this.status === 'running') {
+      iter++;
+      const startTime = Date.now();
+      this.updateNodeState(node.id, {
+        status: 'running',
+        startTime,
+        dynamicState: {
+          message: `Listening for update #${iter}...`,
+          currentIteration: iter,
+          totalIterations: maxIterations > 0 ? maxIterations : undefined,
+        },
+      });
+
+      try {
+        const result = await this.executeNodeWithRetry(node, ctx);
+        const durationMs = Date.now() - startTime;
+
+        this.updateNodeState(node.id, {
+          status: 'success',
+          endTime: Date.now(),
+          durationMs,
+          output: result.output,
+          dynamicState: {
+            message: `Update #${iter} received`,
+            currentIteration: iter,
+            totalIterations: maxIterations > 0 ? maxIterations : undefined,
+          },
+        });
+
+        if (result.variables) {
+          Object.assign(this.variables, result.variables);
+          Object.assign(ctx.variables, result.variables);
+          this.events.onVariablesChange?.(this.variables);
+        }
+
+        // Reset logic gate states for fresh execution in each iteration
+        this.triggeredGates.clear();
+        this.gateInputsState.clear();
+
+        // Execute downstream targets with this update's variables
+        if (targets.length > 0) {
+          await Promise.all(targets.map((tNode) => this.traverseAndExecute(tNode, ctx)));
+        }
+
+        if (maxIterations > 0 && iter >= maxIterations) {
+          this.log({
+            level: 'info',
+            message: `Recurring watcher on ${node.data.label} reached limit of ${maxIterations} updates.`,
+            nodeId: node.id,
+            nodeName: node.data.label,
+          });
+          break;
+        }
+
+        if (delayBetweenMs > 0 && !ctx.signal.aborted && this.status === 'running') {
+          await wait(delayBetweenMs, ctx.signal);
+        }
+      } catch (err: any) {
+        if (ctx.signal.aborted || this.status !== 'running') {
+          break;
+        }
+        this.log({
+          level: 'warn',
+          message: `Recurring watch check on ${node.data.label}: ${err.message}`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+        if (this.workflow.settings.stopOnError !== false) {
+          throw err;
+        }
+        await wait(2000, ctx.signal);
+      }
+    }
+
+    const doneNodes = this.getNextNodes(node.id, 'loop_done');
+    if (doneNodes.length > 0) {
+      await Promise.all(doneNodes.map((dNode) => this.traverseAndExecute(dNode, ctx)));
+    }
   }
 
   /**
