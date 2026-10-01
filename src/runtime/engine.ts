@@ -6,7 +6,7 @@ import { createFriendlyError } from '../utils/formatters';
 import { interpolateVariables, getNestedValue } from './interpolator';
 import { evaluateCondition, ConditionRule } from './evaluator';
 import { HumanConfig, nodeThinkTime, randomBetween, resolveHumanConfig, wait } from '../utils/human';
-import { runThrottled } from '../utils/parallelOrchestrator';
+import { runThrottled, orchestrateParallelBranches, ParallelMode, ParallelBranchConfig } from '../utils/parallelOrchestrator';
 import { syncStorageToVariables } from '../utils/simpleStorage';
 
 /**
@@ -91,8 +91,17 @@ export class WorkflowEngine {
     this.events.onStatusChange?.(status);
   }
 
+  private nodeStates = new Map<string, Partial<NodeRuntimeState>>();
+
   private updateNodeState(nodeId: string, state: Partial<NodeRuntimeState>) {
+    const prev = this.nodeStates.get(nodeId) || {};
+    const updated = { ...prev, ...state };
+    this.nodeStates.set(nodeId, updated);
     this.events.onNodeStateChange?.(nodeId, state);
+  }
+
+  getNodeState(nodeId: string): Partial<NodeRuntimeState> | undefined {
+    return this.nodeStates.get(nodeId);
   }
 
   private log(logData: Omit<ExecutionLog, 'id' | 'timestamp'>) {
@@ -158,7 +167,14 @@ export class WorkflowEngine {
   /**
    * Runs an individual node for debugging
    */
-  async runSingleNode(node: WorkflowNode, initialVariables?: Record<string, any>): Promise<any> {
+  async runSingleNode(nodeOrId: WorkflowNode | string, initialVariables?: Record<string, any>): Promise<any> {
+    const node = typeof nodeOrId === 'string'
+      ? this.workflow.nodes.find((n) => n.id === nodeOrId)
+      : nodeOrId;
+    if (!node) {
+      throw new Error(`Node not found: ${typeof nodeOrId === 'string' ? nodeOrId : 'undefined'}`);
+    }
+
     const controller = new AbortController();
     const vars = initialVariables ? { ...initialVariables } : { ...this.variables };
     syncStorageToVariables(vars);
@@ -178,6 +194,14 @@ export class WorkflowEngine {
 
     try {
       this.updateNodeState(node.id, { status: 'running', startTime: Date.now() });
+      if (node.data.type === 'async_parallel') {
+        await this.executeAsyncParallelNode(node, ctx);
+        const state = this.getNodeState(node.id);
+        if (state?.error) {
+          throw new Error(state.error);
+        }
+        return { success: state?.status === 'success', output: state?.output };
+      }
       const result = await this.executeNodeWithRetry(node, ctx);
       this.updateNodeState(node.id, { status: 'success', endTime: Date.now(), output: result.output });
       if (result.variables) {
@@ -303,6 +327,12 @@ export class WorkflowEngine {
       return;
     }
 
+    // Handle Async Parallel Node
+    if (node.data.type === 'async_parallel') {
+      await this.executeAsyncParallelNode(node, ctx);
+      return;
+    }
+
     // Execute standard node
     const startTime = Date.now();
 
@@ -329,6 +359,7 @@ export class WorkflowEngine {
 
       if (result.variables) {
         Object.assign(this.variables, result.variables);
+        Object.assign(ctx.variables, result.variables);
         this.events.onVariablesChange?.(this.variables);
       }
 
@@ -737,6 +768,142 @@ export class WorkflowEngine {
   }
 
   /**
+   * Executes an async_parallel node by running its branches concurrently.
+   */
+  private async executeAsyncParallelNode(node: WorkflowNode, ctx: ExecutionContext): Promise<void> {
+    const startTime = Date.now();
+    const props = node.data.properties || {};
+    const mode: ParallelMode = props.mode || 'all';
+    const branches: ParallelBranchConfig[] = Array.isArray(props.branches) && props.branches.length > 0
+      ? props.branches
+      : [
+          { id: 'branch_1', name: 'Branch 1' },
+          { id: 'branch_2', name: 'Branch 2' },
+        ];
+    const maxConcurrency = Number(props.maxConcurrency) || 0;
+    const timeoutMs = Number(props.timeoutMs) || 30000;
+    const continueOnError = props.continueOnError !== undefined ? !!props.continueOnError : mode === 'settled';
+    const mergeStrategy = props.mergeStrategy || 'merge';
+    const outVar = props.outputVariable || 'parallelResults';
+
+    this.log({
+      level: 'info',
+      message: `Starting Async Parallel execution across ${branches.length} branches (${mode.toUpperCase()}, Concurrency: ${maxConcurrency || 'unlimited'})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    this.updateNodeState(node.id, {
+      status: 'running',
+      startTime,
+      dynamicState: {
+        message: `Executing ${branches.length} branches in parallel...`,
+        progress: 10,
+      },
+    });
+
+    // Map each branch to connected nodes
+    const branchTargetsMap = new Map<string, WorkflowNode[]>();
+    for (const b of branches) {
+      let targets = this.getNextNodes(node.id, b.id);
+      if (targets.length === 0) {
+        // Fallback: match by index among edges from this node
+        const allEdges = this.workflow.edges.filter((e) => e.source === node.id);
+        const bIdx = branches.indexOf(b);
+        if (allEdges[bIdx]) {
+          const tNode = this.workflow.nodes.find((n) => n.id === allEdges[bIdx].target);
+          if (tNode) targets = [tNode];
+        }
+      }
+      branchTargetsMap.set(b.id, targets);
+    }
+
+    const orchestratorResult = await orchestrateParallelBranches(
+      branches,
+      async (branch, signal) => {
+        const branchVars: Record<string, any> = {
+          ...this.variables,
+          ...ctx.variables,
+          branchId: branch.id,
+          branchName: branch.name,
+        };
+
+        const branchCtx: ExecutionContext = {
+          ...ctx,
+          variables: branchVars,
+          signal: signal || ctx.signal,
+          executionId: generateId(`branch_${branch.id}`),
+        };
+
+        const targets = branchTargetsMap.get(branch.id) || [];
+        let branchOutput: any = undefined;
+
+        if (targets.length > 0) {
+          for (const targetNode of targets) {
+            if (signal.aborted || ctx.signal.aborted) {
+              throw new Error(`Branch "${branch.name}" aborted.`);
+            }
+            await this.traverseAndExecute(targetNode, branchCtx);
+            const targetState = this.getNodeState(targetNode.id);
+            if (targetState?.output !== undefined) {
+              branchOutput = targetState.output;
+            }
+          }
+        } else {
+          branchOutput = { branchId: branch.id, branchName: branch.name, executedAt: Date.now() };
+        }
+
+        return {
+          output: branchOutput,
+          variables: branchVars,
+        };
+      },
+      {
+        mode,
+        maxConcurrency,
+        timeoutMs,
+        continueOnError,
+        mergeStrategy,
+        outputVariable: outVar,
+      }
+    );
+
+    const durationMs = Date.now() - startTime;
+
+    if (orchestratorResult.combinedVariables) {
+      Object.assign(this.variables, orchestratorResult.combinedVariables);
+      Object.assign(ctx.variables, orchestratorResult.combinedVariables);
+      this.events.onVariablesChange?.(this.variables);
+    }
+
+    this.variables[outVar] = orchestratorResult;
+    ctx.variables[outVar] = orchestratorResult;
+
+    const isSuccess = orchestratorResult.success;
+
+    this.updateNodeState(node.id, {
+      status: isSuccess ? 'success' : 'error',
+      endTime: Date.now(),
+      durationMs,
+      output: orchestratorResult,
+      dynamicState: {
+        message: `${orchestratorResult.completedCount}/${orchestratorResult.totalBranches} branches completed (${mode})`,
+        completedCount: orchestratorResult.completedCount,
+        failedCount: orchestratorResult.failedCount,
+        winningBranch: orchestratorResult.winningBranch,
+      },
+      error: isSuccess ? undefined : `Async Parallel execution failed (${orchestratorResult.failedCount} branch failures)`,
+    });
+
+    this.log({
+      level: isSuccess ? 'success' : 'warn',
+      message: `Async Parallel completed: ${orchestratorResult.completedCount}/${orchestratorResult.totalBranches} branches finished in ${durationMs}ms`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  }
+
+  /**
    * Executes a node with retry support
    */
   private async executeNodeWithRetry(node: WorkflowNode, ctx: ExecutionContext): Promise<any> {
@@ -810,8 +977,11 @@ export class WorkflowEngine {
       }
       const arrivals = this.gateInputsState.get(next.id)!;
 
-      // If this source node has already arrived in this cycle, a new cycle/iteration has begun
-      if (arrivals.has(sourceNode.id)) {
+      const matchingEdge = incomingEdges.find(e => e.source === sourceNode.id && (e.sourceHandle ? e.sourceHandle === sourceResult?.branchId : true)) || incomingEdges.find(e => e.source === sourceNode.id);
+      const arrivalKey = matchingEdge ? matchingEdge.id : sourceNode.id;
+
+      // If this incoming branch has already arrived in this cycle, a new cycle/iteration has begun
+      if (arrivals.has(arrivalKey)) {
         this.triggeredGates.delete(next.id);
         arrivals.clear();
       }
@@ -822,7 +992,7 @@ export class WorkflowEngine {
         sourceResult.output?.present === true ||
         (sourceResult.nextBranch !== 'false' && sourceResult.output !== false && sourceResult.success);
 
-      arrivals.set(sourceNode.id, {
+      arrivals.set(arrivalKey, {
         result: isBranchTrue,
         output: sourceResult.output,
         nodeName: sourceNode.data.label,
@@ -836,7 +1006,23 @@ export class WorkflowEngine {
         else if (rawType.includes('and') && !rawType.includes('nand')) gate = 'AND';
         else if (rawType.includes('nand')) gate = 'NAND';
         else if (rawType.includes('nor')) gate = 'NOR';
-        else gate = 'OR';
+        else {
+          const isDescendantOfParallel = (startId: string, visited = new Set<string>()): boolean => {
+            if (visited.has(startId)) return false;
+            visited.add(startId);
+            const parentEdges = this.workflow.edges.filter((e) => e.target === startId);
+            for (const pe of parentEdges) {
+              const parentNode = this.workflow.nodes.find((n) => n.id === pe.source);
+              if (!parentNode) continue;
+              if (parentNode.data.type === 'async_parallel') return true;
+              if (isDescendantOfParallel(parentNode.id, visited)) return true;
+            }
+            return false;
+          };
+
+          const fromParallel = incomingEdges.some((e) => isDescendantOfParallel(e.source));
+          gate = fromParallel ? 'AND' : 'OR';
+        }
       }
 
       let shouldTrigger = false;
@@ -883,7 +1069,12 @@ export class WorkflowEngine {
           nodeName: next.data.label,
         });
 
-        await this.traverseAndExecute(next, ctx);
+        const mergedCtx: ExecutionContext = {
+          ...ctx,
+          variables: { ...this.variables, ...ctx.variables },
+        };
+
+        await this.traverseAndExecute(next, mergedCtx);
 
         // Reset gate if all incoming branches arrived so loops/cycles can re-trigger cleanly
         if (arrivals.size >= totalExpected) {

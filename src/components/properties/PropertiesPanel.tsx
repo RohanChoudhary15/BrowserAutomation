@@ -59,6 +59,8 @@ import {
   Search,
   Upload,
   X,
+  ChevronLeft,
+  ExternalLink,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels } from '../../ai/aiService';
@@ -157,6 +159,45 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [isCredModalOpen, setIsCredModalOpen] = useState(false);
   const [credModalPlatform, setCredModalPlatform] = useState<MessagingPlatform>('telegram');
   const [copiedNodeError, setCopiedNodeError] = useState(false);
+  const [fullScreenImageUrl, setFullScreenImageUrl] = useState<string | null>(null);
+  const [fullScreenImageIndex, setFullScreenImageIndex] = useState<number>(0);
+
+  const handleDownloadImage = async (url: string, suggestedFilename?: string) => {
+    try {
+      const filename = suggestedFilename || 'generated_image.png';
+      const finalFilename = filename.endsWith('.png') || filename.endsWith('.jpg') || filename.endsWith('.jpeg') || filename.endsWith('.webp')
+        ? filename
+        : `${filename}.png`;
+
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        await new Promise<number | undefined>((resolve, reject) => {
+          chrome.downloads.download(
+            {
+              url,
+              filename: finalFilename,
+              saveAs: true,
+            },
+            (downloadId) => {
+              if (chrome.runtime?.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+              } else {
+                resolve(downloadId);
+              }
+            }
+          );
+        });
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = finalFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (err: any) {
+      console.warn('Download image failed:', err);
+    }
+  };
 
   const loadBotCredentials = async () => {
     try {
@@ -214,6 +255,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [showFirecrawlApiKey, setShowFirecrawlApiKey] = useState(false);
   const [copiedFirecrawlMarkdown, setCopiedFirecrawlMarkdown] = useState(false);
+
+  useEffect(() => {
+    if (!fullScreenImageUrl) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setFullScreenImageUrl(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullScreenImageUrl]);
 
   // Inspect panel width resizing state (persisted to localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -4192,89 +4244,201 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               )}
             </div>
 
-            {/* Generated Image Preview if available */}
-            {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable]) || (props.outputVariable && variables[`${props.outputVariable}_images`])) && (
-              <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2 mt-2">
-                <div className="text-[11px] font-semibold text-emerald-400 flex items-center justify-between">
-                  <span>Generated Image Preview</span>
-                  {Array.isArray(variables[`${props.outputVariable}_images`]) && variables[`${props.outputVariable}_images`].length > 1 && (
-                    <span className="text-[10px] text-gray-400 font-mono">
-                      {variables[`${props.outputVariable}_images`].length} images generated
-                    </span>
-                  )}
-                </div>
+            {/* Generated Image Preview strictly scoped to this node */}
+            {(() => {
+              const nodeStateOutput = runtimeState?.output;
+              const nodeDynamic = runtimeState?.dynamicState;
+              const isThisNodeSuccess = runtimeState?.status === 'success';
 
-                {Array.isArray(variables[`${props.outputVariable}_images`]) && variables[`${props.outputVariable}_images`].length > 1 ? (
-                  <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto p-1 bg-black/40 rounded border border-[#232a3b]">
-                    {variables[`${props.outputVariable}_images`].map((imgUrl: string, idx: number) => (
-                      <div key={idx} className="relative group rounded overflow-hidden border border-[#2a3449] bg-black/60 aspect-video flex flex-col justify-end">
-                        <img
-                          src={imgUrl}
-                          alt={`Generated variation ${idx + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity">
-                          <a
-                            href={imgUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-semibold transition-colors"
-                            title="Open full size"
-                          >
-                            Open
-                          </a>
-                          <button
-                            type="button"
+              // Extract images strictly belonging to THIS node's execution
+              const nodeImages: string[] = (() => {
+                if (Array.isArray(nodeStateOutput) && nodeStateOutput.length > 0) {
+                  return nodeStateOutput.filter((u): u is string => typeof u === 'string' && u.length > 0);
+                }
+                if (Array.isArray(nodeDynamic?.images) && nodeDynamic.images.length > 0) {
+                  return nodeDynamic.images.filter((u): u is string => typeof u === 'string' && u.length > 0);
+                }
+                if (typeof nodeStateOutput === 'string' && (nodeStateOutput.startsWith('http') || nodeStateOutput.startsWith('data:image'))) {
+                  return [nodeStateOutput];
+                }
+                if (typeof nodeDynamic?.previewUrl === 'string' && (nodeDynamic.previewUrl.startsWith('http') || nodeDynamic.previewUrl.startsWith('data:image'))) {
+                  return [nodeDynamic.previewUrl];
+                }
+                // Only inspect outputVariable if this specific node has run with success
+                if (isThisNodeSuccess && props.outputVariable) {
+                  const varImages = variables[`${props.outputVariable}_images`];
+                  if (Array.isArray(varImages) && varImages.length > 0) {
+                    return varImages.filter((u): u is string => typeof u === 'string' && u.length > 0);
+                  }
+                  const singleVar = variables[props.outputVariable];
+                  if (typeof singleVar === 'string' && (singleVar.startsWith('http') || singleVar.startsWith('data:image'))) {
+                    return [singleVar];
+                  }
+                }
+                return [];
+              })();
+
+              if (nodeImages.length === 0) return null;
+
+              const primaryImage = nodeImages[0];
+
+              return (
+                <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2.5 mt-2">
+                  <div className="text-[11px] font-semibold text-emerald-400 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Generated Image Preview</span>
+                    </span>
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      {nodeImages.length === 1 ? '1 image' : `${nodeImages.length} images generated`}
+                    </span>
+                  </div>
+
+                  {/* Multi-image Gallery */}
+                  {nodeImages.length > 1 ? (
+                    <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto p-1 bg-black/40 rounded-lg border border-[#232a3b]">
+                      {nodeImages.map((imgUrl: string, idx: number) => (
+                        <div
+                          key={idx}
+                          className="relative group rounded-lg overflow-hidden border border-[#2a3449] bg-black/60 aspect-video flex flex-col justify-end"
+                        >
+                          <img
+                            src={imgUrl}
+                            alt={`Generated variation ${idx + 1}`}
+                            className="w-full h-full object-cover cursor-pointer"
                             onClick={() => {
-                              navigator.clipboard.writeText(imgUrl);
-                              setCopiedBase64(true);
-                              setTimeout(() => setCopiedBase64(false), 2000);
+                              setFullScreenImageUrl(imgUrl);
+                              setFullScreenImageIndex(idx);
                             }}
-                            className="p-1 rounded bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-[9px] transition-colors"
-                            title="Copy image URL"
-                          >
-                            Copy
-                          </button>
+                          />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFullScreenImageUrl(imgUrl);
+                                setFullScreenImageIndex(idx);
+                              }}
+                              className="p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                              title="Full Screen Preview"
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
+                                handleDownloadImage(imgUrl, `${baseName}_${idx + 1}.png`);
+                              }}
+                              className="p-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                              title="Download Image"
+                            >
+                              <Download className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(imgUrl);
+                                setCopiedBase64(true);
+                                setTimeout(() => setCopiedBase64(false), 2000);
+                              }}
+                              className="p-1.5 rounded-md bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white transition-colors"
+                              title="Copy URL"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+                          <span className="absolute bottom-1 right-1 text-[9px] bg-black/80 text-white px-1 py-0.5 rounded font-mono">
+                            #{idx + 1}
+                          </span>
                         </div>
-                        <span className="absolute bottom-1 right-1 text-[9px] bg-black/80 text-white px-1 py-0.5 rounded font-mono">
-                          #{idx + 1}
+                      ))}
+                    </div>
+                  ) : (
+                    /* Single Image Preview */
+                    <div
+                      className="group relative rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 max-h-52 flex items-center justify-center cursor-pointer"
+                      onClick={() => {
+                        setFullScreenImageUrl(primaryImage);
+                        setFullScreenImageIndex(0);
+                      }}
+                    >
+                      <img
+                        src={primaryImage}
+                        alt="Generated Preview"
+                        className="w-full max-h-52 object-contain"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
+                        <span className="px-3 py-1.5 rounded-lg bg-black/75 text-white text-xs font-medium flex items-center gap-1.5 border border-white/20 shadow-lg">
+                          <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Click for Full Screen</span>
                         </span>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 max-h-48 flex items-center justify-center">
-                    <img
-                      src={String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable]))}
-                      alt="Generated Preview"
-                      className="w-full max-h-48 object-contain"
-                    />
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                <div className="flex items-center gap-2 pt-1">
-                  <a
-                    href={String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable]))}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex-1 py-1 text-center rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold transition-colors"
-                  >
-                    Open Primary Image
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(String(Array.isArray(runtimeState?.output) ? runtimeState?.output[0] : (runtimeState?.output || variables[props.outputVariable])));
-                      setCopiedBase64(true);
-                      setTimeout(() => setCopiedBase64(false), 2000);
-                    }}
-                    className="px-2.5 py-1 rounded bg-[#161a24] hover:bg-[#202738] text-gray-300 hover:text-white text-[10px] border border-[#232a3b] transition-colors"
-                  >
-                    {copiedBase64 ? 'Copied!' : 'Copy URL'}
-                  </button>
+                  {/* Action Buttons: Full Screen, Download, Open Tab, Copy URL */}
+                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFullScreenImageUrl(primaryImage);
+                        setFullScreenImageIndex(0);
+                      }}
+                      className="py-1.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                      title="View image full screen"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span>Full Screen</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (nodeImages.length > 1) {
+                          nodeImages.forEach((url, i) => {
+                            const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
+                            setTimeout(() => handleDownloadImage(url, `${baseName}_${i + 1}.png`), i * 250);
+                          });
+                        } else {
+                          const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
+                          handleDownloadImage(primaryImage, `${baseName}.png`);
+                        }
+                      }}
+                      className="py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                      title="Download generated image file"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{nodeImages.length > 1 ? `Download (${nodeImages.length})` : 'Download'}</span>
+                    </button>
+
+                    <a
+                      href={primaryImage}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="py-1.5 px-2 text-center rounded-lg bg-[#161a24] hover:bg-[#202738] text-gray-300 hover:text-white text-xs font-medium border border-[#232a3b] flex items-center justify-center gap-1.5 transition-colors"
+                      title="Open image in new browser tab"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+                      <span>Open in Tab</span>
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(primaryImage);
+                        setCopiedBase64(true);
+                        setTimeout(() => setCopiedBase64(false), 2000);
+                      }}
+                      className="py-1.5 px-2 rounded-lg bg-[#161a24] hover:bg-[#202738] text-gray-300 hover:text-white text-xs font-medium border border-[#232a3b] flex items-center justify-center gap-1.5 transition-colors"
+                      title="Copy image URL / data to clipboard"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-gray-400" />
+                      <span>{copiedBase64 ? 'Copied!' : 'Copy URL'}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
 
@@ -7351,6 +7515,101 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           }
         }}
       />
+
+      {/* Full Screen Image Preview Modal */}
+      {fullScreenImageUrl && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 select-none animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setFullScreenImageUrl(null);
+            }
+          }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between w-full max-w-6xl mx-auto pb-3 border-b border-white/10 text-white">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30">
+                <ImageIcon className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Full Screen Preview</h3>
+                <p className="text-[11px] text-gray-400 font-mono">
+                  {fullScreenImageIndex !== undefined ? `Image ${fullScreenImageIndex + 1}` : 'Generated Image'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
+                  handleDownloadImage(fullScreenImageUrl, `${baseName}_${fullScreenImageIndex + 1}.png`);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                title="Download this image"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download</span>
+              </button>
+
+              <a
+                href={fullScreenImageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors"
+                title="Open original in new tab"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+                <span>Open in Tab</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(fullScreenImageUrl);
+                  setCopiedBase64(true);
+                  setTimeout(() => setCopiedBase64(false), 2000);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors"
+                title="Copy URL / Base64"
+              >
+                {copiedBase64 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedBase64 ? 'Copied!' : 'Copy'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFullScreenImageUrl(null)}
+                className="p-1.5 rounded-lg bg-[#1c2230] hover:bg-red-500/20 text-gray-400 hover:text-red-400 border border-[#2a3449] transition-colors ml-2"
+                title="Close (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Main Image Viewport */}
+          <div className="flex-1 flex items-center justify-center relative w-full max-w-6xl mx-auto my-3 overflow-hidden">
+            <img
+              src={fullScreenImageUrl}
+              alt="Full Screen View"
+              className="max-h-[78vh] max-w-[90vw] object-contain rounded-lg shadow-2xl border border-white/10 select-none transition-transform duration-200"
+            />
+          </div>
+
+          {/* Footer Bar */}
+          <div className="w-full max-w-6xl mx-auto pt-2 flex items-center justify-between text-xs text-gray-400 border-t border-white/10">
+            <span className="font-mono text-[11px] truncate max-w-xl text-gray-500">
+              {fullScreenImageUrl.startsWith('data:') ? 'Base64 Encoded Image Data' : fullScreenImageUrl}
+            </span>
+            <span className="text-[11px] text-gray-500">
+              Click anywhere outside or press Close / Esc to dismiss
+            </span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

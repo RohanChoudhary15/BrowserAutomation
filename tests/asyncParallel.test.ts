@@ -7,6 +7,7 @@ import {
 import { executeAsyncParallel } from '../src/runtime/executors';
 import { WorkflowNode } from '../src/types/workflow';
 import { ExecutionContext } from '../src/types/execution';
+import { WorkflowEngine } from '../src/runtime/engine';
 
 describe('Async Parallel Orchestrator & Executor', () => {
   it('throttles task concurrency pool with runThrottled', async () => {
@@ -149,5 +150,207 @@ describe('Async Parallel Orchestrator & Executor', () => {
     expect(ctx.variables.myParallelRun).toBeDefined();
     expect(ctx.variables.myParallelRun.totalBranches).toBe(2);
     expect(ctx.variables.myParallelRun.completedCount).toBe(2);
+  });
+
+  it('executes connected branch nodes in parallel via engine.run()', async () => {
+    const executedNodes: string[] = [];
+
+    const engine = new WorkflowEngine(
+      {
+        id: 'wf-parallel-run',
+        name: 'Workflow Parallel Run Test',
+        nodes: [
+          {
+            id: 'node_start',
+            type: 'set_variable',
+            position: { x: 0, y: 0 },
+            data: {
+              label: 'Init',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'initKey',
+                value: 'hello',
+              },
+            },
+          },
+          {
+            id: 'node_parallel',
+            type: 'async_parallel',
+            position: { x: 150, y: 0 },
+            data: {
+              label: 'Parallel Split',
+              type: 'async_parallel',
+              category: 'flow',
+              properties: {
+                mode: 'all',
+                branches: [
+                  { id: 'branch_a', name: 'Branch A' },
+                  { id: 'branch_b', name: 'Branch B' },
+                ],
+                outputVariable: 'parallelSummary',
+              },
+            },
+          },
+          {
+            id: 'node_branch_1',
+            type: 'set_variable',
+            position: { x: 300, y: -50 },
+            data: {
+              label: 'Branch 1 Work',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'branch1_var',
+                value: 'value_a',
+              },
+            },
+          },
+          {
+            id: 'node_branch_2',
+            type: 'set_variable',
+            position: { x: 300, y: 50 },
+            data: {
+              label: 'Branch 2 Work',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'branch2_var',
+                value: 'value_b',
+              },
+            },
+          },
+          {
+            id: 'node_merge',
+            type: 'set_variable',
+            position: { x: 450, y: 0 },
+            data: {
+              label: 'Merge Point',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'combined_vars',
+                value: '{{branch1_var}} + {{branch2_var}}',
+              },
+            },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'node_start', target: 'node_parallel' },
+          { id: 'e2', source: 'node_parallel', target: 'node_branch_1', sourceHandle: 'branch_branch_a' },
+          { id: 'e3', source: 'node_parallel', target: 'node_branch_2', sourceHandle: 'branch_branch_b' },
+          { id: 'e4', source: 'node_branch_1', target: 'node_merge' },
+          { id: 'e5', source: 'node_branch_2', target: 'node_merge' },
+        ],
+      },
+      {
+        onNodeStateChange: (nodeId, state) => {
+          if (state.status === 'running' || state.status === 'success') {
+            if (!executedNodes.includes(nodeId)) {
+              executedNodes.push(nodeId);
+            }
+          }
+        },
+      }
+    );
+
+    await engine.run();
+
+    expect(executedNodes).toContain('node_start');
+    expect(executedNodes).toContain('node_parallel');
+    expect(executedNodes).toContain('node_branch_1');
+    expect(executedNodes).toContain('node_branch_2');
+    expect(executedNodes).toContain('node_merge');
+
+    const vars = engine.getVariables();
+    expect(vars.branch1_var).toBe('value_a');
+    expect(vars.branch2_var).toBe('value_b');
+    expect(vars.combined_vars).toBe('value_a + value_b');
+    expect(vars.parallelSummary).toBeDefined();
+    expect(vars.parallelSummary.completedCount).toBe(2);
+  });
+
+  it('executes connected branch nodes when triggered via engine.runSingleNode() on async_parallel', async () => {
+    const executedNodes: string[] = [];
+
+    const engine = new WorkflowEngine(
+      {
+        id: 'wf-parallel-single-node',
+        name: 'Workflow Single Node Parallel Test',
+        nodes: [
+          {
+            id: 'node_parallel_single',
+            type: 'async_parallel',
+            position: { x: 0, y: 0 },
+            data: {
+              label: 'Parallel Split Single',
+              type: 'async_parallel',
+              category: 'flow',
+              properties: {
+                mode: 'all',
+                branches: [
+                  { id: 'branch_x', name: 'Branch X' },
+                  { id: 'branch_y', name: 'Branch Y' },
+                ],
+                outputVariable: 'singleParallelRun',
+              },
+            },
+          },
+          {
+            id: 'node_worker_x',
+            type: 'set_variable',
+            position: { x: 200, y: -40 },
+            data: {
+              label: 'Worker X',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'resX',
+                value: 'computed_x',
+              },
+            },
+          },
+          {
+            id: 'node_worker_y',
+            type: 'set_variable',
+            position: { x: 200, y: 40 },
+            data: {
+              label: 'Worker Y',
+              type: 'set_variable',
+              category: 'data',
+              properties: {
+                name: 'resY',
+                value: 'computed_y',
+              },
+            },
+          },
+        ],
+        edges: [
+          { id: 'e_px', source: 'node_parallel_single', target: 'node_worker_x', sourceHandle: 'branch_branch_x' },
+          { id: 'e_py', source: 'node_parallel_single', target: 'node_worker_y', sourceHandle: 'branch_branch_y' },
+        ],
+      },
+      {
+        onNodeStateChange: (nodeId, state) => {
+          if (state.status === 'running' || state.status === 'success') {
+            if (!executedNodes.includes(nodeId)) {
+              executedNodes.push(nodeId);
+            }
+          }
+        },
+      }
+    );
+
+    await engine.runSingleNode('node_parallel_single');
+
+    expect(executedNodes).toContain('node_parallel_single');
+    expect(executedNodes).toContain('node_worker_x');
+    expect(executedNodes).toContain('node_worker_y');
+
+    const vars = engine.getVariables();
+    expect(vars.resX).toBe('computed_x');
+    expect(vars.resY).toBe('computed_y');
+    expect(vars.singleParallelRun).toBeDefined();
+    expect(vars.singleParallelRun.completedCount).toBe(2);
   });
 });

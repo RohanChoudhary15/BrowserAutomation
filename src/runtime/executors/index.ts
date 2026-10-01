@@ -2986,9 +2986,12 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
 
     ctx.updateNodeState(node.id, {
       status: 'success',
+      output: asyncCount > 1 ? imageUrls : primaryUrl,
       dynamicState: {
         message: asyncCount > 1 ? `${imageUrls.length} images generated (async)` : 'Image generated',
         previewUrl: primaryUrl,
+        images: imageUrls,
+        nodeId: node.id,
         detail: `${model} • ${size}${asyncCount > 1 ? ` • ${asyncCount} images` : ''}`,
       },
     });
@@ -3126,9 +3129,12 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
 
   ctx.updateNodeState(node.id, {
     status: 'success',
+    output: asyncCount > 1 ? imageUrls : primaryUrl,
     dynamicState: {
       message: asyncCount > 1 ? `${imageUrls.length} images generated (async)` : 'Image generated',
       previewUrl: primaryUrl,
+      images: imageUrls,
+      nodeId: node.id,
       detail: `${model} • ${size}${asyncCount > 1 ? ` • ${asyncCount} images` : ''}`,
     },
   });
