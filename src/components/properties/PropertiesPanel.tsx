@@ -256,16 +256,84 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [showFirecrawlApiKey, setShowFirecrawlApiKey] = useState(false);
   const [copiedFirecrawlMarkdown, setCopiedFirecrawlMarkdown] = useState(false);
 
+  // Memoized array of images for the currently selected node
+  const activeNodeImages = React.useMemo<string[]>(() => {
+    if (!selectedNode) return [];
+    const nodeStateOutput = runtimeState?.output;
+    const nodeDynamic = runtimeState?.dynamicState;
+    const isThisNodeSuccess = runtimeState?.status === 'success';
+    const nodeProps = selectedNode.data.properties || {};
+
+    if (Array.isArray(nodeStateOutput) && nodeStateOutput.length > 0) {
+      const arr = nodeStateOutput.filter((u): u is string => typeof u === 'string' && u.length > 0);
+      if (arr.length > 0) return arr;
+    }
+    if (Array.isArray(nodeDynamic?.images) && nodeDynamic.images.length > 0) {
+      const arr = nodeDynamic.images.filter((u): u is string => typeof u === 'string' && u.length > 0);
+      if (arr.length > 0) return arr;
+    }
+    if (typeof nodeStateOutput === 'string' && (nodeStateOutput.startsWith('http') || nodeStateOutput.startsWith('data:image'))) {
+      return [nodeStateOutput];
+    }
+    if (typeof nodeDynamic?.previewUrl === 'string' && (nodeDynamic.previewUrl.startsWith('http') || nodeDynamic.previewUrl.startsWith('data:image'))) {
+      return [nodeDynamic.previewUrl];
+    }
+    if (isThisNodeSuccess && nodeProps.outputVariable) {
+      const varImages = variables[`${nodeProps.outputVariable}_images`];
+      if (Array.isArray(varImages) && varImages.length > 0) {
+        const arr = varImages.filter((u): u is string => typeof u === 'string' && u.length > 0);
+        if (arr.length > 0) return arr;
+      }
+      const singleVar = variables[nodeProps.outputVariable];
+      if (typeof singleVar === 'string' && (singleVar.startsWith('http') || singleVar.startsWith('data:image'))) {
+        return [singleVar];
+      }
+    }
+    return [];
+  }, [selectedNode?.id, runtimeState?.output, runtimeState?.dynamicState, runtimeState?.status, variables]);
+
+  const modalImages = activeNodeImages.length > 0
+    ? activeNodeImages
+    : (fullScreenImageUrl ? [fullScreenImageUrl] : []);
+
+  const handlePrevFullScreenImage = () => {
+    if (modalImages.length <= 1) return;
+    const prevIdx = (fullScreenImageIndex - 1 + modalImages.length) % modalImages.length;
+    setFullScreenImageIndex(prevIdx);
+    setFullScreenImageUrl(modalImages[prevIdx]);
+  };
+
+  const handleNextFullScreenImage = () => {
+    if (modalImages.length <= 1) return;
+    const nextIdx = (fullScreenImageIndex + 1) % modalImages.length;
+    setFullScreenImageIndex(nextIdx);
+    setFullScreenImageUrl(modalImages[nextIdx]);
+  };
+
   useEffect(() => {
     if (!fullScreenImageUrl) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setFullScreenImageUrl(null);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (modalImages.length > 1) {
+          const prevIdx = (fullScreenImageIndex - 1 + modalImages.length) % modalImages.length;
+          setFullScreenImageIndex(prevIdx);
+          setFullScreenImageUrl(modalImages[prevIdx]);
+        }
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (modalImages.length > 1) {
+          const nextIdx = (fullScreenImageIndex + 1) % modalImages.length;
+          setFullScreenImageIndex(nextIdx);
+          setFullScreenImageUrl(modalImages[nextIdx]);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [fullScreenImageUrl]);
+  }, [fullScreenImageUrl, fullScreenImageIndex, modalImages]);
 
   // Inspect panel width resizing state (persisted to localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -2727,23 +2795,51 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
                 {imagePreviews.length > 0 ? (
                   <div className="space-y-2">
-                    <div className="relative rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 p-1.5 flex items-center justify-center">
+                    <div
+                      className="relative rounded-lg overflow-hidden border border-[#232a3b] bg-black/60 p-1.5 flex items-center justify-center group cursor-pointer"
+                      onClick={() => {
+                        setFullScreenImageUrl(imagePreviews[0]);
+                        setFullScreenImageIndex(0);
+                      }}
+                      title="Click to view full screen"
+                    >
                       <img
                         src={imagePreviews[0]}
                         alt="Extracted Preview"
                         className="max-h-36 max-w-full object-contain rounded"
                       />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
+                        <span className="px-2 py-1 rounded bg-black/80 text-white text-[10px] font-medium flex items-center gap-1 border border-white/20">
+                          <Maximize2 className="w-3 h-3 text-indigo-400" />
+                          <span>Full Screen</span>
+                        </span>
+                      </div>
                     </div>
 
                     {imagePreviews.length > 1 && (
                       <div className="flex gap-1 overflow-x-auto pb-1 max-h-16">
-                        {imagePreviews.slice(0, 8).map((src, i) => (
-                          <img
-                            key={i}
-                            src={src}
-                            alt={`Preview ${i + 1}`}
-                            className="w-12 h-12 object-cover rounded border border-[#232a3b] shrink-0"
-                          />
+                        {imagePreviews.slice(0, 16).map((src, i) => (
+                          <div key={i} className="relative group shrink-0">
+                            <img
+                              src={src}
+                              alt={`Preview ${i + 1}`}
+                              className="w-12 h-12 object-cover rounded border border-[#232a3b] cursor-pointer hover:border-indigo-500"
+                              onClick={() => {
+                                setFullScreenImageUrl(src);
+                                setFullScreenImageIndex(i);
+                              }}
+                            />
+                            <a
+                              href={src}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/80 text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Open in new tab"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -2754,18 +2850,30 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                           ? `${Math.round(imagePreviews[0].length / 1024)} KB`
                           : 'URL'}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(imagePreviews[0]);
-                          setCopiedBase64(true);
-                          setTimeout(() => setCopiedBase64(false), 2000);
-                        }}
-                        className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 hover:bg-indigo-600/50 transition-colors"
-                      >
-                        {copiedBase64 ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedBase64 ? 'Copied!' : 'Copy Base64'}</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <a
+                          href={imagePreviews[0]}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-[#1c2230] text-gray-300 hover:text-white transition-colors"
+                          title="Open original image in new tab"
+                        >
+                          <ExternalLink className="w-3 h-3 text-gray-400" />
+                          <span>Open Tab</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(imagePreviews[0]);
+                            setCopiedBase64(true);
+                            setTimeout(() => setCopiedBase64(false), 2000);
+                          }}
+                          className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 hover:bg-indigo-600/50 transition-colors"
+                        >
+                          {copiedBase64 ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedBase64 ? 'Copied!' : 'Copy Base64'}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -4323,6 +4431,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                             >
                               <Maximize2 className="w-3 h-3" />
                             </button>
+                            <a
+                              href={imgUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 rounded-md bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white transition-colors"
+                              title="Open image in new tab"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
                             <button
                               type="button"
                               onClick={() => {
@@ -7519,28 +7637,73 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {/* Full Screen Image Preview Modal */}
       {fullScreenImageUrl && (
         <div
-          className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 select-none animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 select-none animate-in fade-in duration-150"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               setFullScreenImageUrl(null);
             }
           }}
         >
+          {/* Top-Right Floating Quick Close Button */}
+          <button
+            type="button"
+            onClick={() => setFullScreenImageUrl(null)}
+            className="fixed top-4 right-4 z-[10000] p-2.5 rounded-full bg-black/75 hover:bg-red-600 text-white/90 hover:text-white border border-white/20 hover:border-red-500 transition-all hover:scale-110 shadow-2xl backdrop-blur-sm cursor-pointer group"
+            title="Close Preview (Esc)"
+          >
+            <X className="w-5 h-5 group-hover:rotate-90 transition-transform duration-200" />
+          </button>
+
           {/* Header */}
-          <div className="flex items-center justify-between w-full max-w-6xl mx-auto pb-3 border-b border-white/10 text-white">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30">
+          <div className="flex items-center justify-between w-full max-w-6xl mx-auto pb-3 border-b border-white/10 text-white relative z-10 pr-12">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 shadow-sm">
                 <ImageIcon className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">Full Screen Preview</h3>
-                <p className="text-[11px] text-gray-400 font-mono">
-                  {fullScreenImageIndex !== undefined ? `Image ${fullScreenImageIndex + 1}` : 'Generated Image'}
+                <h3 className="text-sm font-semibold text-white">Full Screen Image Preview</h3>
+                <p className="text-[11px] text-gray-400 font-mono flex items-center gap-2">
+                  <span>
+                    {modalImages.length > 1
+                      ? `Image ${fullScreenImageIndex + 1} of ${modalImages.length}`
+                      : 'Generated Image'}
+                  </span>
+                  {modalImages.length > 1 && (
+                    <span className="text-[10px] bg-indigo-950/60 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/30">
+                      Use &larr; / &rarr; keys or buttons to slide
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Previous / Next slide buttons in header */}
+              {modalImages.length > 1 && (
+                <div className="flex items-center bg-[#161a24] rounded-lg border border-[#2a3449] p-0.5 mr-1">
+                  <button
+                    type="button"
+                    onClick={handlePrevFullScreenImage}
+                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors"
+                    title="Previous Image (Left Arrow)"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-[11px] font-mono px-2 text-gray-300 select-none">
+                    {fullScreenImageIndex + 1}/{modalImages.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleNextFullScreenImage}
+                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors"
+                    title="Next Image (Right Arrow)"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Download */}
               <button
                 type="button"
                 onClick={() => {
@@ -7554,17 +7717,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span>Download</span>
               </button>
 
+              {/* Open in Tab */}
               <a
                 href={fullScreenImageUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors"
-                title="Open original in new tab"
+                title="Open original image in new tab"
               >
                 <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
                 <span>Open in Tab</span>
               </a>
 
+              {/* Copy URL */}
               <button
                 type="button"
                 onClick={() => {
@@ -7579,34 +7744,94 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span>{copiedBase64 ? 'Copied!' : 'Copy'}</span>
               </button>
 
+              {/* Header Close button */}
               <button
                 type="button"
                 onClick={() => setFullScreenImageUrl(null)}
-                className="p-1.5 rounded-lg bg-[#1c2230] hover:bg-red-500/20 text-gray-400 hover:text-red-400 border border-[#2a3449] transition-colors ml-2"
-                title="Close (Esc)"
+                className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm ml-1"
+                title="Close full screen preview (Esc)"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
+                <span>Close</span>
               </button>
             </div>
           </div>
 
-          {/* Main Image Viewport */}
-          <div className="flex-1 flex items-center justify-center relative w-full max-w-6xl mx-auto my-3 overflow-hidden">
-            <img
-              src={fullScreenImageUrl}
-              alt="Full Screen View"
-              className="max-h-[78vh] max-w-[90vw] object-contain rounded-lg shadow-2xl border border-white/10 select-none transition-transform duration-200"
-            />
+          {/* Main Image Viewport with Left/Right Arrow UI Buttons */}
+          <div className="flex-1 flex items-center justify-center relative w-full max-w-6xl mx-auto my-2 overflow-hidden">
+            {/* Left Navigation Arrow Button */}
+            {modalImages.length > 1 && (
+              <button
+                type="button"
+                onClick={handlePrevFullScreenImage}
+                className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-20 p-3 rounded-full bg-black/75 hover:bg-black/90 text-white/90 hover:text-white border border-white/20 hover:border-white/40 transition-all hover:scale-110 shadow-2xl backdrop-blur-sm group cursor-pointer"
+                title="Previous image (Left Arrow)"
+              >
+                <ChevronLeft className="w-6 h-6 group-hover:-translate-x-0.5 transition-transform" />
+              </button>
+            )}
+
+            {/* Main Center Image with transition */}
+            <div className="relative max-h-[72vh] max-w-[90vw] flex items-center justify-center">
+              <img
+                key={fullScreenImageUrl}
+                src={fullScreenImageUrl}
+                alt={`Image preview ${fullScreenImageIndex + 1}`}
+                className="max-h-[72vh] max-w-[90vw] object-contain rounded-lg shadow-2xl border border-white/10 select-none animate-in fade-in zoom-in-95 duration-200"
+              />
+            </div>
+
+            {/* Right Navigation Arrow Button */}
+            {modalImages.length > 1 && (
+              <button
+                type="button"
+                onClick={handleNextFullScreenImage}
+                className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-20 p-3 rounded-full bg-black/75 hover:bg-black/90 text-white/90 hover:text-white border border-white/20 hover:border-white/40 transition-all hover:scale-110 shadow-2xl backdrop-blur-sm group cursor-pointer"
+                title="Next image (Right Arrow)"
+              >
+                <ChevronRight className="w-6 h-6 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            )}
           </div>
+
+          {/* Bottom Thumbnail Strip (if multiple images) */}
+          {modalImages.length > 1 && (
+            <div className="flex items-center justify-center gap-2 py-1.5 overflow-x-auto max-w-2xl mx-auto z-10 px-4">
+              {modalImages.map((img, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    setFullScreenImageIndex(i);
+                    setFullScreenImageUrl(img);
+                  }}
+                  className={`w-12 h-12 md:w-14 md:h-14 rounded-lg border-2 overflow-hidden transition-all shrink-0 relative group shadow-md cursor-pointer ${
+                    i === fullScreenImageIndex
+                      ? 'border-indigo-500 ring-2 ring-indigo-500/50 scale-105 opacity-100'
+                      : 'border-[#2a3449] opacity-60 hover:opacity-100 hover:border-gray-400'
+                  }`}
+                  title={`Image ${i + 1} of ${modalImages.length}`}
+                >
+                  <img src={img} alt={`Thumb ${i + 1}`} className="w-full h-full object-cover" />
+                  <span className="absolute bottom-0.5 right-0.5 text-[8px] bg-black/80 text-white px-1 rounded font-mono">
+                    #{i + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Footer Bar */}
           <div className="w-full max-w-6xl mx-auto pt-2 flex items-center justify-between text-xs text-gray-400 border-t border-white/10">
             <span className="font-mono text-[11px] truncate max-w-xl text-gray-500">
               {fullScreenImageUrl.startsWith('data:') ? 'Base64 Encoded Image Data' : fullScreenImageUrl}
             </span>
-            <span className="text-[11px] text-gray-500">
-              Click anywhere outside or press Close / Esc to dismiss
-            </span>
+            <div className="flex items-center gap-3 text-[11px] text-gray-500">
+              {modalImages.length > 1 && (
+                <span>&larr; / &rarr; keys or buttons to slide</span>
+              )}
+              <span>Click backdrop or press Close / Esc to dismiss</span>
+            </div>
           </div>
         </div>
       )}
