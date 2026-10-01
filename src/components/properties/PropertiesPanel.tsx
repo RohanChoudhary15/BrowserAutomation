@@ -218,7 +218,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   useEffect(() => {
-    if (['telegram_message', 'discord_message', 'slack_message'].includes(selectedNode?.data.type || '')) {
+    if (['telegram_message', 'telegram_watch', 'discord_message', 'slack_message'].includes(selectedNode?.data.type || '')) {
       loadBotCredentials();
     }
   }, [selectedNode?.id, selectedNode?.data.type]);
@@ -6232,32 +6232,48 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
 
             {/* Live Status or Last Received Message Preview */}
-            {nodeRuntime?.output && (
-              <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5" /> Message Received
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(String(nodeRuntime.output));
-                    }}
-                    className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
-                  >
-                    <Copy className="w-2.5 h-2.5" /> Copy Text
-                  </button>
+            {(() => {
+              const liveMsg =
+                runtimeState?.output ||
+                (props.textVariable && variables[props.textVariable]) ||
+                (props.outputVariable && variables[props.outputVariable]);
+              const detail =
+                runtimeState?.dynamicState?.detail ||
+                (props.chatIdVariable && variables[props.chatIdVariable]
+                  ? `From ${variables[props.senderNameVariable || 'telegramSenderName'] || variables[props.senderUsernameVariable || 'telegramUsername'] || 'Chat'} (${variables[props.chatIdVariable]})`
+                  : undefined);
+
+              if (!liveMsg) return null;
+
+              return (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5" /> Message Received
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)
+                        );
+                      }}
+                      className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      <Copy className="w-2.5 h-2.5" /> Copy Text
+                    </button>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-emerald-500/20 text-xs font-mono text-emerald-200 break-words max-h-32 overflow-y-auto">
+                    {typeof liveMsg === 'object' ? JSON.stringify(liveMsg, null, 2) : String(liveMsg)}
+                  </div>
+                  {detail && (
+                    <p className="text-[10px] text-gray-400 font-mono">
+                      {detail}
+                    </p>
+                  )}
                 </div>
-                <div className="p-2 rounded bg-black/40 border border-emerald-500/20 text-xs font-mono text-emerald-200 break-words max-h-32 overflow-y-auto">
-                  {typeof nodeRuntime.output === 'object' ? JSON.stringify(nodeRuntime.output, null, 2) : String(nodeRuntime.output)}
-                </div>
-                {nodeRuntime.dynamicState?.detail && (
-                  <p className="text-[10px] text-gray-400 font-mono">
-                    {nodeRuntime.dynamicState.detail}
-                  </p>
-                )}
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
 
