@@ -714,7 +714,7 @@ describe('Free Keyless Scraper Nodes', () => {
       expect(mockCreate).not.toHaveBeenCalled();
       expect(mockCtx.variables['amzItems']).toBeDefined();
 
-      // Twitter syndication_api
+      // Twitter twitter_scraper (zero-tab)
       const twitterNode: WorkflowNode = {
         id: 'node-tw-zero-tab',
         type: 'twitter_scraper',
@@ -724,8 +724,9 @@ describe('Free Keyless Scraper Nodes', () => {
           category: 'scrapers',
           type: 'twitter_scraper',
           properties: {
-            engine: 'syndication_api',
-            query: 'ai automation',
+            engine: 'twitter_scraper',
+            mode: 'profile_tweets',
+            username: 'nasa',
             outputVariable: 'twItems',
           },
         },
@@ -824,7 +825,8 @@ describe('Free Keyless Scraper Nodes', () => {
             category: 'scrapers',
             type: 'twitter_scraper',
             properties: {
-              engine: 'syndication_api',
+              engine: 'twitter_scraper',
+              mode: 'profile_tweets',
               username: 'some_nonexistent_user_99999',
               outputVariable: 'twTestOut',
             },

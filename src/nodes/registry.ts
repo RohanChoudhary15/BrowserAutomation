@@ -146,10 +146,10 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     reactFlowType: 'scraperNode',
     defaultProperties: {
       headless: true,
-      engine: 'twitter_scraper', // 'twitter_scraper' (@the-convocation/twitter-scraper) | 'browser' | 'syndication_api'
-      mode: 'search',
-      query: 'AI agents',
-      username: '',
+      engine: 'twitter_scraper', // 'twitter_scraper' (@the-convocation/twitter-scraper) | 'browser'
+      mode: 'profile_tweets',
+      username: 'OpenAI',
+      query: '',
       maxResults: 15,
       autoScrollPasses: 3,
       scrollDelay: 1500,

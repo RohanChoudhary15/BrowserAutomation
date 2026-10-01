@@ -55,7 +55,10 @@ import {
   scrapeYouTubeComments,
   extractYouTubeVideoId,
 } from '../../utils/youtubeService';
-import { scrapeTwitterWithConvocation } from '../../utils/twitterScraperService';
+import {
+  scrapeTwitterWithConvocation,
+  extractTwitterUsername,
+} from '../../utils/twitterScraperService';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -6873,8 +6876,10 @@ export const executeAmazonScraper: NodeExecutor = async (node, ctx) => {
 export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
   const headless = node.data.properties.headless !== false;
   const autoCloseTab = node.data.properties.autoCloseTab !== false;
-  const engine = node.data.properties.engine || 'twitter_scraper';
-  const mode = node.data.properties.mode || 'search';
+  const rawEngine = node.data.properties.engine || 'twitter_scraper';
+  // Seamlessly alias legacy syndication_api to twitter_scraper
+  const engine = rawEngine === 'syndication_api' ? 'twitter_scraper' : rawEngine;
+  const mode = node.data.properties.mode || 'profile_tweets';
   const query = interpolateVariables(node.data.properties.query || '', ctx.variables);
   const username = interpolateVariables(node.data.properties.username || '', ctx.variables);
   const maxResults = Math.min(Math.max(1, Number(node.data.properties.maxResults) || 15), 100);
@@ -6882,19 +6887,34 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
   const scrollDelay = Math.max(100, Number(node.data.properties.scrollDelay ?? 1500));
   const outputVariable = node.data.properties.outputVariable || 'twitterResults';
 
-  // 1. @the-convocation/twitter-scraper: ZERO TABS OPENED (Default & Recommended)
+  // Determine target mode and user
+  const isUserTimeline =
+    mode === 'profile_tweets' ||
+    mode === 'user' ||
+    mode === 'user_timeline' ||
+    mode === 'user_last_tweets' ||
+    mode === 'user_feed' ||
+    (!query && !!username);
+
+  const isProfileInfo = mode === 'profile' || mode === 'user_profile' || mode === 'profile_info';
+  const cleanUser = extractTwitterUsername(username || (isUserTimeline ? query : ''));
+
+  // 1. @the-convocation/twitter-scraper: ZERO TABS OPENED (Default & Keyless for Timelines)
   if (engine === 'twitter_scraper' || (!engine && !node.data.properties.engine) || engine === 'convocation') {
+    const targetMode = isProfileInfo ? 'profile' : isUserTimeline ? 'user' : 'search';
+    const displayTarget = isUserTimeline ? `@${cleanUser}` : (query || `@${cleanUser}`);
+
     ctx.log({
       level: 'info',
-      message: `Running X/Twitter Scraper (@the-convocation/twitter-scraper: Zero-tab extraction for ${query ? `"${query}"` : `@${username}`})`,
+      message: `Running X/Twitter Scraper (@the-convocation/twitter-scraper: Zero-tab extraction for ${displayTarget})`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
 
     const scraperRes = await scrapeTwitterWithConvocation({
-      mode: mode === 'profile' || mode === 'user_profile' ? 'profile' : (username && !query ? 'user' : 'search'),
-      username,
-      query,
+      mode: targetMode,
+      username: cleanUser,
+      query: isUserTimeline ? '' : query,
       maxResults,
       searchCategory: node.data.properties.searchCategory || 'latest',
       cookies: node.data.properties.cookies,
@@ -6920,7 +6940,7 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
       ctx.variables[`${outputVariable}_profile`] = scraperRes.profile;
       ctx.log({
         level: 'success',
-        message: `X/Twitter Scraper (@the-convocation/twitter-scraper) extracted profile for @${username} into {{${outputVariable}_profile}}`,
+        message: `X/Twitter Scraper (@the-convocation/twitter-scraper) extracted profile for @${cleanUser || username} into {{${outputVariable}_profile}}`,
         nodeId: node.id,
         nodeName: node.data.label,
       });
@@ -6937,111 +6957,12 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
     return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
   }
 
-  // 2. react-tweet / Syndication API: ZERO TABS OPENED
-  if (engine === 'syndication_api') {
-    ctx.log({
-      level: 'info',
-      message: `Running X/Twitter Scraper (react-tweet / Syndication engine: Zero-tab extraction for "${query || username}")`,
-      nodeId: node.id,
-      nodeName: node.data.label,
-    });
-
-    let items: any[] = [];
-    let fetchError: string | null = null;
-    const targetUser = username ? username.replace(/^@/, '') : (query ? query.replace(/^@/, '') : '');
-
-    // Check if query or username is a single tweet URL / ID
-    const isStatusUrl = (query && query.includes('/status/')) || (username && username.includes('/status/'));
-    const statusMatch = (query || username || '').match(/\/status\/([0-9]+)/) || (query || '').match(/^([0-9]{15,22})$/);
-    if (isStatusUrl || statusMatch) {
-      try {
-        const tweetId = statusMatch ? statusMatch[1] : '';
-        const targetUrl = isStatusUrl ? (query || username) : `https://x.com/i/status/${tweetId}`;
-        const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(targetUrl)}`;
-        const res = await fetch(oembedUrl, { signal: ctx.signal });
-        if (res.ok) {
-          const data = await res.json();
-          const htmlText = (data?.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          items.push({
-            id: tweetId || 'tweet_1',
-            text: htmlText || data?.title || '',
-            author: data?.author_name || targetUser || 'X User',
-            username: `@${data?.author_name || targetUser || 'user'}`,
-            authorUrl: data?.author_url || '',
-            url: data?.url || targetUrl,
-            likes: 0,
-            retweets: 0,
-            replies: 0,
-          });
-        }
-      } catch (err: any) {
-        fetchError = err.message;
-      }
-    }
-
-    // Attempt syndication timeline profile if username is available
-    if (items.length === 0 && targetUser) {
-      try {
-        const syndUrl = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${encodeURIComponent(targetUser)}`;
-        const res = await fetch(syndUrl, { signal: ctx.signal });
-        if (res.ok) {
-          const html = await res.text();
-          const tweetMatches = Array.from(html.matchAll(/<div[^>]*data-tweet-id="([0-9]+)"([\s\S]*?)<\/article>/gi));
-          for (const m of tweetMatches) {
-            const id = m[1];
-            const block = m[2];
-            const textMatch = block.match(/<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
-            const text = textMatch ? textMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-            if (text) {
-              items.push({
-                id,
-                text,
-                author: targetUser,
-                username: `@${targetUser}`,
-                url: `https://x.com/${targetUser}/status/${id}`,
-                likes: 0,
-                retweets: 0,
-                replies: 0,
-              });
-              if (items.length >= maxResults) break;
-            }
-          }
-        } else if (res.status === 429) {
-          fetchError = `X/Twitter syndication API rate limited (HTTP 429).`;
-        }
-      } catch (err: any) {
-        fetchError = err.message;
-      }
-    }
-
-    if (items.length === 0) {
-      const errorMsg = fetchError || `No tweets found for "${query || username}". X/Twitter rate-limited or blocked unauthenticated syndication requests. Switch Extraction Engine to "Browser (DOM)" in node properties.`;
-      ctx.log({
-        level: 'error',
-        message: `X/Twitter Scraper (zero-tab): ${errorMsg}`,
-        nodeId: node.id,
-        nodeName: node.data.label,
-      });
-      return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
-    }
-
-    if (items.length > maxResults) items = items.slice(0, maxResults);
-    const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_twitter`);
-    ctx.log({
-      level: 'success',
-      message: `X/Twitter Scraper (react-tweet / Syndication API) extracted ${items.length} items into {{${outputVariable}}} (zero tabs opened)`,
-      nodeId: node.id,
-      nodeName: node.data.label,
-    });
-    return formatScraperTableOutput(items, outputVariable, ctx, node.id, node.data.label, exportResult);
-  }
-
   // 2. Browser DOM Engine
   let targetUrl = '';
   if (mode === 'search') {
     targetUrl = `https://x.com/search?q=${encodeURIComponent(query)}`;
-  } else if (mode === 'profile_tweets' || mode === 'user_feed') {
-    targetUrl = `https://x.com/${username.replace(/^@/, '')}`;
+  } else if (isUserTimeline || isProfileInfo) {
+    targetUrl = `https://x.com/${cleanUser}`;
   } else if (mode === 'single_tweet') {
     targetUrl = query.startsWith('http') ? query : `https://x.com/i/status/${query}`;
   }

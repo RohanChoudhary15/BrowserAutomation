@@ -897,10 +897,10 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
             <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded">No Key Needed</span>
           </div>
 
-          {/* Engine Selector: twitter_scraper vs Browser DOM vs syndication_api */}
+          {/* Engine Selector: twitter_scraper vs Browser DOM */}
           <div>
             <label className="block text-[11px] font-medium text-gray-400 mb-1">Extraction Engine</label>
-            <div className="grid grid-cols-3 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
+            <div className="grid grid-cols-2 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
               <button
                 type="button"
                 onClick={() => onPropChange('engine', 'twitter_scraper')}
@@ -912,7 +912,7 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
                 title="Uses @the-convocation/twitter-scraper: Zero tabs opened, high performance, extracts tweets, likes, retweets, views, and permanent URLs"
               >
                 <Sparkles className="w-3 h-3 text-cyan-300" />
-                <span>twitter-scraper</span>
+                <span>Zero-Tab API (Stream)</span>
               </button>
               <button
                 type="button"
@@ -926,43 +926,39 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
               >
                 <span>🌐 Browser (DOM)</span>
               </button>
-              <button
-                type="button"
-                onClick={() => onPropChange('engine', 'syndication_api')}
-                className={`py-1 text-[10px] font-medium rounded transition-colors flex items-center justify-center gap-1 ${
-                  props.engine === 'syndication_api'
-                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-                title="Twitter Syndication API (react-tweet): Zero tabs opened oEmbed fallback"
-              >
-                <span>react-tweet</span>
-              </button>
             </div>
             {(props.engine || 'twitter_scraper') === 'twitter_scraper' ? (
               <div className="space-y-1 mt-1.5">
                 <p className="text-[10px] text-cyan-400/90 leading-tight">
-                  ⚡ <strong>@the-convocation/twitter-scraper</strong> engine: Zero tabs opened! Directly streams tweets, text, likes, retweets, replies, views, timestamps, and media URLs.
+                  ⚡ <strong>@the-convocation/twitter-scraper</strong>: Zero tabs opened. Directly streams tweets, text, likes, retweets, replies, views, timestamps, and media URLs.
                 </p>
               </div>
-            ) : props.engine === 'syndication_api' ? (
-              <p className="text-[10px] text-cyan-400/90 mt-1">
-                ⚡ Syndication API engine: runs with 0 tabs opened using public oEmbed / syndication endpoints.
-              </p>
             ) : null}
           </div>
 
           {renderExecutionConfig('text-cyan-500', props.engine || 'twitter_scraper')}
 
+          {/* Mode Selector */}
           <div>
             <label className="block text-[11px] font-medium text-gray-400 mb-1">Scrape Mode</label>
-            <div className="grid grid-cols-2 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
+            <div className="grid grid-cols-3 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
+              <button
+                type="button"
+                onClick={() => onPropChange('mode', 'profile_tweets')}
+                className={`py-1 text-[10px] font-medium rounded transition-colors ${
+                  (props.mode || 'profile_tweets') === 'profile_tweets'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                User Timeline
+              </button>
               <button
                 type="button"
                 onClick={() => onPropChange('mode', 'search')}
-                className={`py-1 text-[11px] font-medium rounded transition-colors ${
-                  (props.mode || 'search') === 'search'
-                    ? 'bg-cyan-600 text-white shadow-sm'
+                className={`py-1 text-[10px] font-medium rounded transition-colors ${
+                  props.mode === 'search'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                     : 'text-gray-400 hover:text-white'
                 }`}
               >
@@ -970,30 +966,66 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onPropChange('mode', 'profile_tweets')}
-                className={`py-1 text-[11px] font-medium rounded transition-colors ${
-                  props.mode === 'profile_tweets'
-                    ? 'bg-cyan-600 text-white shadow-sm'
+                onClick={() => onPropChange('mode', 'profile')}
+                className={`py-1 text-[10px] font-medium rounded transition-colors ${
+                  props.mode === 'profile'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                     : 'text-gray-400 hover:text-white'
                 }`}
               >
-                User Timeline
+                Profile Info
               </button>
             </div>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">
-              {(props.mode || 'search') === 'profile_tweets' ? 'Username (@)' : 'Search Keywords or Query'}
-            </label>
-            <input
-              type="text"
-              value={(props.mode || 'search') === 'profile_tweets' ? (props.username || '') : (props.query || '')}
-              onChange={(e) => onPropChange((props.mode || 'search') === 'profile_tweets' ? 'username' : 'query', e.target.value)}
-              placeholder={(props.mode || 'search') === 'profile_tweets' ? 'e.g. OpenAI' : 'e.g. AI automation'}
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-cyan-500 outline-none text-xs"
-            />
-          </div>
+          {/* Mode-specific input */}
+          {(props.mode || 'profile_tweets') === 'profile_tweets' && (
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Twitter Username (@)</label>
+              <input
+                type="text"
+                value={props.username || ''}
+                onChange={(e) => onPropChange('username', e.target.value)}
+                placeholder="e.g. OpenAI or nasa (no login required!)"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-cyan-500 outline-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-emerald-400/90 mt-1">
+                🟢 <strong>No Login Required</strong>: Extracts public user tweets, retweets, replies, metrics, and media without needing any Twitter account.
+              </p>
+            </div>
+          )}
+
+          {props.mode === 'search' && (
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Search Keywords or Hashtags</label>
+              <input
+                type="text"
+                value={props.query || ''}
+                onChange={(e) => onPropChange('query', e.target.value)}
+                placeholder="e.g. artificial intelligence or #buildinpublic"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-cyan-500 outline-none text-xs"
+              />
+              <p className="text-[10px] text-amber-400/90 mt-1">
+                ℹ️ Twitter requires authentication cookies (auth_token & ct0) for searching tweets via zero-tab API. Switch engine to <strong>🌐 Browser (DOM)</strong> above to search in a browser tab without cookies, or provide your auth_token below.
+              </p>
+            </div>
+          )}
+
+          {props.mode === 'profile' && (
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Twitter Username (@)</label>
+              <input
+                type="text"
+                value={props.username || ''}
+                onChange={(e) => onPropChange('username', e.target.value)}
+                placeholder="e.g. OpenAI or elonmusk"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-cyan-500 outline-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-emerald-400/90 mt-1">
+                🟢 <strong>No Login Required</strong>: Extracts user follower count, bio, verified status, joined date, and avatar.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -1019,6 +1051,38 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
               />
             </div>
           </div>
+
+          {/* Optional Twitter Auth Cookies (collapsible) */}
+          <details className="bg-[#11141c] p-2.5 rounded-lg border border-[#1c2230] text-xs">
+            <summary className="text-[11px] font-medium text-gray-400 cursor-pointer hover:text-cyan-300 transition-colors">
+              🔐 Twitter Auth Cookies (Optional for search / private accounts)
+            </summary>
+            <div className="space-y-2 mt-2 pt-2 border-t border-[#1c2230]">
+              <p className="text-[10px] text-gray-400">
+                Only needed if using <strong>Search</strong> mode with zero-tab API, or scraping protected accounts. Leave blank for public User Timelines.
+              </p>
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">auth_token cookie</label>
+                <input
+                  type="password"
+                  value={props.authToken || ''}
+                  onChange={(e) => onPropChange('authToken', e.target.value)}
+                  placeholder="Paste auth_token from twitter.com cookies"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-cyan-500 outline-none text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">ct0 cookie (CSRF token)</label>
+                <input
+                  type="password"
+                  value={props.ct0 || ''}
+                  onChange={(e) => onPropChange('ct0', e.target.value)}
+                  placeholder="Paste ct0 from twitter.com cookies"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-cyan-500 outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+          </details>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
