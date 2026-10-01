@@ -7637,11 +7637,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {/* Full Screen Image Preview Modal */}
       {fullScreenImageUrl && (
         <div
-          className="fixed inset-0 z-[9999] bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 select-none animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 select-none animate-in fade-in duration-150 cursor-zoom-out"
           onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setFullScreenImageUrl(null);
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'IMG' || target.closest('button') || target.closest('a') || target.closest('.no-close-modal')) {
+              return;
             }
+            setFullScreenImageUrl(null);
           }}
         >
           {/* Top-Right Floating Quick Close Button */}
@@ -7655,7 +7657,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </button>
 
           {/* Header */}
-          <div className="flex items-center justify-between w-full max-w-6xl mx-auto pb-3 border-b border-white/10 text-white relative z-10 pr-12">
+          <div
+            className="flex items-center justify-between w-full max-w-6xl mx-auto pb-3 border-b border-white/10 text-white relative z-10 pr-12 cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 shadow-sm">
                 <ImageIcon className="w-4 h-4" />
@@ -7684,7 +7689,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   <button
                     type="button"
                     onClick={handlePrevFullScreenImage}
-                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors"
+                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors cursor-pointer"
                     title="Previous Image (Left Arrow)"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -7695,7 +7700,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   <button
                     type="button"
                     onClick={handleNextFullScreenImage}
-                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors"
+                    className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-[#202738] transition-colors cursor-pointer"
                     title="Next Image (Right Arrow)"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -7710,7 +7715,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
                   handleDownloadImage(fullScreenImageUrl, `${baseName}_${fullScreenImageIndex + 1}.png`);
                 }}
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
                 title="Download this image"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -7722,7 +7727,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 href={fullScreenImageUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Open original image in new tab"
               >
                 <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
@@ -7737,7 +7742,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   setCopiedBase64(true);
                   setTimeout(() => setCopiedBase64(false), 2000);
                 }}
-                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-[#1c2230] hover:bg-[#283145] text-gray-300 hover:text-white text-xs font-medium border border-[#2a3449] flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Copy URL / Base64"
               >
                 {copiedBase64 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -7748,7 +7753,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setFullScreenImageUrl(null)}
-                className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm ml-1"
+                className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm ml-1 cursor-pointer"
                 title="Close full screen preview (Esc)"
               >
                 <X className="w-3.5 h-3.5" />
@@ -7757,13 +7762,25 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
           </div>
 
-          {/* Main Image Viewport with Left/Right Arrow UI Buttons */}
-          <div className="flex-1 flex items-center justify-center relative w-full max-w-6xl mx-auto my-2 overflow-hidden">
+          {/* Main Image Viewport with Left/Right Arrow UI Buttons and Floating Actions Pill */}
+          <div
+            className="flex-1 flex items-center justify-center relative w-full max-w-6xl mx-auto my-2 overflow-hidden cursor-zoom-out"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.tagName === 'IMG' || target.closest('button') || target.closest('a') || target.closest('.no-close-modal')) {
+                return;
+              }
+              setFullScreenImageUrl(null);
+            }}
+          >
             {/* Left Navigation Arrow Button */}
             {modalImages.length > 1 && (
               <button
                 type="button"
-                onClick={handlePrevFullScreenImage}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrevFullScreenImage();
+                }}
                 className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-20 p-3 rounded-full bg-black/75 hover:bg-black/90 text-white/90 hover:text-white border border-white/20 hover:border-white/40 transition-all hover:scale-110 shadow-2xl backdrop-blur-sm group cursor-pointer"
                 title="Previous image (Left Arrow)"
               >
@@ -7772,7 +7789,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             )}
 
             {/* Main Center Image with transition */}
-            <div className="relative max-h-[72vh] max-w-[90vw] flex items-center justify-center">
+            <div
+              className="relative max-h-[72vh] max-w-[90vw] flex items-center justify-center cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            >
               <img
                 key={fullScreenImageUrl}
                 src={fullScreenImageUrl}
@@ -7785,18 +7805,78 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             {modalImages.length > 1 && (
               <button
                 type="button"
-                onClick={handleNextFullScreenImage}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNextFullScreenImage();
+                }}
                 className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-20 p-3 rounded-full bg-black/75 hover:bg-black/90 text-white/90 hover:text-white border border-white/20 hover:border-white/40 transition-all hover:scale-110 shadow-2xl backdrop-blur-sm group cursor-pointer"
                 title="Next image (Right Arrow)"
               >
                 <ChevronRight className="w-6 h-6 group-hover:translate-x-0.5 transition-transform" />
               </button>
             )}
+
+            {/* Floating Quick Actions Bar right below the image in Full Screen */}
+            <div
+              className="absolute bottom-3 z-30 flex items-center gap-2 bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 shadow-2xl no-close-modal cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const baseName = props.downloadFilename || `${props.outputVariable || 'image'}`;
+                  handleDownloadImage(fullScreenImageUrl, `${baseName}_${fullScreenImageIndex + 1}.png`);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all hover:scale-105 shadow-md cursor-pointer"
+                title="Download this image"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download</span>
+              </button>
+
+              <a
+                href={fullScreenImageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1c2230] hover:bg-[#283145] text-gray-200 hover:text-white text-xs font-medium border border-white/10 transition-all hover:scale-105 shadow-md cursor-pointer"
+                title="Open full resolution in new tab"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-gray-300" />
+                <span>Open in Tab</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(fullScreenImageUrl);
+                  setCopiedBase64(true);
+                  setTimeout(() => setCopiedBase64(false), 2000);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1c2230] hover:bg-[#283145] text-gray-200 hover:text-white text-xs font-medium border border-white/10 transition-all hover:scale-105 shadow-md cursor-pointer"
+                title="Copy URL or base64"
+              >
+                {copiedBase64 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedBase64 ? 'Copied' : 'Copy'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFullScreenImageUrl(null)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-600/30 hover:bg-red-600 text-red-200 hover:text-white text-xs font-medium border border-red-500/30 transition-all hover:scale-105 cursor-pointer ml-1"
+                title="Close (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Close</span>
+              </button>
+            </div>
           </div>
 
           {/* Bottom Thumbnail Strip (if multiple images) */}
           {modalImages.length > 1 && (
-            <div className="flex items-center justify-center gap-2 py-1.5 overflow-x-auto max-w-2xl mx-auto z-10 px-4">
+            <div
+              className="flex items-center justify-center gap-2 py-1.5 overflow-x-auto max-w-2xl mx-auto z-10 px-4 cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            >
               {modalImages.map((img, i) => (
                 <button
                   key={i}
@@ -7822,7 +7902,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           )}
 
           {/* Footer Bar */}
-          <div className="w-full max-w-6xl mx-auto pt-2 flex items-center justify-between text-xs text-gray-400 border-t border-white/10">
+          <div
+            className="w-full max-w-6xl mx-auto pt-2 flex items-center justify-between text-xs text-gray-400 border-t border-white/10 cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
             <span className="font-mono text-[11px] truncate max-w-xl text-gray-500">
               {fullScreenImageUrl.startsWith('data:') ? 'Base64 Encoded Image Data' : fullScreenImageUrl}
             </span>

@@ -1069,9 +1069,10 @@ export class WorkflowEngine {
           nodeName: next.data.label,
         });
 
+        Object.assign(this.variables, ctx.variables);
         const mergedCtx: ExecutionContext = {
           ...ctx,
-          variables: { ...this.variables, ...ctx.variables },
+          variables: this.variables,
         };
 
         await this.traverseAndExecute(next, mergedCtx);

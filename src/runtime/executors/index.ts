@@ -55,6 +55,7 @@ import {
   scrapeYouTubeComments,
   extractYouTubeVideoId,
 } from '../../utils/youtubeService';
+import { scrapeTwitterWithConvocation } from '../../utils/twitterScraperService';
 
 export type NodeExecutor = (node: WorkflowNode, ctx: ExecutionContext) => Promise<NodeResult>;
 
@@ -1465,6 +1466,9 @@ export const executeLogicGate: NodeExecutor = async (node, ctx) => {
 
   return {
     success: true,
+    variables: {
+      [outputVariable]: result,
+    },
     output: {
       result,
       gate,
@@ -6869,7 +6873,7 @@ export const executeAmazonScraper: NodeExecutor = async (node, ctx) => {
 export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
   const headless = node.data.properties.headless !== false;
   const autoCloseTab = node.data.properties.autoCloseTab !== false;
-  const engine = node.data.properties.engine || 'browser';
+  const engine = node.data.properties.engine || 'twitter_scraper';
   const mode = node.data.properties.mode || 'search';
   const query = interpolateVariables(node.data.properties.query || '', ctx.variables);
   const username = interpolateVariables(node.data.properties.username || '', ctx.variables);
@@ -6878,7 +6882,62 @@ export const executeTwitterScraper: NodeExecutor = async (node, ctx) => {
   const scrollDelay = Math.max(100, Number(node.data.properties.scrollDelay ?? 1500));
   const outputVariable = node.data.properties.outputVariable || 'twitterResults';
 
-  // 1. react-tweet / Syndication API: ZERO TABS OPENED
+  // 1. @the-convocation/twitter-scraper: ZERO TABS OPENED (Default & Recommended)
+  if (engine === 'twitter_scraper' || (!engine && !node.data.properties.engine) || engine === 'convocation') {
+    ctx.log({
+      level: 'info',
+      message: `Running X/Twitter Scraper (@the-convocation/twitter-scraper: Zero-tab extraction for ${query ? `"${query}"` : `@${username}`})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+
+    const scraperRes = await scrapeTwitterWithConvocation({
+      mode: mode === 'profile' || mode === 'user_profile' ? 'profile' : (username && !query ? 'user' : 'search'),
+      username,
+      query,
+      maxResults,
+      searchCategory: node.data.properties.searchCategory || 'latest',
+      cookies: node.data.properties.cookies,
+      authToken: node.data.properties.authToken,
+      ct0: node.data.properties.ct0,
+      signal: ctx.signal,
+    });
+
+    if (scraperRes.success && scraperRes.items.length > 0) {
+      let items = scraperRes.items;
+      if (items.length > maxResults) items = items.slice(0, maxResults);
+      const exportResult = await handleScraperExport(items, node, ctx, `${outputVariable}_twitter`);
+      ctx.log({
+        level: 'success',
+        message: `X/Twitter Scraper (@the-convocation/twitter-scraper) extracted ${items.length} items into {{${outputVariable}}} (zero tabs opened)`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput(items, outputVariable, ctx, node.id, node.data.label, exportResult);
+    }
+
+    if (scraperRes.success && scraperRes.profile) {
+      ctx.variables[`${outputVariable}_profile`] = scraperRes.profile;
+      ctx.log({
+        level: 'success',
+        message: `X/Twitter Scraper (@the-convocation/twitter-scraper) extracted profile for @${username} into {{${outputVariable}_profile}}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      return formatScraperTableOutput([scraperRes.profile], outputVariable, ctx, node.id, node.data.label, { success: true, count: 1 });
+    }
+
+    const errorMsg = scraperRes.error || `No tweets found for "${query || username}".`;
+    ctx.log({
+      level: 'error',
+      message: `X/Twitter Scraper (@the-convocation/twitter-scraper): ${errorMsg}`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+    return formatScraperTableOutput([], outputVariable, ctx, node.id, node.data.label, { success: false, count: 0 }, {}, errorMsg);
+  }
+
+  // 2. react-tweet / Syndication API: ZERO TABS OPENED
   if (engine === 'syndication_api') {
     ctx.log({
       level: 'info',

@@ -10,6 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@the-convocation/twitter-scraper": "^0.22.3",
     "@xyflow/react": "^12.4.2",
     "clsx": "^2.1.1",
     "idb": "^8.0.2",

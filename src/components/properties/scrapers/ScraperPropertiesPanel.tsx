@@ -897,43 +897,62 @@ export const ScraperPropertiesPanel: React.FC<ScraperPropertiesPanelProps> = ({
             <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded">No Key Needed</span>
           </div>
 
-          {/* Engine Selector: Browser DOM vs syndication_api */}
+          {/* Engine Selector: twitter_scraper vs Browser DOM vs syndication_api */}
           <div>
             <label className="block text-[11px] font-medium text-gray-400 mb-1">Extraction Engine</label>
-            <div className="grid grid-cols-2 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
+            <div className="grid grid-cols-3 gap-1 bg-[#11141c] p-1 rounded-lg border border-[#1c2230]">
+              <button
+                type="button"
+                onClick={() => onPropChange('engine', 'twitter_scraper')}
+                className={`py-1 text-[10px] font-medium rounded transition-colors flex items-center justify-center gap-1 ${
+                  (props.engine || 'twitter_scraper') === 'twitter_scraper'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title="Uses @the-convocation/twitter-scraper: Zero tabs opened, high performance, extracts tweets, likes, retweets, views, and permanent URLs"
+              >
+                <Sparkles className="w-3 h-3 text-cyan-300" />
+                <span>twitter-scraper</span>
+              </button>
               <button
                 type="button"
                 onClick={() => onPropChange('engine', 'browser')}
-                className={`py-1 text-[11px] font-medium rounded transition-colors flex items-center justify-center gap-1.5 ${
-                  (props.engine || 'browser') === 'browser'
-                    ? 'bg-cyan-600 text-white shadow-sm'
+                className={`py-1 text-[10px] font-medium rounded transition-colors flex items-center justify-center gap-1 ${
+                  props.engine === 'browser'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                     : 'text-gray-400 hover:text-white'
                 }`}
+                title="Browser DOM: Opens an active or headless browser tab to scrape rendered elements"
               >
                 <span>🌐 Browser (DOM)</span>
               </button>
               <button
                 type="button"
                 onClick={() => onPropChange('engine', 'syndication_api')}
-                className={`py-1 text-[11px] font-medium rounded transition-colors flex items-center justify-center gap-1.5 ${
+                className={`py-1 text-[10px] font-medium rounded transition-colors flex items-center justify-center gap-1 ${
                   props.engine === 'syndication_api'
-                    ? 'bg-cyan-600 text-white shadow-sm'
+                    ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                     : 'text-gray-400 hover:text-white'
                 }`}
-                title="Uses Twitter Syndication API (react-tweet): Zero tabs opened, bypasses login wall, extracts tweet data directly"
+                title="Twitter Syndication API (react-tweet): Zero tabs opened oEmbed fallback"
               >
-                <Sparkles className="w-3 h-3 text-cyan-300" />
-                <span>react-tweet (API)</span>
+                <span>react-tweet</span>
               </button>
             </div>
-            {props.engine === 'syndication_api' ? (
+            {(props.engine || 'twitter_scraper') === 'twitter_scraper' ? (
+              <div className="space-y-1 mt-1.5">
+                <p className="text-[10px] text-cyan-400/90 leading-tight">
+                  ⚡ <strong>@the-convocation/twitter-scraper</strong> engine: Zero tabs opened! Directly streams tweets, text, likes, retweets, replies, views, timestamps, and media URLs.
+                </p>
+              </div>
+            ) : props.engine === 'syndication_api' ? (
               <p className="text-[10px] text-cyan-400/90 mt-1">
-                ⚡ Syndication API engine: runs with 0 tabs opened! Bypasses login walls, extracts tweet text, author, and engagement metrics directly.
+                ⚡ Syndication API engine: runs with 0 tabs opened using public oEmbed / syndication endpoints.
               </p>
             ) : null}
           </div>
 
-          {renderExecutionConfig('text-cyan-500', props.engine || 'browser')}
+          {renderExecutionConfig('text-cyan-500', props.engine || 'twitter_scraper')}
 
           <div>
             <label className="block text-[11px] font-medium text-gray-400 mb-1">Scrape Mode</label>

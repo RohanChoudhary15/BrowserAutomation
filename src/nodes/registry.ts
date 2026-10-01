@@ -146,7 +146,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     reactFlowType: 'scraperNode',
     defaultProperties: {
       headless: true,
-      engine: 'browser', // 'browser' | 'syndication_api'
+      engine: 'twitter_scraper', // 'twitter_scraper' (@the-convocation/twitter-scraper) | 'browser' | 'syndication_api'
       mode: 'search',
       query: 'AI agents',
       username: '',
