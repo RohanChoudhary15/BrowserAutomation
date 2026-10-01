@@ -58,6 +58,7 @@ export const ControlFlowProperties: React.FC<ControlFlowPropertiesProps> = ({
                 <option value="equals">Equals (Exact)</option>
                 <option value="contains">Contains</option>
                 <option value="starts_with">Starts With</option>
+                <option value="ends_with">Ends With</option>
                 <option value="regex">Regex</option>
               </select>
             </div>
@@ -182,6 +183,8 @@ export const ControlFlowProperties: React.FC<ControlFlowPropertiesProps> = ({
                 <option value="equals">Equals (==)</option>
                 <option value="not_equals">Not Equals (!=)</option>
                 <option value="contains">Contains</option>
+                <option value="starts_with">Starts With</option>
+                <option value="ends_with">Ends With</option>
                 <option value="greater_than">Greater Than (&gt;)</option>
                 <option value="less_than">Less Than (&lt;)</option>
                 <option value="exists">Exists</option>

@@ -2770,8 +2770,11 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
 
   ctx.updateNodeState(node.id, {
     status: 'success',
+    output,
     dynamicState: {
       message: `${outputFormat.toUpperCase()}${autoDownload ? ' (saved)' : ''}`,
+      response: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
+      detail: typeof output === 'string' ? output.slice(0, 120) : JSON.stringify(output).slice(0, 120),
     },
   });
 
@@ -2843,7 +2846,16 @@ export const executeAutonomousAgent: NodeExecutor = async (node, ctx) => {
     level: 'success',
     message: `Autonomous Agent completed in ${steps.length} steps: ${finalAnswer}`,
     nodeId: node.id,
-    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    output: finalAnswer,
+    dynamicState: {
+      message: `Completed (${steps.length} steps)`,
+      response: finalAnswer,
+      detail: finalAnswer.slice(0, 120),
+    },
   });
 
   return {
@@ -3104,23 +3116,42 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
   }
 
   // 2. OpenAI DALL-E & OpenAI-Compatible Gateways
+  const isDallE = model.toLowerCase().includes('dall-e');
+
   if (baseUrl) {
     baseUrl = baseUrl.replace(/\/+$/, '');
     if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/images')) {
       baseUrl = `${baseUrl}/v1`;
     }
+  } else if (isDallE || apiKey.startsWith('sk-')) {
+    baseUrl = 'https://api.openai.com/v1';
   } else {
-    baseUrl = getOpenAiBaseUrl(aiConfig);
+    baseUrl = getOpenAiBaseUrl({
+      ...aiConfig,
+      apiKey: apiKey,
+    });
   }
 
   const endpoint = baseUrl.endsWith('/images/generations') ? baseUrl : `${baseUrl}/images/generations`;
 
   const generateOpenAiSingle = async (idx: number) => {
+    // Normalize size for DALL-E
+    let normalizedSize = size;
+    if (model.toLowerCase().includes('dall-e-3')) {
+      if (!['1024x1024', '1024x1792', '1792x1024'].includes(normalizedSize)) {
+        normalizedSize = '1024x1024';
+      }
+    } else if (model.toLowerCase().includes('dall-e-2')) {
+      if (!['256x256', '512x512', '1024x1024'].includes(normalizedSize)) {
+        normalizedSize = '1024x1024';
+      }
+    }
+
     const requestBody: Record<string, any> = {
       prompt,
       model,
       n: 1,
-      size,
+      size: normalizedSize,
       response_format: responseFormat,
     };
 
@@ -3382,6 +3413,162 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
     output: resData,
     variables: { [outputVariable]: resData },
   };
+};
+
+export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
+  const credentialId = node.data.properties.credentialId;
+  const savedCred = credentialId ? await getCredentialById(credentialId) : undefined;
+
+  const rawBotToken = node.data.properties.botToken || savedCred?.botToken || '';
+  const rawAllowedChatId = node.data.properties.allowedChatId || node.data.properties.chatId || '';
+  const timeoutSeconds = Math.max(5, Number(node.data.properties.timeoutSeconds) || 60);
+  const pollIntervalMs = Math.max(500, Number(node.data.properties.pollIntervalMs) || 1500);
+  const markAsRead = node.data.properties.markAsRead !== false;
+  const onlyNewMessages = node.data.properties.onlyNewMessages !== false;
+
+  const textVariable = node.data.properties.textVariable || 'telegramMessage';
+  const chatIdVariable = node.data.properties.chatIdVariable || 'telegramChatId';
+  const senderUsernameVariable = node.data.properties.senderUsernameVariable || 'telegramUsername';
+  const senderNameVariable = node.data.properties.senderNameVariable || 'telegramSenderName';
+  const rawUpdateVariable = node.data.properties.rawUpdateVariable || 'telegramUpdate';
+  const outputVariable = node.data.properties.outputVariable || 'telegramMessage';
+
+  const botToken = String(interpolateVariables(rawBotToken, ctx.variables)).trim();
+  const allowedChatId = String(interpolateVariables(rawAllowedChatId, ctx.variables)).trim();
+
+  if (!botToken) {
+    throw new Error('Telegram Bot Token is required to watch for updates. Provide a bot token or select a saved Telegram credential.');
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Waiting for Telegram messages (Timeout: ${timeoutSeconds}s)${allowedChatId ? ` filtered to chat: ${allowedChatId}` : ''}...`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'running',
+    dynamicState: {
+      message: 'Listening for Telegram messages...',
+      remainingSeconds: timeoutSeconds,
+    },
+  });
+
+  // 1. Initial poll to establish baseline offset if onlyNewMessages is true
+  let currentOffset: number | undefined = undefined;
+  if (onlyNewMessages) {
+    try {
+      const initUrl = `https://api.telegram.org/bot${botToken}/getUpdates?offset=-1&limit=1`;
+      const initRes = await safeFetch(initUrl, { method: 'GET', signal: ctx.signal });
+      if (initRes.ok) {
+        const initData = await initRes.json();
+        if (initData.ok && Array.isArray(initData.result) && initData.result.length > 0) {
+          currentOffset = initData.result[0].update_id + 1;
+        }
+      }
+    } catch {
+      // ignore init offset error
+    }
+  }
+
+  const startTime = Date.now();
+  const maxEndTime = startTime + timeoutSeconds * 1000;
+
+  while (Date.now() < maxEndTime) {
+    if (ctx.signal?.aborted) {
+      throw new Error('Telegram message watcher was cancelled.');
+    }
+
+    const remainingSec = Math.max(0, Math.ceil((maxEndTime - Date.now()) / 1000));
+    ctx.updateNodeState(node.id, {
+      status: 'running',
+      dynamicState: {
+        message: `Listening (${remainingSec}s left)...`,
+        remainingSeconds: remainingSec,
+      },
+    });
+
+    try {
+      const offsetParam = currentOffset !== undefined ? `&offset=${currentOffset}` : '';
+      const pollUrl = `https://api.telegram.org/bot${botToken}/getUpdates?timeout=3&limit=10${offsetParam}`;
+      const res = await safeFetch(pollUrl, { method: 'GET', signal: ctx.signal });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.result) && data.result.length > 0) {
+          for (const update of data.result) {
+            if (update.update_id !== undefined) {
+              currentOffset = Math.max(currentOffset ?? 0, update.update_id + 1);
+            }
+
+            const msg = update.message || update.edited_message || update.channel_post;
+            if (!msg) continue;
+
+            const msgChatId = String(msg.chat?.id ?? '');
+            if (allowedChatId && msgChatId !== allowedChatId) {
+              continue;
+            }
+
+            const messageText = msg.text || msg.caption || '';
+            const senderUsername = msg.from?.username || '';
+            const senderFirstName = msg.from?.first_name || '';
+            const senderLastName = msg.from?.last_name || '';
+            const senderFullName = [senderFirstName, senderLastName].filter(Boolean).join(' ') || senderUsername || msgChatId;
+            const messageId = msg.message_id;
+            const timestamp = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
+
+            if (markAsRead && currentOffset !== undefined) {
+              safeFetch(`https://api.telegram.org/bot${botToken}/getUpdates?offset=${currentOffset}&limit=1`, {
+                method: 'GET',
+              }).catch(() => {});
+            }
+
+            ctx.log({
+              level: 'success',
+              message: `Received Telegram message from ${senderFullName} (${msgChatId}): "${messageText.slice(0, 50)}"`,
+              nodeId: node.id,
+              nodeName: node.data.label,
+            });
+
+            ctx.updateNodeState(node.id, {
+              status: 'success',
+              output: messageText,
+              dynamicState: {
+                message: `Received: "${messageText.slice(0, 24)}"`,
+                detail: `From ${senderFullName} (Chat ${msgChatId})`,
+              },
+            });
+
+            const resultVariables: Record<string, any> = {
+              [textVariable]: messageText,
+              [chatIdVariable]: msgChatId,
+              [senderUsernameVariable]: senderUsername,
+              [senderNameVariable]: senderFullName,
+              [`${textVariable}_id`]: messageId,
+              [`${textVariable}_timestamp`]: timestamp,
+              [rawUpdateVariable]: update,
+              [`${rawUpdateVariable}_message`]: msg,
+              [outputVariable]: messageText,
+            };
+            Object.assign(ctx.variables, resultVariables);
+
+            return {
+              success: true,
+              output: messageText,
+              variables: resultVariables,
+            };
+          }
+        }
+      }
+    } catch (pollErr: any) {
+      if (ctx.signal?.aborted) throw pollErr;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 2000)));
+  }
+
+  throw new Error(`Timed out after ${timeoutSeconds}s waiting for a Telegram message.`);
 };
 
 export const executeDiscordMessage: NodeExecutor = async (node, ctx) => {
@@ -5754,6 +5941,8 @@ export const executeSwitchCase: NodeExecutor = async (node, ctx) => {
       isMatch = testExpr.includes(testTarget);
     } else if (matchMode === 'starts_with') {
       isMatch = testExpr.startsWith(testTarget);
+    } else if (matchMode === 'ends_with') {
+      isMatch = testExpr.endsWith(testTarget);
     } else if (matchMode === 'regex') {
       try {
         const regex = new RegExp(rawTarget, caseSensitive ? undefined : 'i');
@@ -7427,6 +7616,7 @@ export const executors: Record<string, NodeExecutor> = {
   autonomous_agent: executeAutonomousAgent,
   generate_image: executeGenerateImage,
   telegram_message: executeTelegramMessage,
+  telegram_watch: executeTelegramWatch,
   discord_message: executeDiscordMessage,
   slack_message: executeSlackMessage,
   stop_timer: executeStopTimer,

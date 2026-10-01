@@ -63,6 +63,7 @@ import {
   ExternalLink,
   Repeat,
   GripVertical,
+  Radio,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels, queryLlm } from '../../ai/aiService';
@@ -1802,6 +1803,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                             <option value="equals">equals (==)</option>
                             <option value="not_equals">not equals (!=)</option>
                             <option value="contains">contains</option>
+                            <option value="starts_with">starts with</option>
+                            <option value="ends_with">ends with</option>
                             <option value="exists">exists</option>
                           </select>
                         </div>
@@ -4074,6 +4077,65 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
               <span className="text-[11px]">JSON Mode (parse response into structured object)</span>
             </label>
+
+            {/* AI Agent Response / Result Preview */}
+            {(() => {
+              const nodeStateOutput = runtimeState?.output ?? runtimeState?.dynamicState?.response;
+              const varOutput = props.outputVariable ? variables[props.outputVariable] : undefined;
+              const effectiveOutput = nodeStateOutput ?? varOutput;
+              const hasOutput = effectiveOutput !== undefined && effectiveOutput !== null && effectiveOutput !== '';
+              const isSuccess = runtimeState?.status === 'success';
+
+              if (!hasOutput && !isSuccess) return null;
+
+              const textToDisplay = typeof effectiveOutput === 'object'
+                ? JSON.stringify(effectiveOutput, null, 2)
+                : String(effectiveOutput || 'Completed with empty response');
+
+              return (
+                <div className="p-3 rounded-xl bg-[#0f131d] border border-indigo-500/30 space-y-2 mt-3 shadow-sm">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-400">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                      <span>{selectedNode.data.type === 'autonomous_agent' ? 'Agent Goal Response' : 'AI Agent Response'}</span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {isSuccess && (
+                        <span className="text-[9px] bg-emerald-950/60 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-mono">
+                          Success
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(textToDisplay);
+                          setCopiedBase64(true);
+                          setTimeout(() => setCopiedBase64(false), 2000);
+                        }}
+                        className="p-1 px-1.5 rounded bg-[#161d2b] hover:bg-[#20293d] text-gray-300 hover:text-white border border-[#26334a] text-[10px] flex items-center gap-1 transition-colors"
+                        title="Copy AI response"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>{copiedBase64 ? 'Copied!' : 'Copy'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded-lg bg-black/60 border border-[#1e2738] max-h-56 overflow-y-auto font-mono text-[11px] text-gray-200 whitespace-pre-wrap select-all leading-relaxed">
+                    {textToDisplay}
+                  </div>
+
+                  {props.outputVariable && (
+                    <div className="flex items-center justify-between text-[10px] text-gray-400 pt-0.5">
+                      <span>Saved to variable:</span>
+                      <code className="text-indigo-300 font-mono bg-indigo-950/40 px-1.5 py-0.5 rounded border border-indigo-800/30">
+                        &#123;&#123;{props.outputVariable}&#125;&#125;
+                      </code>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -4907,6 +4969,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <option value="not_equals">not equals (!=)</option>
                 <option value="contains">contains</option>
                 <option value="does_not_contain">does not contain</option>
+                <option value="starts_with">starts with</option>
+                <option value="ends_with">ends with</option>
                 <option value="greater_than">greater than (&gt;)</option>
                 <option value="less_than">less than (&lt;)</option>
                 <option value="greater_equal">greater or equal (&gt;=)</option>
@@ -4934,7 +4998,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </div>
             )}
 
-            {['equals', 'not_equals', 'contains', 'does_not_contain'].includes(props.operator || 'equals') && (
+            {['equals', 'not_equals', 'contains', 'does_not_contain', 'starts_with', 'ends_with'].includes(props.operator || 'equals') && (
               <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-0.5">
                 <input
                   type="checkbox"
@@ -5933,6 +5997,267 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
               />
             </div>
+          </div>
+        )}
+
+        {/* Watch Telegram Updates Node */}
+        {selectedNode.data.type === 'telegram_watch' && (
+          <div className="space-y-3">
+            {/* Header info card */}
+            <div className="p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-semibold text-blue-400">
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                <span>Telegram Live Message Watcher</span>
+              </div>
+              <p className="text-[11px] text-gray-300 leading-relaxed">
+                Waits for incoming messages sent to your Telegram bot. When a message arrives, it extracts the chat ID, message text, sender details, and raw update into variables to trigger downstream actions.
+              </p>
+            </div>
+
+            {/* Account / Credential Selector */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Telegram Bot Account</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCredModalPlatform('telegram');
+                    setIsCredModalOpen(true);
+                  }}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Manage Accounts
+                </button>
+              </div>
+
+              <select
+                value={props.credentialId || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  handlePropChange('credentialId', val);
+                  if (val) {
+                    const match = savedTelegramCreds.find((c) => c.id === val);
+                    if (match?.botToken) handlePropChange('botToken', match.botToken);
+                    if (match?.defaultChatId && !props.allowedChatId) handlePropChange('allowedChatId', match.defaultChatId);
+                  }
+                }}
+                className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] outline-none text-xs"
+              >
+                <option value="">Manual / Custom Credentials</option>
+                {savedTelegramCreds.map((cred) => (
+                  <option key={cred.id} value={cred.id}>
+                    Saved: {cred.name} {cred.defaultChatId ? `(${cred.defaultChatId})` : ''}
+                  </option>
+                ))}
+              </select>
+
+              {(!props.credentialId || props.credentialId === '') && (
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-gray-400">Bot Token</label>
+                      <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                    </div>
+                    <input
+                      type="password"
+                      value={props.botToken || ''}
+                      onChange={(e) => handlePropChange('botToken', e.target.value)}
+                      placeholder="123456789:ABCDefGh... or {{telegramToken}}"
+                      className="w-full bg-[#161a24] text-white p-2 rounded-lg border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      Obtain via <span className="text-gray-300 font-mono">@BotFather</span> on Telegram.
+                    </p>
+                  </div>
+
+                  {props.botToken && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const accountName = prompt('Enter a name for this Telegram account:', 'My Telegram Bot');
+                        if (accountName) {
+                          const saved = await saveCredential({
+                            platform: 'telegram',
+                            name: accountName,
+                            botToken: props.botToken,
+                            defaultChatId: props.allowedChatId,
+                          });
+                          await loadBotCredentials();
+                          handlePropChange('credentialId', saved.id);
+                        }
+                      }}
+                      className="w-full py-1 px-2 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Bookmark className="w-3 h-3" /> Save this token as a reusable account
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Filter by Chat ID */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Filter by Chat ID (Optional)</label>
+                <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+              </div>
+              <input
+                type="text"
+                value={props.allowedChatId || ''}
+                onChange={(e) => handlePropChange('allowedChatId', e.target.value)}
+                placeholder="Leave blank for any chat, or -100123456789 / @channel"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none font-mono text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                If specified, only messages originating from this chat/user ID will trigger the node.
+              </p>
+            </div>
+
+            {/* Timeout & Polling Interval */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Timeout (seconds)</label>
+                <input
+                  type="number"
+                  min="5"
+                  max="3600"
+                  value={props.timeoutSeconds !== undefined ? props.timeoutSeconds : 60}
+                  onChange={(e) => handlePropChange('timeoutSeconds', Math.max(5, parseInt(e.target.value) || 60))}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Poll Interval (ms)</label>
+                <input
+                  type="number"
+                  min="500"
+                  max="10000"
+                  step="500"
+                  value={props.pollIntervalMs !== undefined ? props.pollIntervalMs : 2000}
+                  onChange={(e) => handlePropChange('pollIntervalMs', Math.max(500, parseInt(e.target.value) || 2000))}
+                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Checkbox Options */}
+            <div className="pt-2 border-t border-[#1c2230] space-y-2">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.onlyNewMessages !== false}
+                  onChange={(e) => handlePropChange('onlyNewMessages', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Only New Messages (ignore old unread updates prior to node start)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={props.markAsRead !== false}
+                  onChange={(e) => handlePropChange('markAsRead', e.target.checked)}
+                  className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+                />
+                <span className="text-[11px]">Advance Offset (mark update as received so it won&apos;t repeat)</span>
+              </label>
+            </div>
+
+            {/* Output Variables Configuration */}
+            <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2.5">
+              <div className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Extracted Variables Mapping</span>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-0.5">Message Text Variable</label>
+                <input
+                  type="text"
+                  value={props.textVariable || 'telegramMessage'}
+                  onChange={(e) => handlePropChange('textVariable', e.target.value)}
+                  placeholder="telegramMessage"
+                  className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Chat ID Variable</label>
+                  <input
+                    type="text"
+                    value={props.chatIdVariable || 'telegramChatId'}
+                    onChange={(e) => handlePropChange('chatIdVariable', e.target.value)}
+                    placeholder="telegramChatId"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Sender Username</label>
+                  <input
+                    type="text"
+                    value={props.senderUsernameVariable || 'telegramUsername'}
+                    onChange={(e) => handlePropChange('senderUsernameVariable', e.target.value)}
+                    placeholder="telegramUsername"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Sender Full Name</label>
+                  <input
+                    type="text"
+                    value={props.senderNameVariable || 'telegramSenderName'}
+                    onChange={(e) => handlePropChange('senderNameVariable', e.target.value)}
+                    placeholder="telegramSenderName"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Raw Update JSON</label>
+                  <input
+                    type="text"
+                    value={props.rawUpdateVariable || 'telegramUpdate'}
+                    onChange={(e) => handlePropChange('rawUpdateVariable', e.target.value)}
+                    placeholder="telegramUpdate"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Live Status or Last Received Message Preview */}
+            {nodeRuntime?.output && (
+              <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5" /> Message Received
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(String(nodeRuntime.output));
+                    }}
+                    className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                  >
+                    <Copy className="w-2.5 h-2.5" /> Copy Text
+                  </button>
+                </div>
+                <div className="p-2 rounded bg-black/40 border border-emerald-500/20 text-xs font-mono text-emerald-200 break-words max-h-32 overflow-y-auto">
+                  {typeof nodeRuntime.output === 'object' ? JSON.stringify(nodeRuntime.output, null, 2) : String(nodeRuntime.output)}
+                </div>
+                {nodeRuntime.dynamicState?.detail && (
+                  <p className="text-[10px] text-gray-400 font-mono">
+                    {nodeRuntime.dynamicState.detail}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -6956,45 +7281,6 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       </button>
                     )}
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Quick Add Node to Branch */}
-            <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/20 space-y-2">
-              <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-xs">
-                <Zap className="w-3.5 h-3.5" />
-                <span>Quick Add Node to Branch</span>
-              </div>
-              <p className="text-[10px] text-gray-400 leading-relaxed">
-                Click a branch below to automatically create and connect a node to that branch.
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {(Array.isArray(props.branches) ? props.branches : [
-                  { id: 'branch_1', name: 'Branch 1' },
-                  { id: 'branch_2', name: 'Branch 2' },
-                ]).map((b: any, idx: number) => (
-                  <button
-                    key={b.id || idx}
-                    type="button"
-                    onClick={() => {
-                      window.dispatchEvent(
-                        new CustomEvent('autoflow:add-branch-node', {
-                          detail: {
-                            branchId: b.id,
-                            branchName: b.name,
-                            sourceNodeId: selectedNode.id,
-                            handleId: b.id,
-                          },
-                        })
-                      );
-                    }}
-                    className="py-1.5 px-2.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition-colors"
-                    title={`Add a new node connected to ${b.name || `Branch ${idx + 1}`}`}
-                  >
-                    <Plus className="w-2.5 h-2.5" />
-                    <span>+ {b.name || `Branch ${idx + 1}`}</span>
-                  </button>
                 ))}
               </div>
             </div>

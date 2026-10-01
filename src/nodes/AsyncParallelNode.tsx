@@ -138,57 +138,72 @@ export const AsyncParallelNode: React.FC<AsyncParallelNodeProps> = memo(({ id, d
         </div>
       </div>
 
-      {/* Quick Branch Node Addition */}
+      {/* Branch Lanes & Quick Add Branch */}
       <div className="space-y-1.5 pt-1.5 border-t border-[#1c2233] mb-2">
         <div className="flex items-center justify-between text-[10px] text-amber-400 font-semibold px-0.5">
           <span className="flex items-center gap-1">
             <GitFork className="w-3 h-3 text-amber-400" />
-            <span>Branch Nodes</span>
+            <span>Parallel Branches ({branches.length})</span>
           </span>
-          <span className="text-[9px] text-gray-500 font-mono">click + or drag</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const nextNum = branches.length + 1;
+              const nextId = `branch_${Date.now().toString().slice(-4)}_${nextNum}`;
+              const newBranches = [...branches, { id: nextId, name: `Branch ${nextNum}` }];
+              window.dispatchEvent(
+                new CustomEvent('autoflow:update-node-properties', {
+                  detail: {
+                    nodeId: id,
+                    properties: {
+                      ...props,
+                      branches: newBranches,
+                    },
+                  },
+                })
+              );
+            }}
+            className="px-1.5 py-0.5 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 text-[9px] font-semibold flex items-center gap-1 transition-colors"
+            title="Add a new parallel branch"
+          >
+            <Plus className="w-2.5 h-2.5" />
+            <span>Add Branch</span>
+          </button>
         </div>
 
-        <div className="space-y-1">
-          {branches.map((b) => (
+        <div className="flex flex-wrap gap-1">
+          {branches.map((b, idx) => (
             <div
               key={b.id}
-              draggable
-              onDragStart={(e) => {
-                e.stopPropagation();
-                e.dataTransfer.setData('application/autoflow-node', 'navigate');
-                e.dataTransfer.setData('application/autoflow-source-node', id);
-                e.dataTransfer.setData('application/autoflow-source-handle', b.id);
-                e.dataTransfer.effectAllowed = 'copyMove';
-              }}
-              className="flex items-center justify-between gap-1.5 py-1 px-2 rounded-lg bg-[#141824] hover:bg-[#1a2030] border border-[#202738] hover:border-amber-500/40 text-[10px] text-gray-300 cursor-grab active:cursor-grabbing select-none transition-all group/branch"
-              title={`Drag to add node for ${b.name}, or click + button`}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#141824] border border-[#202738] text-[10px] text-gray-300 font-mono"
             >
-              <div className="flex items-center gap-1.5 truncate">
-                <GripVertical className="w-3 h-3 text-gray-500 group-hover/branch:text-amber-400 shrink-0" />
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-                <span className="font-medium text-white truncate">{b.name}</span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.dispatchEvent(
-                    new CustomEvent('autoflow:add-branch-node', {
-                      detail: {
-                        branchId: b.id,
-                        branchName: b.name,
-                        sourceNodeId: id,
-                        handleId: b.id,
-                      },
-                    })
-                  );
-                }}
-                className="p-0.5 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 transition-colors flex items-center gap-0.5 px-1.5 shrink-0"
-                title={`Quick add node connected to ${b.name}`}
-              >
-                <Plus className="w-2.5 h-2.5" />
-                <span className="text-[9px] font-semibold">Add Node</span>
-              </button>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="text-amber-300/90 font-medium truncate max-w-[80px]">{b.name}</span>
+              {branches.length > 2 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const newBranches = branches.filter((_, i) => i !== idx);
+                    window.dispatchEvent(
+                      new CustomEvent('autoflow:update-node-properties', {
+                        detail: {
+                          nodeId: id,
+                          properties: {
+                            ...props,
+                            branches: newBranches,
+                          },
+                        },
+                      })
+                    );
+                  }}
+                  className="hover:text-rose-400 text-gray-500 transition-colors ml-0.5"
+                  title={`Remove ${b.name}`}
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              )}
             </div>
           ))}
         </div>

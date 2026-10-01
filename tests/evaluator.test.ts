@@ -23,6 +23,18 @@ describe('Condition Evaluator', () => {
     expect(evaluateCondition({ leftValue: '{{title}}', operator: 'does_not_contain', rightValue: 'Google' }, vars)).toBe(true);
   });
 
+  it('evaluates starts_with and ends_with', () => {
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'starts_with', rightValue: 'Example' }, vars)).toBe(true);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'starts_with', rightValue: 'example' }, vars)).toBe(true);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'starts_with', rightValue: 'example', caseSensitive: true }, vars)).toBe(false);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'starts_with', rightValue: 'Domain' }, vars)).toBe(false);
+
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'ends_with', rightValue: 'Domain' }, vars)).toBe(true);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'ends_with', rightValue: 'domain' }, vars)).toBe(true);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'ends_with', rightValue: 'domain', caseSensitive: true }, vars)).toBe(false);
+    expect(evaluateCondition({ leftValue: '{{title}}', operator: 'ends_with', rightValue: 'Example' }, vars)).toBe(false);
+  });
+
   it('evaluates numeric comparisons and currency stripping', () => {
     expect(evaluateCondition({ leftValue: '{{price}}', operator: 'greater_than', rightValue: 40 }, vars)).toBe(true);
     expect(evaluateCondition({ leftValue: '{{price}}', operator: 'less_than', rightValue: 100 }, vars)).toBe(true);

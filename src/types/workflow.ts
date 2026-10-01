@@ -110,6 +110,7 @@ export type NodeType =
   | 'generate_image'
   // Messaging & Notifications
   | 'telegram_message'
+  | 'telegram_watch'
   | 'discord_message'
   | 'slack_message'
   // Commands & Workflow Control

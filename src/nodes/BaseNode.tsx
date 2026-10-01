@@ -4,7 +4,7 @@ import { Icon } from '../components/common/Icon';
 import { NODE_REGISTRY, CATEGORIES } from './registry';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Play, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react';
+import { Play, CheckCircle2, AlertCircle, Loader2, Trash2, Clock, Sparkles } from 'lucide-react';
 
 export interface CustomNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -38,6 +38,7 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'firecrawl') summary = `${data.properties?.mode || 'scrape'}: ${data.properties?.url || '{{currentUrl}}'}`;
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
+  else if (data.type === 'telegram_watch') summary = `Wait Msg (${data.properties?.timeoutSeconds || 60}s)${data.properties?.allowedChatId ? ` • Chat ${data.properties.allowedChatId}` : ''}`;
   else if (data.type === 'math_calculate') summary = `${data.properties?.outputVariable || 'counter'} (${data.properties?.operation || 'add'})`;
   else if (data.type === 'export_data') summary = `${(data.properties?.format || 'csv').toUpperCase()}: ${data.properties?.filename || 'dataset'}`;
   else if (data.type === 'stop_timer') summary = `Stop: ${data.properties?.targetTimer === 'all' ? 'All Timers' : data.properties?.targetTimer || 'All'} (${data.properties?.action === 'cancel' ? 'Cancel' : 'Finish Early'})`;
@@ -279,6 +280,21 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
             {data.properties?.size && (
               <span className="text-[8px] text-gray-400">{data.properties.size}</span>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Agent Response Bubble if present */}
+      {(data.type === 'ai_agent' || data.type === 'autonomous_agent') && status === 'success' && (runtime?.output || runtime?.dynamicState?.response) && (
+        <div className="mt-2 p-2 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[10px] font-mono text-indigo-200">
+          <div className="flex items-center gap-1 text-[9px] text-indigo-400 font-semibold mb-1">
+            <Sparkles className="w-3 h-3 text-indigo-400 shrink-0" />
+            <span>AI Response</span>
+          </div>
+          <div className="line-clamp-3 text-gray-300 leading-tight">
+            {typeof (runtime?.output || runtime?.dynamicState?.response) === 'object'
+              ? JSON.stringify(runtime?.output || runtime?.dynamicState?.response)
+              : String(runtime?.output || runtime?.dynamicState?.response)}
           </div>
         </div>
       )}

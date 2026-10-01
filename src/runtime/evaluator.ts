@@ -5,6 +5,8 @@ export type ConditionOperator =
   | 'not_equals'
   | 'contains'
   | 'does_not_contain'
+  | 'starts_with'
+  | 'ends_with'
   | 'greater_than'
   | 'less_than'
   | 'greater_equal'
@@ -137,6 +139,16 @@ export function evaluateCondition(
       return rule.caseSensitive
         ? !String(left).includes(String(right))
         : !String(left).toLowerCase().includes(String(right).toLowerCase());
+
+    case 'starts_with':
+      return rule.caseSensitive
+        ? String(left).startsWith(String(right))
+        : String(left).toLowerCase().startsWith(String(right).toLowerCase());
+
+    case 'ends_with':
+      return rule.caseSensitive
+        ? String(left).endsWith(String(right))
+        : String(left).toLowerCase().endsWith(String(right).toLowerCase());
 
     case 'greater_than': {
       const numL = parsePossibleNumber(left);
