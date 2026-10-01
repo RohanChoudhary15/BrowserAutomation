@@ -43,6 +43,7 @@ import {
 import {
   executeStorageAction,
   syncStorageToVariables,
+  parseLooseJson,
   StorageEntryType,
   StorageAction,
   StorageScope,
@@ -4941,9 +4942,10 @@ export const executeSimpleStorage: NodeExecutor = async (node, ctx) => {
       } else {
         const interpolated = interpolateVariables(trimmed, ctx.variables);
         if (entryType === 'array' || entryType === 'dictionary') {
-          try {
-            resolvedVal = JSON.parse(interpolated);
-          } catch {
+          const parsed = parseLooseJson(interpolated);
+          if (parsed !== undefined) {
+            resolvedVal = parsed;
+          } else {
             resolvedVal = entryType === 'array' ? [interpolated] : { value: interpolated };
           }
         } else {

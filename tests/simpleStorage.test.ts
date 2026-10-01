@@ -175,4 +175,37 @@ describe('Simple Storage Utility & Executor', () => {
     expect(ctx.variables.cartItems).toEqual(['Keyboard', 'Mouse']);
     expect(ctx.variables['storage.cartItems']).toEqual(['Keyboard', 'Mouse']);
   });
+
+  it('correctly parses single-quoted array literal string like [\'a\',\'b\',\'c\']', async () => {
+    const node: WorkflowNode = {
+      id: 'storage_node_single_quotes',
+      type: 'simple_storage',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Save Letters',
+        type: 'simple_storage',
+        properties: {
+          action: 'set',
+          key: 'letters',
+          entryType: 'array',
+          value: "['a','b','c']",
+          outputVariable: 'lettersResult',
+        },
+      },
+    };
+
+    const ctx: ExecutionContext = {
+      workflowId: 'test_wf',
+      executionId: 'exec_test',
+      variables: {},
+      log: vi.fn(),
+      updateNodeState: vi.fn(),
+    };
+
+    const res = await executeSimpleStorage(node, ctx);
+
+    expect(res.success).toBe(true);
+    expect(ctx.variables.letters).toEqual(['a', 'b', 'c']);
+    expect(ctx.variables.lettersResult).toEqual(['a', 'b', 'c']);
+  });
 });

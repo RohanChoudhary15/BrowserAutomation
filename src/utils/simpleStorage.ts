@@ -129,6 +129,80 @@ async function savePersistentStore(store: Record<string, StorageItem>): Promise<
 }
 
 /**
+ * Safe loose JSON parser that parses:
+ * 1. Standard JSON: ["a", "b", "c"]
+ * 2. Single-quoted JS literals: ['a', 'b', 'c']
+ * 3. Trailing commas: ['a', 'b', 'c',]
+ * 4. Dictionary objects: {'name': 'Alice', 'role': 'Admin'}
+ */
+export function parseLooseJson(val: string): any {
+  if (typeof val !== 'string') return val;
+  const trimmed = val.trim();
+  if (!trimmed) return undefined;
+
+  // 1. Try standard JSON.parse first
+  try {
+    return JSON.parse(trimmed);
+  } catch {}
+
+  // 2. If it starts with [ or {, normalize single quotes to double quotes
+  if (
+    (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+    (trimmed.startsWith('{') && trimmed.endsWith('}'))
+  ) {
+    try {
+      let inSingleQuote = false;
+      let inDoubleQuote = false;
+      let escaped = false;
+      let result = '';
+
+      for (let i = 0; i < trimmed.length; i++) {
+        const char = trimmed[i];
+
+        if (escaped) {
+          result += char;
+          escaped = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          escaped = true;
+          result += char;
+          continue;
+        }
+
+        if (char === "'" && !inDoubleQuote) {
+          inSingleQuote = !inSingleQuote;
+          result += '"';
+          continue;
+        }
+
+        if (char === '"' && !inSingleQuote) {
+          inDoubleQuote = !inDoubleQuote;
+          result += '"';
+          continue;
+        }
+
+        // Inside a single-quoted string being converted to double quote,
+        // escape any unescaped double quotes
+        if (inSingleQuote && char === '"') {
+          result += '\\"';
+          continue;
+        }
+
+        result += char;
+      }
+
+      // Remove trailing commas before closing ] or }
+      const cleaned = result.replace(/,\s*([\]}])/g, '$1');
+      return JSON.parse(cleaned);
+    } catch {}
+  }
+
+  return undefined;
+}
+
+/**
  * Normalizes input value based on requested entry type
  */
 export function formatValueForType(val: any, type: StorageEntryType): any {
@@ -142,10 +216,8 @@ export function formatValueForType(val: any, type: StorageEntryType): any {
     case 'array': {
       if (Array.isArray(val)) return [...val];
       if (typeof val === 'string') {
-        try {
-          const parsed = JSON.parse(val);
-          if (Array.isArray(parsed)) return parsed;
-        } catch {}
+        const parsed = parseLooseJson(val);
+        if (Array.isArray(parsed)) return parsed;
       }
       return [val];
     }
@@ -154,12 +226,10 @@ export function formatValueForType(val: any, type: StorageEntryType): any {
         return { ...val };
       }
       if (typeof val === 'string') {
-        try {
-          const parsed = JSON.parse(val);
-          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-            return parsed;
-          }
-        } catch {}
+        const parsed = parseLooseJson(val);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          return parsed;
+        }
       }
       return { value: val };
     }
