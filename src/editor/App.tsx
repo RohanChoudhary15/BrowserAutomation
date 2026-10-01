@@ -190,7 +190,12 @@ export const App: React.FC = () => {
 
   // Add node to canvas
   const handleAddNode = useCallback(
-    (type: NodeType, position?: { x: number; y: number }) => {
+    (
+      type: NodeType,
+      position?: { x: number; y: number },
+      initialProperties?: Record<string, any>,
+      sourceNodeId?: string
+    ) => {
       const def = NODE_REGISTRY[type];
       const pos = position || {
         x: 200 + Math.random() * 80,
@@ -206,21 +211,40 @@ export const App: React.FC = () => {
           label: def.label,
           category: def.category,
           type: def.type,
-          properties: { ...def.defaultProperties },
+          properties: { ...def.defaultProperties, ...initialProperties },
         },
       };
 
+      const newEdge: WorkflowEdge | null = sourceNodeId
+        ? {
+            id: generateId('edge'),
+            source: sourceNodeId,
+            target: newNode.id,
+            type: 'default',
+            animated: true,
+          }
+        : null;
+
       setNodes((nds) => {
         const updated = [...nds, newNode];
-        takeSnapshot(updated, edges);
-        triggerAutosave(updated, edges);
+        if (newEdge) {
+          setEdges((eds) => {
+            const updatedEdges = [...eds, newEdge];
+            takeSnapshot(updated, updatedEdges);
+            triggerAutosave(updated, updatedEdges);
+            return updatedEdges;
+          });
+        } else {
+          takeSnapshot(updated, edges);
+          triggerAutosave(updated, edges);
+        }
         return updated;
       });
 
       setSelectedNodeId(newNode.id);
       setIsPropertiesCollapsed(false);
     },
-    [edges, setNodes, takeSnapshot, triggerAutosave]
+    [edges, setEdges, setNodes, takeSnapshot, triggerAutosave]
   );
 
   // Duplicate node
@@ -1014,6 +1038,39 @@ export const App: React.FC = () => {
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [handleGenerateSchemaFromElement, handleUpdateProperties, selectedNodeId, setEdges, setNodes]);
+
+  // Listen for custom event to add and connect a For Each loop node
+  useEffect(() => {
+    const handleAddForEach = (e: Event) => {
+      const customEvent = e as CustomEvent<{ arrayKey: string; sourceNodeId?: string }>;
+      const { arrayKey, sourceNodeId } = customEvent.detail || {};
+      if (!arrayKey) return;
+
+      let position: { x: number; y: number } | undefined;
+      if (sourceNodeId) {
+        const sourceNode = nodes.find((n) => n.id === sourceNodeId);
+        if (sourceNode) {
+          position = {
+            x: sourceNode.position.x,
+            y: sourceNode.position.y + 140,
+          };
+        }
+      }
+
+      handleAddNode(
+        'for_each',
+        position,
+        {
+          array: `{{${arrayKey}}}`,
+          itemVariable: 'item',
+        },
+        sourceNodeId
+      );
+    };
+
+    window.addEventListener('autoflow:add-for-each-node', handleAddForEach);
+    return () => window.removeEventListener('autoflow:add-for-each-node', handleAddForEach);
+  }, [handleAddNode, nodes]);
 
   // Export JSON
   const handleExport = useCallback(() => {

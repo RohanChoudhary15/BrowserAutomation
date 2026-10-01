@@ -1610,6 +1610,65 @@ export const executeContainsText: NodeExecutor = async (node, ctx) => {
 export const executeBreak: NodeExecutor = async () => ({ success: true, breakLoop: true });
 export const executeContinue: NodeExecutor = async () => ({ success: true, continueLoop: true });
 
+/**
+ * Prints resultant data (arrays, objects, primitives) to the browser/Node console
+ * with clean styling, data type inspection, and automatic console.table formatting for arrays.
+ */
+export function printDataToConsole(
+  source: string,
+  varNameOrTitle: string,
+  data: any,
+  options?: { format?: 'auto' | 'json' | 'table' | 'text'; level?: 'log' | 'info' | 'warn' | 'error' | 'table' }
+) {
+  const typeStr = Array.isArray(data)
+    ? `Array(${data.length})`
+    : data === null
+    ? 'null'
+    : typeof data === 'object'
+    ? 'Object'
+    : typeof data;
+
+  const title = varNameOrTitle ? ` {{${varNameOrTitle}}}` : '';
+  const prefix = `[AutoFlow ${source}]${title} (${typeStr}):`;
+  const format = options?.format || 'auto';
+  const level = options?.level || 'log';
+
+  try {
+    if (typeof console !== 'undefined') {
+      const consoleFn =
+        level === 'error'
+          ? console.error
+          : level === 'warn'
+          ? console.warn
+          : level === 'info'
+          ? console.info
+          : console.log;
+
+      if (format === 'table' && (Array.isArray(data) || (typeof data === 'object' && data !== null))) {
+        consoleFn(`%c${prefix}`, 'background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;');
+        console.table(data);
+      } else if (format === 'json') {
+        consoleFn(`%c${prefix}`, 'background: #8b5cf6; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;', JSON.stringify(data, null, 2));
+      } else if (format === 'text') {
+        consoleFn(`%c${prefix}`, 'background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;', String(data));
+      } else {
+        consoleFn(
+          `%c${prefix}`,
+          'background: #0ea5e9; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;',
+          data
+        );
+        if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && data[0] !== null) {
+          try {
+            console.table(data.slice(0, 50));
+          } catch {}
+        }
+      }
+    }
+  } catch {
+    console.log(prefix, data);
+  }
+}
+
 // ----------------- DATA EXECUTORS -----------------
 
 export const executeSetVariable: NodeExecutor = async (node, ctx) => {
@@ -1625,6 +1684,8 @@ export const executeSetVariable: NodeExecutor = async (node, ctx) => {
     nodeId: node.id,
     nodeName: node.data.label,
   });
+
+  printDataToConsole('Set Variable', name, value);
 
   return {
     success: true,
@@ -1720,6 +1781,7 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
 
   if (outputVariable && ctx.variables) {
     ctx.variables[outputVariable] = result;
+    printDataToConsole('Transform', outputVariable, result);
   }
 
   return {
@@ -4913,6 +4975,7 @@ export const executeSimpleStorage: NodeExecutor = async (node, ctx) => {
   syncStorageToVariables(ctx.variables);
 
   ctx.variables[outVar] = res.value;
+  printDataToConsole('Simple Storage', key || outVar, res.value);
 
   return {
     success: res.success,
@@ -4921,6 +4984,94 @@ export const executeSimpleStorage: NodeExecutor = async (node, ctx) => {
       [outVar]: res.value,
       ...(key ? { [key]: res.value } : {}),
     },
+  };
+};
+
+/**
+ * Print Node Executor:
+ * Evaluates variables, expressions, arrays, objects, or strings and outputs them directly
+ * to execution logs and browser/node console with data type details.
+ */
+export const executePrint: NodeExecutor = async (node, ctx) => {
+  const rawMessage = node.data.properties.message !== undefined ? node.data.properties.message : '{{result}}';
+  const format = (node.data.properties.format || 'auto') as 'auto' | 'json' | 'table' | 'text';
+  const level = (node.data.properties.level || 'info') as 'log' | 'info' | 'warn' | 'error' | 'table';
+  const toConsole = node.data.properties.toConsole !== false;
+  const outVar = node.data.properties.outputVariable ? String(node.data.properties.outputVariable).trim() : '';
+
+  let evaluatedValue: any = rawMessage;
+
+  if (typeof rawMessage === 'string') {
+    const trimmed = rawMessage.trim();
+    // If exact variable reference like {{myArray}} or {{storage.items}}
+    const exactVarMatch = trimmed.match(/^\{\{([a-zA-Z0-9_$.]+)\}\}$/);
+    if (exactVarMatch) {
+      const varKey = exactVarMatch[1];
+      if (varKey.includes('.')) {
+        const parts = varKey.split('.');
+        let curr = ctx.variables[parts[0]];
+        for (let i = 1; i < parts.length && curr !== undefined && curr !== null; i++) {
+          curr = curr[parts[i]];
+        }
+        if (curr !== undefined) evaluatedValue = curr;
+        else evaluatedValue = interpolateVariables(rawMessage, ctx.variables);
+      } else if (ctx.variables[varKey] !== undefined) {
+        evaluatedValue = ctx.variables[varKey];
+      } else {
+        evaluatedValue = interpolateVariables(rawMessage, ctx.variables);
+      }
+    } else {
+      evaluatedValue = interpolateVariables(rawMessage, ctx.variables);
+    }
+  }
+
+  const typeStr = Array.isArray(evaluatedValue)
+    ? `Array(${evaluatedValue.length})`
+    : evaluatedValue === null
+    ? 'null'
+    : typeof evaluatedValue === 'object'
+    ? 'Object'
+    : typeof evaluatedValue;
+
+  let logPreview = '';
+  if (typeof evaluatedValue === 'object' && evaluatedValue !== null) {
+    try {
+      logPreview = JSON.stringify(evaluatedValue, null, 2);
+      if (logPreview.length > 500) {
+        logPreview = logPreview.slice(0, 500) + '... (truncated)';
+      }
+    } catch {
+      logPreview = String(evaluatedValue);
+    }
+  } else {
+    logPreview = String(evaluatedValue);
+  }
+
+  ctx.log({
+    level: level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info',
+    message: `[Print] (${typeStr}): ${logPreview}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  if (toConsole) {
+    printDataToConsole('Print', outVar || node.data.label || 'print', evaluatedValue, { format, level });
+  }
+
+  const resultVariables: Record<string, any> = {};
+  if (outVar) {
+    ctx.variables[outVar] = evaluatedValue;
+    resultVariables[outVar] = evaluatedValue;
+  }
+
+  return {
+    success: true,
+    output: {
+      value: evaluatedValue,
+      type: typeStr,
+      formatted: logPreview,
+    },
+    variables: Object.keys(resultVariables).length > 0 ? resultVariables : undefined,
   };
 };
 
@@ -5414,6 +5565,7 @@ export const executeArrayOperation: NodeExecutor = async (node, ctx) => {
   }
 
   ctx.variables[outVar] = result;
+  printDataToConsole('Array Operation', outVar, result);
   ctx.log({
     level: 'info',
     message: `Array Operation "${operation}" on ${arr.length} items -> result saved to ${outVar}`,
@@ -5458,6 +5610,7 @@ export const executeStringTemplate: NodeExecutor = async (node, ctx) => {
   }
 
   ctx.variables[outVar] = rendered;
+  printDataToConsole('String Template', outVar, rendered);
   ctx.log({
     level: 'info',
     message: `String template rendered: "${rendered.slice(0, 40)}${rendered.length > 40 ? '...' : ''}"`,
@@ -5534,6 +5687,7 @@ export const executeJsonQuery: NodeExecutor = async (node, ctx) => {
   const finalVal = queryResult !== undefined ? queryResult : fallback;
 
   ctx.variables[outVar] = finalVal;
+  printDataToConsole('JSON Query', outVar, finalVal);
   ctx.log({
     level: 'info',
     message: `JSON query path "${queryPath}" -> extracted ${Array.isArray(finalVal) ? `array of ${finalVal.length}` : typeof finalVal}`,
@@ -7263,6 +7417,7 @@ export const executors: Record<string, NodeExecutor> = {
   async_parallel: executeAsyncParallel,
   generate_pdf: executeGeneratePdf,
   simple_storage: executeSimpleStorage,
+  print: executePrint,
   // New Context & System Data
   get_page_info: executeGetPageInfo,
   get_url_details: executeGetUrlDetails,

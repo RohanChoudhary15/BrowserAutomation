@@ -8,6 +8,7 @@ import {
   ListOrdered,
   FileCode,
   Braces,
+  Printer,
 } from 'lucide-react';
 
 export interface DataNodesPropertiesProps {
@@ -644,6 +645,86 @@ export const DataNodesProperties: React.FC<DataNodesPropertiesProps> = ({
               onChange={(e) => onPropChange('outputVariable', e.target.value)}
               placeholder="jsonQueryResult"
               className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-violet-500 outline-none font-mono text-xs"
+            />
+          </div>
+        </div>
+      );
+
+    case 'print':
+      return (
+        <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+          <div className="p-2.5 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-transparent border border-blue-500/20">
+            <div className="flex items-center gap-2 text-blue-400 font-semibold text-xs mb-1">
+              <Printer className="w-4 h-4" />
+              <span>Console & Workflow Print</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              Print variables, arrays, objects, or text messages directly to the browser console and workflow execution logs.
+            </p>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-medium text-gray-400">Message / Variable</label>
+              <span className="text-[10px] text-blue-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+            </div>
+            <textarea
+              rows={3}
+              value={props.message ?? '{{result}}'}
+              onChange={(e) => onPropChange('message', e.target.value)}
+              placeholder="e.g. {{myArray}} or Result is: {{count}}"
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-blue-500 outline-none font-mono text-xs leading-relaxed"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Format</label>
+              <select
+                value={props.format || 'auto'}
+                onChange={(e) => onPropChange('format', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-blue-500 outline-none text-xs"
+              >
+                <option value="auto">Auto-detect</option>
+                <option value="table">Table (console.table)</option>
+                <option value="json">JSON String</option>
+                <option value="text">Plain Text</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Log Level</label>
+              <select
+                value={props.level || 'info'}
+                onChange={(e) => onPropChange('level', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-blue-500 outline-none text-xs"
+              >
+                <option value="info">Info</option>
+                <option value="log">Log</option>
+                <option value="warn">Warning</option>
+                <option value="error">Error</option>
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.toConsole !== false}
+              onChange={(e) => onPropChange('toConsole', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-blue-600 focus:ring-0"
+            />
+            <span className="text-[11px]">Print to DevTools Console (F12)</span>
+          </label>
+
+          <div>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">Output Variable (Optional)</label>
+            <input
+              type="text"
+              value={props.outputVariable ?? ''}
+              onChange={(e) => onPropChange('outputVariable', e.target.value)}
+              placeholder="e.g. printedValue (optional)"
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-blue-500 outline-none font-mono text-xs"
             />
           </div>
         </div>

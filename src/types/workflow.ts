@@ -96,6 +96,7 @@ export type NodeType =
   | 'combine_datasets'
   | 'generate_pdf'
   | 'simple_storage'
+  | 'print'
   // Utility
   | 'screenshot'
   | 'execute_javascript'

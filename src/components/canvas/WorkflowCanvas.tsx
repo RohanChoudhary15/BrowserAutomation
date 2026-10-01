@@ -35,8 +35,12 @@ interface WorkflowCanvasProps {
   onNodesChange: OnNodesChange<WorkflowNode>;
   onEdgesChange: OnEdgesChange<WorkflowEdge>;
   onConnect: OnConnect;
-  onSelectNode: (node: WorkflowNode | null) => void;
-  onAddNode: (type: NodeType, position?: { x: number; y: number }) => void;
+  onAddNode: (
+    type: NodeType,
+    position?: { x: number; y: number },
+    initialProperties?: Record<string, any>,
+    sourceNodeId?: string
+  ) => void;
   onAddNodeAndConnect?: (
     type: NodeType,
     position: { x: number; y: number },
@@ -293,12 +297,23 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
       const nodeType = e.dataTransfer.getData('application/autoflow-node') as NodeType;
       if (!nodeType) return;
 
+      let initialProps: any = undefined;
+      const rawProps = e.dataTransfer.getData('application/autoflow-node-props');
+      if (rawProps) {
+        try {
+          initialProps = JSON.parse(rawProps);
+        } catch {
+          // ignore
+        }
+      }
+      const sourceNodeId = e.dataTransfer.getData('application/autoflow-source-node') || undefined;
+
       const position = screenToFlowPosition({
         x: e.clientX,
         y: e.clientY,
       });
 
-      onAddNode(nodeType, position);
+      onAddNode(nodeType, position, initialProps, sourceNodeId);
     },
     [screenToFlowPosition, onAddNode]
   );

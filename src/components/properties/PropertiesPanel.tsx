@@ -61,6 +61,8 @@ import {
   X,
   ChevronLeft,
   ExternalLink,
+  Repeat,
+  GripVertical,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels } from '../../ai/aiService';
@@ -7546,6 +7548,63 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <p className="text-[10px] text-gray-500 mt-1">
                 Returns the stored/retrieved value or storage operation status.
               </p>
+            </div>
+
+            {/* Quick For-Each Loop Creator / Draggable Chip */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-500/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
+                  <Repeat className="w-3.5 h-3.5" />
+                  <span>Iterate Array with For Each</span>
+                </div>
+                <span className="text-[10px] font-mono text-emerald-400/90 bg-emerald-900/40 px-1.5 py-0.5 rounded border border-emerald-700/30">
+                  &#123;&#123;{props.key || 'myItems'}&#125;&#125;
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-400 leading-relaxed">
+                Drag this block onto the canvas or click below to automatically attach a For Each loop configured for this storage array.
+              </p>
+              <div className="flex items-center gap-2">
+                <div
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/autoflow-node', 'for_each');
+                    e.dataTransfer.setData(
+                      'application/autoflow-node-props',
+                      JSON.stringify({
+                        array: `{{${props.key || 'myItems'}}}`,
+                        itemVariable: 'item',
+                      })
+                    );
+                    e.dataTransfer.setData('application/autoflow-source-node', selectedNode.id);
+                    e.dataTransfer.effectAllowed = 'copyMove';
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-950/60 border border-emerald-500/40 hover:bg-emerald-900/60 hover:border-emerald-400 cursor-grab active:cursor-grabbing text-emerald-300 text-xs font-medium transition-all shadow-sm select-none"
+                  title={`Drag onto canvas to add For Each loop for {{${props.key || 'myItems'}}}`}
+                >
+                  <GripVertical className="w-3.5 h-3.5 text-emerald-400/80" />
+                  <Repeat className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Drag Loop to Canvas</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(
+                      new CustomEvent('autoflow:add-for-each-node', {
+                        detail: {
+                          arrayKey: props.key || 'myItems',
+                          sourceNodeId: selectedNode.id,
+                        },
+                      })
+                    );
+                  }}
+                  className="py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1 transition-colors shadow-sm"
+                  title="Add and connect For Each node immediately below this node"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Loop</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

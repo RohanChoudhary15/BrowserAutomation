@@ -1232,6 +1232,19 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'storageResult',
     },
   },
+  print: {
+    type: 'print',
+    label: 'Print',
+    category: 'data',
+    description: 'Print variables, arrays, objects, or text messages directly to console and execution logs',
+    icon: 'Printer',
+    defaultProperties: {
+      message: '{{result}}',
+      format: 'auto', // 'auto' | 'json' | 'table' | 'text'
+      toConsole: true,
+      outputVariable: '',
+    },
+  },
 
   // Utility
   screenshot: {

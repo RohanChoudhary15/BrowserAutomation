@@ -15,6 +15,8 @@ import {
   Image as ImageIcon,
   KeyRound,
   HardDrive,
+  Repeat,
+  GripVertical,
 } from 'lucide-react';
 
 export interface SimpleStorageNodeProps extends NodeProps {
@@ -119,6 +121,37 @@ export const SimpleStorageNode: React.FC<SimpleStorageNodeProps> = memo(({ id, d
           <span className="font-mono text-gray-400">&#123;&#123;{key}&#125;&#125;</span>
         </div>
       </div>
+
+      {/* Drag For Each Node for Array */}
+      {(entryType === 'array' || action === 'SET' || action === 'GET') && (
+        <div
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('application/autoflow-node', 'for_each');
+            e.dataTransfer.setData(
+              'application/autoflow-node-props',
+              JSON.stringify({
+                array: `{{${key}}}`,
+                itemVariable: 'item',
+              })
+            );
+            e.dataTransfer.setData('application/autoflow-source-node', id);
+            e.dataTransfer.effectAllowed = 'copyMove';
+          }}
+          className="mt-2 flex items-center justify-between p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/50 hover:border-emerald-400 cursor-grab active:cursor-grabbing transition-all group/drag text-[10px] select-none shadow-sm"
+          title={`Drag onto canvas to create a For Each loop node iterating over {{${key}}}`}
+        >
+          <div className="flex items-center gap-1 text-emerald-300 font-medium">
+            <GripVertical className="w-3 h-3 text-emerald-400/80 group-hover/drag:text-emerald-300" />
+            <Repeat className="w-3 h-3 text-emerald-400" />
+            <span>Drag For Each Node</span>
+          </div>
+          <span className="text-[9px] font-mono text-emerald-400/90 bg-emerald-900/60 px-1 py-0.5 rounded border border-emerald-700/40">
+            &#123;&#123;{key}&#125;&#125;
+          </span>
+        </div>
+      )}
 
       {/* Quick Action buttons */}
       <div className="flex items-center justify-end gap-1 mt-2.5 pt-1.5 border-t border-[#1c2233]">
