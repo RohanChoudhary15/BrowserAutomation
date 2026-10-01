@@ -577,10 +577,29 @@ export const executeDragAndDrop: NodeExecutor = async (node, ctx) => {
 // ----------------- WAIT EXECUTORS -----------------
 
 export const executeWait: NodeExecutor = async (node, ctx) => {
-  let duration = Number(node.data.properties.duration ?? node.data.properties.durationMs) || 1000;
-  if (node.data.properties.unit === 's' || duration < 50) {
-    duration = duration * 1000;
+  const rawDuration = node.data.properties.duration ?? node.data.properties.durationMs ?? node.data.properties.timeout;
+  const interpolated = typeof rawDuration === 'string' ? interpolateVariables(rawDuration, ctx.variables) : rawDuration;
+  let duration = Number(interpolated);
+  const unit = node.data.properties.unit || 'ms';
+
+  if (isNaN(duration)) {
+    const matchSec = String(interpolated).trim().match(/^([0-9.]+)\s*s$/i);
+    const matchMs = String(interpolated).trim().match(/^([0-9.]+)\s*ms$/i);
+    if (matchSec) {
+      duration = Number(matchSec[1]) * 1000;
+    } else if (matchMs) {
+      duration = Number(matchMs[1]);
+    } else {
+      duration = 1000;
+    }
+  } else {
+    if (unit === 's') {
+      duration = duration * 1000;
+    } else if (duration > 0 && duration <= 10 && !node.data.properties.unit) {
+      duration = duration * 1000;
+    }
   }
+  if (!duration || duration <= 0) duration = 1000;
   let totalSeconds = Number((duration / 1000).toFixed(1));
   let startTime = Date.now();
 

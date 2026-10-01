@@ -65,7 +65,7 @@ import {
   GripVertical,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
-import { fetchAvailableModels } from '../../ai/aiService';
+import { fetchAvailableModels, queryLlm } from '../../ai/aiService';
 import { generateSchemaFromElement } from '../../ai/schemaGenerator';
 import { formatRuleDescription, ConditionRule, ConditionType } from '../../runtime/evaluator';
 import { ModelOption, AiProvider } from '../../ai/types';
@@ -257,6 +257,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [showFirecrawlApiKey, setShowFirecrawlApiKey] = useState(false);
   const [copiedFirecrawlMarkdown, setCopiedFirecrawlMarkdown] = useState(false);
+  const [aiStoragePrompt, setAiStoragePrompt] = useState('');
+  const [aiStorageLoading, setAiStorageLoading] = useState(false);
+  const [aiStorageError, setAiStorageError] = useState<string | null>(null);
 
   // Memoized array of images for the currently selected node
   const activeNodeImages = React.useMemo<string[]>(() => {
@@ -1506,21 +1509,62 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {selectedNode.data.type === 'wait' && (
           <div className="space-y-3">
             <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Wait Duration / Timeout (ms)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-400">Wait Duration / Timer</label>
+                <div className="flex items-center gap-1 bg-[#0b0e14] p-0.5 rounded border border-[#1e2433] text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = Number(props.duration ?? 1000);
+                      handlePropChange('unit', 'ms');
+                      if (props.unit === 's') {
+                        handlePropChange('duration', cur * 1000);
+                        handlePropChange('timeout', cur * 1000);
+                      }
+                    }}
+                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                      (props.unit || 'ms') === 'ms'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    ms
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = Number(props.duration ?? 1000);
+                      handlePropChange('unit', 's');
+                      if ((props.unit || 'ms') === 'ms' && cur >= 1000) {
+                        handlePropChange('duration', cur / 1000);
+                        handlePropChange('timeout', cur / 1000);
+                      }
+                    }}
+                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                      props.unit === 's'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    seconds (s)
+                  </button>
+                </div>
+              </div>
               <input
-                type="number"
-                value={props.duration || props.timeout || 1000}
+                type="text"
+                value={props.duration !== undefined ? props.duration : (props.timeout !== undefined ? props.timeout : 1000)}
                 onChange={(e) => {
-                  const val = Number(e.target.value);
+                  const raw = e.target.value;
+                  const num = Number(raw);
+                  const val = !isNaN(num) && raw.trim() !== '' ? num : raw;
                   handlePropChange('duration', val);
-                  handlePropChange('timeout', val);
+                  handlePropChange('timeout', typeof val === 'number' ? val : val);
                 }}
-                min={50}
-                step={100}
-                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                placeholder={props.unit === 's' ? 'e.g. 2 or {{delay}}' : 'e.g. 2000 or {{delay}}'}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
               />
               <div className="flex items-center gap-1.5 mt-2">
-                {[500, 1000, 2000, 5000, 10000].map((preset) => (
+                {(props.unit === 's' ? [0.5, 1, 2, 5, 10] : [500, 1000, 2000, 5000, 10000]).map((preset) => (
                   <button
                     key={preset}
                     type="button"
@@ -1529,12 +1573,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       handlePropChange('timeout', preset);
                     }}
                     className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-                      (props.duration || props.timeout || 1000) === preset
+                      Number(props.duration ?? props.timeout ?? 1000) === preset
                         ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50'
                         : 'bg-[#161a24] text-gray-400 border-[#232a3b] hover:text-white'
                     }`}
                   >
-                    {preset >= 1000 ? `${preset / 1000}s` : `${preset}ms`}
+                    {props.unit === 's' ? `${preset}s` : preset >= 1000 ? `${preset / 1000}s` : `${preset}ms`}
                   </button>
                 ))}
               </div>
@@ -7519,6 +7563,120 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-emerald-500 outline-none text-xs font-mono leading-relaxed"
                   />
                 )}
+              </div>
+            )}
+
+            {/* AI-Powered Data Assistant */}
+            {['set', 'append', 'merge'].includes(props.action || 'set') && (
+              <div className="p-2.5 rounded-xl bg-gradient-to-r from-violet-500/10 via-purple-500/5 to-transparent border border-violet-500/20 space-y-2">
+                <div className="flex items-center gap-1.5 text-violet-400 font-semibold text-xs">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>AI Data Assistant</span>
+                </div>
+                <p className="text-[10px] text-gray-400 leading-relaxed">
+                  Describe what data you need and AI will generate or modify the value for you.
+                </p>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={aiStoragePrompt}
+                    onChange={(e) => { setAiStoragePrompt(e.target.value); setAiStorageError(null); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && aiStoragePrompt.trim() && !aiStorageLoading) {
+                        e.preventDefault();
+                        (async () => {
+                          setAiStorageLoading(true);
+                          setAiStorageError(null);
+                          try {
+                            const entryType = props.entryType || 'array';
+                            const currentValue = props.value ?? (entryType === 'array' ? '[]' : entryType === 'dictionary' ? '{}' : '');
+                            const systemPrompt = `You are a data generation assistant. The user wants to ${props.action || 'set'} data in a ${entryType} storage.
+Current value: ${currentValue}
+Rules:
+- For arrays: output valid JSON array only (e.g. ["item1", "item2"])
+- For dictionaries: output valid JSON object only (e.g. {"key": "value"})
+- For variables: output a plain string value
+- Output ONLY the raw data, no markdown fences, no explanation, no extra text.
+- If the user asks to modify/append to existing data, work with the current value.`;
+                            const result = await queryLlm(aiStoragePrompt, systemPrompt);
+                            const cleaned = result.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
+                            handlePropChange('value', cleaned);
+                            setAiStoragePrompt('');
+                          } catch (err: any) {
+                            setAiStorageError(err.message || 'AI generation failed');
+                          } finally {
+                            setAiStorageLoading(false);
+                          }
+                        })();
+                      }
+                    }}
+                    placeholder={
+                      (props.entryType || 'array') === 'array' ? 'e.g. "Generate 10 US city names"' :
+                      (props.entryType || 'array') === 'dictionary' ? 'e.g. "Create a user profile with name, email, age"' :
+                      'e.g. "Generate a greeting message"'
+                    }
+                    className="flex-1 bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] focus:border-violet-500 outline-none text-xs"
+                    disabled={aiStorageLoading}
+                  />
+                  <button
+                    type="button"
+                    disabled={!aiStoragePrompt.trim() || aiStorageLoading}
+                    onClick={async () => {
+                      setAiStorageLoading(true);
+                      setAiStorageError(null);
+                      try {
+                        const entryType = props.entryType || 'array';
+                        const currentValue = props.value ?? (entryType === 'array' ? '[]' : entryType === 'dictionary' ? '{}' : '');
+                        const systemPrompt = `You are a data generation assistant. The user wants to ${props.action || 'set'} data in a ${entryType} storage.
+Current value: ${currentValue}
+Rules:
+- For arrays: output valid JSON array only (e.g. ["item1", "item2"])
+- For dictionaries: output valid JSON object only (e.g. {"key": "value"})
+- For variables: output a plain string value
+- Output ONLY the raw data, no markdown fences, no explanation, no extra text.
+- If the user asks to modify/append to existing data, work with the current value.`;
+                        const result = await queryLlm(aiStoragePrompt, systemPrompt);
+                        const cleaned = result.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
+                        handlePropChange('value', cleaned);
+                        setAiStoragePrompt('');
+                      } catch (err: any) {
+                        setAiStorageError(err.message || 'AI generation failed');
+                      } finally {
+                        setAiStorageLoading(false);
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs font-medium flex items-center gap-1 transition-colors whitespace-nowrap"
+                  >
+                    {aiStorageLoading ? (
+                      <><Loader2 className="w-3 h-3 animate-spin" /> Generating...</>
+                    ) : (
+                      <><Sparkles className="w-3 h-3" /> Generate</>
+                    )}
+                  </button>
+                </div>
+                {aiStorageError && (
+                  <div className="text-[10px] text-rose-400 bg-rose-950/40 px-2 py-1 rounded border border-rose-800/40">
+                    {aiStorageError}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1">
+                  {(props.entryType || 'array') === 'array' && (
+                    <>
+                      <button type="button" onClick={() => setAiStoragePrompt('Generate 5 sample product names')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">Products</button>
+                      <button type="button" onClick={() => setAiStoragePrompt('Generate 10 random email addresses')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">Emails</button>
+                      <button type="button" onClick={() => setAiStoragePrompt('Add 3 more items to the existing array')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">Extend</button>
+                    </>
+                  )}
+                  {(props.entryType || 'array') === 'dictionary' && (
+                    <>
+                      <button type="button" onClick={() => setAiStoragePrompt('Create a user profile with name, email, age, and role')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">User Profile</button>
+                      <button type="button" onClick={() => setAiStoragePrompt('Create app config with theme, language, and notification settings')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">Config</button>
+                    </>
+                  )}
+                  {props.entryType === 'variable' && (
+                    <button type="button" onClick={() => setAiStoragePrompt('Generate a professional greeting message')} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-800/30 hover:bg-violet-900/60">Greeting</button>
+                  )}
+                </div>
               </div>
             )}
 

@@ -65,12 +65,21 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
   else if (data.type === 'manual_approval') summary = `Prompt: "${(data.properties?.promptMessage || 'Approval required').slice(0, 24)}..."`;
   else if (data.type === 'wait') {
     const timerPrefix = data.properties?.timerName ? `[${data.properties.timerName}] ` : '';
+    const unit = data.properties?.unit || 'ms';
+    const durVal = data.properties?.duration ?? data.properties?.timeout ?? 1000;
+    const durFormatted = typeof durVal === 'string' && durVal.startsWith('{{')
+      ? durVal
+      : unit === 's'
+      ? `${durVal}s`
+      : Number(durVal) >= 1000 && Number(durVal) % 1000 === 0
+      ? `${Number(durVal) / 1000}s (${durVal}ms)`
+      : `${durVal}ms`;
     if (data.properties?.stopCondition?.enabled) {
       const cond = data.properties.stopCondition;
       const condDesc = cond.type === 'text' ? `"${cond.text || 'text'}"` : (cond.type === 'element' ? (cond.selector || 'element') : 'condition');
-      summary = `${timerPrefix}${data.properties?.duration || 1000}ms or until ${condDesc}`;
+      summary = `${timerPrefix}${durFormatted} or until ${condDesc}`;
     } else {
-      summary = `${timerPrefix}${data.properties?.duration || 1000}ms`;
+      summary = `${timerPrefix}${durFormatted}`;
     }
   }
   else if (data.properties?.url) summary = data.properties.url;

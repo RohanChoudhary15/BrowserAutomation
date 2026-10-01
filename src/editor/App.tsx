@@ -194,7 +194,8 @@ export const App: React.FC = () => {
       type: NodeType,
       position?: { x: number; y: number },
       initialProperties?: Record<string, any>,
-      sourceNodeId?: string
+      sourceNodeId?: string,
+      sourceHandle?: string
     ) => {
       const def = NODE_REGISTRY[type];
       const pos = position || {
@@ -219,6 +220,7 @@ export const App: React.FC = () => {
         ? {
             id: generateId('edge'),
             source: sourceNodeId,
+            ...(sourceHandle ? { sourceHandle } : {}),
             target: newNode.id,
             type: 'default',
             animated: true,
@@ -1070,6 +1072,39 @@ export const App: React.FC = () => {
 
     window.addEventListener('autoflow:add-for-each-node', handleAddForEach);
     return () => window.removeEventListener('autoflow:add-for-each-node', handleAddForEach);
+  }, [handleAddNode, nodes]);
+
+  // Listen for custom event to add a node connected to a specific async branch handle
+  useEffect(() => {
+    const handleAddBranchNode = (e: Event) => {
+      const customEvent = e as CustomEvent<{ branchId: string; branchName: string; sourceNodeId: string; handleId: string }>;
+      const { branchId, sourceNodeId, handleId } = customEvent.detail || {};
+      if (!sourceNodeId || !branchId) return;
+
+      let position: { x: number; y: number } | undefined;
+      const sourceNode = nodes.find((n) => n.id === sourceNodeId);
+      if (sourceNode) {
+        // Get the branch index to offset horizontally
+        const branches = sourceNode.data?.properties?.branches || [];
+        const branchIndex = branches.findIndex((b: any) => b.id === branchId);
+        position = {
+          x: sourceNode.position.x + (branchIndex >= 0 ? branchIndex * 200 : 0),
+          y: sourceNode.position.y + 160,
+        };
+      }
+
+      // Add a generic navigate node connected to the branch handle
+      handleAddNode(
+        'navigate',
+        position,
+        {},
+        sourceNodeId,
+        handleId
+      );
+    };
+
+    window.addEventListener('autoflow:add-branch-node', handleAddBranchNode);
+    return () => window.removeEventListener('autoflow:add-branch-node', handleAddBranchNode);
   }, [handleAddNode, nodes]);
 
   // Export JSON
