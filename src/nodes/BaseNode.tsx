@@ -171,6 +171,46 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
         </div>
       )}
 
+      {/* Wait Node Quick Duration Presets on Card */}
+      {data.type === 'wait' && status !== 'running' && (
+        <div className="mt-1.5 flex items-center gap-1">
+          {[1, 2, 5, 10].map((sec) => {
+            const unit = data.properties?.unit || 'ms';
+            const dur = data.properties?.duration ?? data.properties?.timeout ?? 1000;
+            const isMatch = unit === 's' ? Number(dur) === sec : Number(dur) === sec * 1000;
+            return (
+              <button
+                key={sec}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(
+                    new CustomEvent('autoflow:update-node-properties', {
+                      detail: {
+                        nodeId: id,
+                        properties: {
+                          ...data.properties,
+                          duration: unit === 's' ? sec : sec * 1000,
+                          timeout: unit === 's' ? sec : sec * 1000,
+                        },
+                      },
+                    })
+                  );
+                }}
+                className={`px-1.5 py-0.5 rounded text-[9px] font-mono transition-colors ${
+                  isMatch
+                    ? 'bg-indigo-600 text-white font-bold'
+                    : 'bg-[#141824] hover:bg-[#1f2638] text-gray-400 hover:text-white border border-[#202738]'
+                }`}
+                title={`Set wait time to ${sec}s`}
+              >
+                {sec}s
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Wait Node Live Countdown Widget */}
       {data.type === 'wait' && status === 'running' && (
         <div className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 space-y-1.5 animate-pulse">
@@ -226,12 +266,19 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
         </div>
       )}
 
-      {/* Mini Screenshot preview if present */}
+      {/* Mini Screenshot/Image preview if present */}
       {runtime?.dynamicState?.previewUrl && status === 'success' && (
         <div className="mt-2 rounded-lg border border-[#1c2230] overflow-hidden bg-black/60 relative group/thumb">
-          <img src={runtime.dynamicState.previewUrl} alt="Preview" className="w-full h-14 object-cover" />
-          <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1.5 py-0.5 text-[9px] text-emerald-300 font-mono flex items-center justify-between">
-            <span>Captured image</span>
+          <img
+            src={runtime.dynamicState.previewUrl}
+            alt="Preview"
+            className="w-full max-h-36 object-contain bg-black/80"
+          />
+          <div className="absolute bottom-0 inset-x-0 bg-black/75 px-1.5 py-0.5 text-[9px] text-emerald-300 font-mono flex items-center justify-between backdrop-blur-sm">
+            <span>{data.type === 'generate_image' ? 'Generated image' : 'Captured image'}</span>
+            {data.properties?.size && (
+              <span className="text-[8px] text-gray-400">{data.properties.size}</span>
+            )}
           </div>
         </div>
       )}

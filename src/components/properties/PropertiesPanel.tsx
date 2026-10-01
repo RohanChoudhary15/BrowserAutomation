@@ -552,6 +552,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     });
   };
 
+  const handlePropsChange = (updates: Record<string, any>) => {
+    onUpdateProperties(selectedNode.id, {
+      ...props,
+      ...updates,
+    });
+  };
+
   const renderScraperExecutionConfig = (accentBorder: string = 'border-orange-500') => (
     <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
       <div className="flex items-center justify-between">
@@ -1515,11 +1522,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const cur = Number(props.duration ?? 1000);
-                      handlePropChange('unit', 'ms');
+                      const cur = Number(props.duration ?? props.timeout ?? 1000);
                       if (props.unit === 's') {
-                        handlePropChange('duration', cur * 1000);
-                        handlePropChange('timeout', cur * 1000);
+                        handlePropsChange({
+                          unit: 'ms',
+                          duration: cur * 1000,
+                          timeout: cur * 1000,
+                        });
+                      } else {
+                        handlePropsChange({ unit: 'ms' });
                       }
                     }}
                     className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
@@ -1533,11 +1544,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const cur = Number(props.duration ?? 1000);
-                      handlePropChange('unit', 's');
+                      const cur = Number(props.duration ?? props.timeout ?? 1000);
                       if ((props.unit || 'ms') === 'ms' && cur >= 1000) {
-                        handlePropChange('duration', cur / 1000);
-                        handlePropChange('timeout', cur / 1000);
+                        handlePropsChange({
+                          unit: 's',
+                          duration: cur / 1000,
+                          timeout: cur / 1000,
+                        });
+                      } else {
+                        handlePropsChange({ unit: 's' });
                       }
                     }}
                     className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
@@ -1557,8 +1572,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   const raw = e.target.value;
                   const num = Number(raw);
                   const val = !isNaN(num) && raw.trim() !== '' ? num : raw;
-                  handlePropChange('duration', val);
-                  handlePropChange('timeout', typeof val === 'number' ? val : val);
+                  handlePropsChange({ duration: val, timeout: val });
                 }}
                 placeholder={props.unit === 's' ? 'e.g. 2 or {{delay}}' : 'e.g. 2000 or {{delay}}'}
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
@@ -1569,8 +1583,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     key={preset}
                     type="button"
                     onClick={() => {
-                      handlePropChange('duration', preset);
-                      handlePropChange('timeout', preset);
+                      handlePropsChange({ duration: preset, timeout: preset });
                     }}
                     className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
                       Number(props.duration ?? props.timeout ?? 1000) === preset
@@ -4454,12 +4467,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       {nodeImages.map((imgUrl: string, idx: number) => (
                         <div
                           key={idx}
-                          className="relative group rounded-lg overflow-hidden border border-[#2a3449] bg-black/60 aspect-video flex flex-col justify-end"
+                          className="relative group rounded-lg overflow-hidden border border-[#2a3449] bg-black/80 flex flex-col items-center justify-center min-h-[110px]"
                         >
                           <img
                             src={imgUrl}
                             alt={`Generated variation ${idx + 1}`}
-                            className="w-full h-full object-cover cursor-pointer"
+                            className="w-full max-h-48 object-contain cursor-pointer"
                             onClick={() => {
                               setFullScreenImageUrl(imgUrl);
                               setFullScreenImageIndex(idx);
@@ -6943,6 +6956,45 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       </button>
                     )}
                   </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Add Node to Branch */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/20 space-y-2">
+              <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-xs">
+                <Zap className="w-3.5 h-3.5" />
+                <span>Quick Add Node to Branch</span>
+              </div>
+              <p className="text-[10px] text-gray-400 leading-relaxed">
+                Click a branch below to automatically create and connect a node to that branch.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(Array.isArray(props.branches) ? props.branches : [
+                  { id: 'branch_1', name: 'Branch 1' },
+                  { id: 'branch_2', name: 'Branch 2' },
+                ]).map((b: any, idx: number) => (
+                  <button
+                    key={b.id || idx}
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent('autoflow:add-branch-node', {
+                          detail: {
+                            branchId: b.id,
+                            branchName: b.name,
+                            sourceNodeId: selectedNode.id,
+                            handleId: b.id,
+                          },
+                        })
+                      );
+                    }}
+                    className="py-1.5 px-2.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition-colors"
+                    title={`Add a new node connected to ${b.name || `Branch ${idx + 1}`}`}
+                  >
+                    <Plus className="w-2.5 h-2.5" />
+                    <span>+ {b.name || `Branch ${idx + 1}`}</span>
+                  </button>
                 ))}
               </div>
             </div>

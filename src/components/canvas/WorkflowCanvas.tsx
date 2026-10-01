@@ -39,7 +39,8 @@ interface WorkflowCanvasProps {
     type: NodeType,
     position?: { x: number; y: number },
     initialProperties?: Record<string, any>,
-    sourceNodeId?: string
+    sourceNodeId?: string,
+    sourceHandle?: string
   ) => void;
   onAddNodeAndConnect?: (
     type: NodeType,
@@ -242,6 +243,15 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         onNodesChange(nodes.map((n) => ({ type: 'select', id: n.id, selected: true })));
       }
 
+      // F -> Focus & zoom selected nodes
+      if (e.key === 'f' || e.key === 'F') {
+        const toFocus = nodes.filter((n) => n.selected);
+        if (toFocus.length > 0) {
+          e.preventDefault();
+          fitView({ nodes: toFocus, padding: 0.3, duration: 400 });
+        }
+      }
+
       // Escape -> Deselect All & dismiss menus
       if (e.key === 'Escape') {
         onNodesChange(nodes.map((n) => ({ type: 'select', id: n.id, selected: false })));
@@ -254,7 +264,7 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, onDeleteNodes, onDeleteNode, onDuplicateNodes, onDuplicateNode, onCopyNodes, onCopyNode, onPasteNodes, canPaste, onNodesChange, onSelectNode]);
+  }, [nodes, onDeleteNodes, onDeleteNode, onDuplicateNodes, onDuplicateNode, onCopyNodes, onCopyNode, onPasteNodes, canPaste, onNodesChange, onSelectNode, fitView]);
 
   // Track Alt key globally for tactile cursor and visual cue
   const [isAltPressed, setIsAltPressed] = useState(false);
@@ -307,13 +317,14 @@ const WorkflowCanvasInner: React.FC<WorkflowCanvasProps> = ({
         }
       }
       const sourceNodeId = e.dataTransfer.getData('application/autoflow-source-node') || undefined;
+      const sourceHandle = e.dataTransfer.getData('application/autoflow-source-handle') || undefined;
 
       const position = screenToFlowPosition({
         x: e.clientX,
         y: e.clientY,
       });
 
-      onAddNode(nodeType, position, initialProps, sourceNodeId);
+      onAddNode(nodeType, position, initialProps, sourceNodeId, sourceHandle);
     },
     [screenToFlowPosition, onAddNode]
   );

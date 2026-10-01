@@ -1107,6 +1107,19 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('autoflow:add-branch-node', handleAddBranchNode);
   }, [handleAddNode, nodes]);
 
+  // Listen for custom event to update node properties from canvas cards
+  useEffect(() => {
+    const handleUpdateNodeProps = (e: Event) => {
+      const customEvent = e as CustomEvent<{ nodeId: string; properties: Record<string, any> }>;
+      const { nodeId, properties } = customEvent.detail || {};
+      if (!nodeId || !properties) return;
+      handleUpdateProperties(nodeId, properties);
+    };
+
+    window.addEventListener('autoflow:update-node-properties', handleUpdateNodeProps);
+    return () => window.removeEventListener('autoflow:update-node-properties', handleUpdateNodeProps);
+  }, [handleUpdateProperties]);
+
   // Export JSON
   const handleExport = useCallback(() => {
     const currentWorkflow: Workflow = { ...activeWorkflow, nodes, edges };
