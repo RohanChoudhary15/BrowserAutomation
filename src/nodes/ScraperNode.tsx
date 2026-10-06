@@ -149,7 +149,9 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
       ? runtime.output.items
       : (runtime?.dynamicState?.table?.rows && Array.isArray(runtime.dynamicState.table.rows)
         ? runtime.dynamicState.table.rows
-        : []));
+        : (Array.isArray(runtime?.dynamicState?.items)
+          ? runtime.dynamicState.items
+          : [])));
 
   const resultCount = items.length > 0
     ? items.length
@@ -157,7 +159,7 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
 
   const headers = runtime?.dynamicState?.table?.headers ||
     (items.length > 0 && typeof items[0] === 'object' && items[0] !== null
-      ? Object.keys(items[0]).slice(0, 4)
+      ? Object.keys(items[0])
       : ['title', 'url']);
 
   // Local table preview and export dropdown states

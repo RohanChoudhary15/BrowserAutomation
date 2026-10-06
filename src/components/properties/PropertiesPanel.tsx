@@ -17,6 +17,7 @@ import {
   Code,
   RefreshCw,
   Plus,
+  Save,
   Bookmark,
   Image as ImageIcon,
   Key,
@@ -80,6 +81,16 @@ import {
 import { ScraperPropertiesPanel } from './scrapers/ScraperPropertiesPanel';
 import { DataNodesProperties } from './sections/DataNodesProperties';
 import { ControlFlowProperties } from './sections/ControlFlowProperties';
+import { TableModal } from './TableModal';
+import {
+  getAllCardSchemas,
+  saveCardSchema,
+  deleteCardSchema,
+  exportCardSchemasAsJson,
+  importCardSchemasFromJson,
+  CardSchemaPreset,
+} from '../../storage/cardSchemaStore';
+import { exportAndDownloadDataset } from '../../utils/documentExporter';
 
 const getImagePreviews = (output: any): string[] => {
   if (!output) return [];
@@ -261,6 +272,46 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [aiStoragePrompt, setAiStoragePrompt] = useState('');
   const [aiStorageLoading, setAiStorageLoading] = useState(false);
   const [aiStorageError, setAiStorageError] = useState<string | null>(null);
+
+  // Saved Card Schemas State (Product Cards & Parent Div / Container Presets)
+  const [cardSchemas, setCardSchemas] = useState<CardSchemaPreset[]>([]);
+  const [selectedCardSchemaId, setSelectedCardSchemaId] = useState<string>('');
+  const [isSavingCardSchema, setIsSavingCardSchema] = useState(false);
+  const [cardSchemaNameInput, setCardSchemaNameInput] = useState('');
+  const [cardSchemaSaveFeedback, setCardSchemaSaveFeedback] = useState<string | null>(null);
+  const [isScrapeTableModalOpen, setIsScrapeTableModalOpen] = useState(false);
+  const [isExportingCards, setIsExportingCards] = useState(false);
+
+  const loadCardSchemasList = async () => {
+    try {
+      const schemas = await getAllCardSchemas();
+      setCardSchemas(schemas);
+    } catch (e) {
+      console.warn('Failed to load card schemas:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedNode?.data?.type === 'scrape_elements') {
+      loadCardSchemasList();
+    }
+  }, [selectedNode?.id, selectedNode?.data?.type]);
+
+  const extractedCardsData = React.useMemo(() => {
+    if (selectedNode?.data?.type !== 'scrape_elements') return [];
+    const dynItems = runtimeState?.dynamicState?.items || runtimeState?.dynamicState?.table?.rows;
+    if (Array.isArray(dynItems) && dynItems.length > 0) return dynItems;
+    if (Array.isArray(runtimeState?.output) && runtimeState.output.length > 0) return runtimeState.output;
+    if (runtimeState?.output && Array.isArray(runtimeState.output.items) && runtimeState.output.items.length > 0) {
+      return runtimeState.output.items;
+    }
+    const outVar = selectedNode?.data?.properties?.outputVariable || 'scrapedProducts';
+    if (Array.isArray(variables[outVar]) && variables[outVar].length > 0) return variables[outVar];
+    if (variables[`${outVar}_table`]?.rows && Array.isArray(variables[`${outVar}_table`].rows)) {
+      return variables[`${outVar}_table`].rows;
+    }
+    return [];
+  }, [selectedNode?.data?.type, selectedNode?.data?.properties?.outputVariable, runtimeState, variables]);
 
   // Memoized array of images for the currently selected node
   const activeNodeImages = React.useMemo<string[]>(() => {
@@ -558,6 +609,114 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       ...props,
       ...updates,
     });
+  };
+
+  const handleApplyCardSchema = (schema: CardSchemaPreset) => {
+    setSelectedCardSchemaId(schema.id);
+    handlePropChange('containerSelector', schema.containerSelector);
+    if (Array.isArray(schema.fields) && schema.fields.length > 0) {
+      handlePropChange('fields', JSON.parse(JSON.stringify(schema.fields)));
+    }
+    setCardSchemaSaveFeedback(`Applied "${schema.name}" preset`);
+    setTimeout(() => setCardSchemaSaveFeedback(null), 2500);
+  };
+
+  const handleSaveCurrentCardSchema = async () => {
+    const name = cardSchemaNameInput.trim();
+    if (!name) {
+      setCardSchemaSaveFeedback('Please enter a schema name');
+      setTimeout(() => setCardSchemaSaveFeedback(null), 3000);
+      return;
+    }
+    const container = (props.containerSelector || '').trim();
+    if (!container) {
+      setCardSchemaSaveFeedback('Container selector (parent div) is required');
+      setTimeout(() => setCardSchemaSaveFeedback(null), 3000);
+      return;
+    }
+    const fields = Array.isArray(props.fields) ? props.fields : [];
+    try {
+      const saved = await saveCardSchema({
+        name,
+        containerSelector: container,
+        fields,
+        category: 'custom',
+        description: `Custom schema with parent: ${container} (${fields.length} fields)`,
+      });
+      await loadCardSchemasList();
+      setSelectedCardSchemaId(saved.id);
+      setCardSchemaSaveFeedback(`Schema "${saved.name}" saved!`);
+      setIsSavingCardSchema(false);
+      setCardSchemaNameInput('');
+      setTimeout(() => setCardSchemaSaveFeedback(null), 3500);
+    } catch (err: any) {
+      setCardSchemaSaveFeedback(err?.message || 'Error saving schema');
+      setTimeout(() => setCardSchemaSaveFeedback(null), 3500);
+    }
+  };
+
+  const handleDeleteCardSchemaItem = async (schemaId: string) => {
+    const target = cardSchemas.find((s) => s.id === schemaId);
+    if (!target || target.isBuiltIn) return;
+    if (window.confirm(`Delete saved schema "${target.name}"?`)) {
+      await deleteCardSchema(schemaId);
+      await loadCardSchemasList();
+      if (selectedCardSchemaId === schemaId) {
+        setSelectedCardSchemaId('');
+      }
+      setCardSchemaSaveFeedback(`Deleted "${target.name}"`);
+      setTimeout(() => setCardSchemaSaveFeedback(null), 2500);
+    }
+  };
+
+  const handleExportSchemasFile = async () => {
+    try {
+      const json = await exportCardSchemasAsJson();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `card_schemas_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.warn('Failed to export schemas:', e);
+    }
+  };
+
+  const handleImportSchemasFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        await importCardSchemasFromJson(text);
+        await loadCardSchemasList();
+        setCardSchemaSaveFeedback('Schemas imported successfully!');
+        setTimeout(() => setCardSchemaSaveFeedback(null), 3000);
+      } catch (err: any) {
+        setCardSchemaSaveFeedback(err?.message || 'Import error');
+        setTimeout(() => setCardSchemaSaveFeedback(null), 3500);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleExportCardsDataset = async (format: 'csv' | 'xlsx' | 'json') => {
+    if (!extractedCardsData || extractedCardsData.length === 0) return;
+    setIsExportingCards(true);
+    try {
+      const filename = props.exportFilename || props.outputVariable || 'scraped_products';
+      await exportAndDownloadDataset(extractedCardsData, format, filename);
+    } catch (err) {
+      console.warn('Export cards error:', err);
+    } finally {
+      setIsExportingCards(false);
+    }
   };
 
   const renderScraperExecutionConfig = (accentBorder: string = 'border-orange-500') => (
@@ -2265,79 +2424,179 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
             </div>
 
-            {/* Quick Schema Presets */}
-            <div>
-              <span className="text-[10px] font-medium text-gray-400 block mb-1">
-                Presets:
-              </span>
-              <div className="grid grid-cols-4 gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handlePropChange('containerSelector', 'article.Box-row, .Box-row');
-                    handlePropChange('fields', [
-                      { name: 'repo_name', selector: 'h1 a, h2 a', attribute: 'text' },
-                      { name: 'repo_url', selector: 'h1 a, h2 a', attribute: 'href' },
-                      { name: 'description', selector: 'p', attribute: 'text' },
-                      { name: 'language', selector: '[itemprop="programmingLanguage"]', attribute: 'text' },
-                      { name: 'stars', selector: 'a[href*="stargazers"]', attribute: 'text' },
-                      { name: 'forks', selector: 'a[href*="forks"]', attribute: 'text' },
-                      { name: 'stars_today', selector: 'span.float-sm-right', attribute: 'text' },
-                    ]);
+            {/* Saved Card Schemas & Presets with Parent Div */}
+            <div className="space-y-2 p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-200">
+                  <Bookmark className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Card Schema &amp; Parent Div</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsSavingCardSchema(!isSavingCardSchema)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition-colors"
+                    title="Save current card schema and parent div container selector"
+                  >
+                    <Save className="w-3 h-3" />
+                    <span>{isSavingCardSchema ? 'Close' : 'Save Current'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportSchemasFile}
+                    className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-[#1c2230] transition-colors"
+                    title="Export all saved card schemas as JSON"
+                  >
+                    <Download className="w-3 h-3" />
+                  </button>
+                  <label
+                    className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-[#1c2230] cursor-pointer transition-colors"
+                    title="Import card schemas from JSON file"
+                  >
+                    <Upload className="w-3 h-3" />
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleImportSchemasFile}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Feedback toast / notification */}
+              {cardSchemaSaveFeedback && (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/60 border border-emerald-500/40 text-[10px] text-emerald-300 animate-fadeIn">
+                  <Check className="w-3 h-3 shrink-0" />
+                  <span>{cardSchemaSaveFeedback}</span>
+                </div>
+              )}
+
+              {/* Schema Selector Dropdown */}
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={selectedCardSchemaId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const found = cardSchemas.find((s) => s.id === id);
+                    if (found) handleApplyCardSchema(found);
+                    else setSelectedCardSchemaId('');
                   }}
-                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
+                  className="flex-1 bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs"
                 >
-                  GitHub
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handlePropChange('containerSelector', '.product-card, article');
-                    handlePropChange('fields', [
-                      { name: 'title', selector: 'h2, h3, h4, .title, [class*="title"]', attribute: 'text' },
-                      { name: 'price', selector: '.price, [class*="price"]', attribute: 'text' },
-                      { name: 'image', selector: 'img', attribute: 'src' },
-                      { name: 'link', selector: 'a', attribute: 'href' },
-                      { name: 'description', selector: 'p', attribute: 'paragraphs' },
-                    ]);
-                  }}
-                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
-                >
-                  E-Commerce
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handlePropChange('containerSelector', 'article, .post, .article-card');
-                    handlePropChange('fields', [
-                      { name: 'headline', selector: 'h2, h3, h4, a', attribute: 'text' },
-                      { name: 'author', selector: '.author, [rel="author"]', attribute: 'text' },
-                      { name: 'date', selector: 'time, .date', attribute: 'text' },
-                      { name: 'paragraphs', selector: 'p', attribute: 'paragraphs' },
-                      { name: 'image', selector: 'img', attribute: 'src' },
-                      { name: 'url', selector: 'a', attribute: 'href' },
-                    ]);
-                  }}
-                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
-                >
-                  Articles
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handlePropChange('containerSelector', '.job-item, li, article');
-                    handlePropChange('fields', [
-                      { name: 'job_title', selector: 'h2, h3, [class*="title" i]', attribute: 'text' },
-                      { name: 'company', selector: '[class*="company" i]', attribute: 'text' },
-                      { name: 'location', selector: '[class*="location" i]', attribute: 'text' },
-                      { name: 'link', selector: 'a', attribute: 'href' },
-                      { name: 'description', selector: 'p', attribute: 'text' },
-                    ]);
-                  }}
-                  className="px-2 py-1 bg-[#141924] hover:bg-[#1e2536] border border-[#202738] rounded text-[10px] text-gray-300 hover:text-white transition-colors"
-                >
-                  Jobs
-                </button>
+                  <option value="">-- Load Schema Preset or Saved Schema --</option>
+                  <optgroup label="🌟 Built-in Presets">
+                    {cardSchemas
+                      .filter((s) => s.isBuiltIn)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.fields.length} fields)
+                        </option>
+                      ))}
+                  </optgroup>
+                  {cardSchemas.some((s) => !s.isBuiltIn) && (
+                    <optgroup label="💾 Your Saved Schemas">
+                      {cardSchemas
+                        .filter((s) => !s.isBuiltIn)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.fields.length} fields)
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                </select>
+
+                {/* Delete button if selected schema is a custom user schema */}
+                {(() => {
+                  const currentSelected = cardSchemas.find((s) => s.id === selectedCardSchemaId);
+                  if (currentSelected && !currentSelected.isBuiltIn) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCardSchemaItem(currentSelected.id)}
+                        className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 transition-colors"
+                        title={`Delete saved schema "${currentSelected.name}"`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+
+              {/* Inline Save Form */}
+              {isSavingCardSchema && (
+                <div className="p-2 rounded-lg bg-[#141924] border border-indigo-500/30 space-y-2 animate-fadeIn">
+                  <div className="text-[11px] font-medium text-indigo-300 flex items-center justify-between">
+                    <span>Save Current Schema &amp; Parent Div</span>
+                    <span className="text-[10px] text-gray-400">
+                      {(props.fields || []).length} field(s)
+                    </span>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">
+                      Schema Name:
+                    </label>
+                    <input
+                      type="text"
+                      value={cardSchemaNameInput}
+                      onChange={(e) => setCardSchemaNameInput(e.target.value)}
+                      placeholder="e.g. My Amazon Products, Shopify Cards"
+                      className="w-full bg-[#0d1017] text-white p-1.5 rounded border border-[#202738] focus:border-indigo-500 outline-none text-xs"
+                    />
+                  </div>
+                  <div className="p-1.5 rounded bg-[#0b0e14] border border-[#1b2230] text-[10px] space-y-0.5">
+                    <div className="text-gray-400 truncate">
+                      Parent Div:{' '}
+                      <span className="font-mono text-indigo-300">
+                        {props.containerSelector || '(No container selector specified)'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsSavingCardSchema(false)}
+                      className="px-2 py-1 rounded text-[10px] text-gray-400 hover:text-white bg-[#1c2230] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveCurrentCardSchema}
+                      className="px-2.5 py-1 rounded text-[10px] font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors flex items-center gap-1 shadow-sm"
+                    >
+                      <Save className="w-3 h-3" />
+                      <span>Save Schema</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Preset Badges */}
+              <div className="pt-1">
+                <span className="text-[10px] font-medium text-gray-400 block mb-1">
+                  Quick Presets:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {cardSchemas.slice(0, 7).map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleApplyCardSchema(preset)}
+                      className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                        selectedCardSchemaId === preset.id
+                          ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/50'
+                          : 'bg-[#141924] hover:bg-[#1e2536] border-[#202738] text-gray-300 hover:text-white'
+                      }`}
+                      title={preset.description || preset.containerSelector}
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -2801,6 +3060,170 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Extracted Cards Table Output */}
+            <div className="pt-2 border-t border-[#1c2230] space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-200">
+                  <Table className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Extracted Cards Table Output</span>
+                </div>
+                {extractedCardsData.length > 0 && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                    {extractedCardsData.length} {extractedCardsData.length === 1 ? 'card' : 'cards'}
+                  </span>
+                )}
+              </div>
+
+              {extractedCardsData.length > 0 ? (
+                <div className="p-2.5 rounded-xl bg-[#0e121a] border border-[#1e2433] space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setIsScrapeTableModalOpen(true)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors shadow-sm"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span>View Full Table ({extractedCardsData.length} rows)</span>
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={isExportingCards}
+                        onClick={() => handleExportCardsDataset('csv')}
+                        className="px-2 py-1 rounded bg-[#161a24] hover:bg-[#202738] border border-[#263045] text-[10px] text-gray-300 hover:text-white flex items-center gap-1 transition-colors"
+                        title="Download as CSV"
+                      >
+                        <FileText className="w-3 h-3 text-emerald-400" />
+                        <span>CSV</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isExportingCards}
+                        onClick={() => handleExportCardsDataset('xlsx')}
+                        className="px-2 py-1 rounded bg-[#161a24] hover:bg-[#202738] border border-[#263045] text-[10px] text-gray-300 hover:text-white flex items-center gap-1 transition-colors"
+                        title="Download as Excel XLSX"
+                      >
+                        <FileSpreadsheet className="w-3 h-3 text-emerald-400" />
+                        <span>Excel</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isExportingCards}
+                        onClick={() => handleExportCardsDataset('json')}
+                        className="px-2 py-1 rounded bg-[#161a24] hover:bg-[#202738] border border-[#263045] text-[10px] text-gray-300 hover:text-white flex items-center gap-1 transition-colors"
+                        title="Download as JSON"
+                      >
+                        <FileCode className="w-3 h-3 text-amber-400" />
+                        <span>JSON</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Inline Table Preview */}
+                  <div className="rounded-lg border border-[#1e2538] overflow-hidden bg-[#0a0d14]">
+                    <div className="overflow-x-auto max-h-48 text-[10px]">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-[#121622] text-gray-400 border-b border-[#1e2538]">
+                            <th className="py-1 px-2 font-mono text-[9px] w-6">#</th>
+                            {(() => {
+                              const keys = Array.from(
+                                new Set(
+                                  extractedCardsData.slice(0, 10).flatMap((item: any) =>
+                                    item && typeof item === 'object' ? Object.keys(item) : []
+                                  )
+                                )
+                              );
+                              return keys.map((key) => (
+                                <th key={key} className="py-1 px-2 font-medium truncate max-w-[120px]">
+                                  {key}
+                                </th>
+                              ));
+                            })()}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#161c29]">
+                          {extractedCardsData.slice(0, 5).map((row: any, rIdx: number) => {
+                            const keys = Array.from(
+                              new Set(
+                                extractedCardsData.slice(0, 10).flatMap((item: any) =>
+                                  item && typeof item === 'object' ? Object.keys(item) : []
+                                )
+                              )
+                            );
+                            return (
+                              <tr key={rIdx} className="hover:bg-[#131724]/60 transition-colors">
+                                <td className="py-1 px-2 font-mono text-gray-500 text-[9px]">{rIdx + 1}</td>
+                                {keys.map((k) => {
+                                  const val = row && typeof row === 'object' ? row[k] : undefined;
+                                  const strVal = String(val ?? '');
+                                  const isImg =
+                                    typeof val === 'string' &&
+                                    (val.startsWith('data:image/') ||
+                                      (val.startsWith('http') && (k.toLowerCase().includes('image') || k.toLowerCase().includes('src') || val.match(/\.(jpg|jpeg|png|webp|gif)/i))));
+                                  const isLink = typeof val === 'string' && val.startsWith('http') && !isImg;
+
+                                  return (
+                                    <td key={k} className="py-1 px-2 text-gray-300 truncate max-w-[140px]">
+                                      {isImg ? (
+                                        <div className="flex items-center gap-1.5">
+                                          <img
+                                            src={val}
+                                            alt={k}
+                                            className="w-5 h-5 object-contain rounded border border-[#2b354c] bg-black/40 shrink-0"
+                                          />
+                                          <span className="truncate text-gray-400 font-mono text-[9px]">{val}</span>
+                                        </div>
+                                      ) : isLink ? (
+                                        <a
+                                          href={val}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-0.5 truncate"
+                                        >
+                                          <span className="truncate">{val}</span>
+                                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                        </a>
+                                      ) : (
+                                        <span>{strVal || <span className="text-gray-600 italic">null</span>}</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {extractedCardsData.length > 5 && (
+                      <div className="px-2.5 py-1 bg-[#10141f] border-t border-[#1e2538] text-[9px] text-gray-400 flex items-center justify-between">
+                        <span>Showing first 5 of {extractedCardsData.length} extracted cards</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsScrapeTableModalOpen(true)}
+                          className="text-indigo-400 hover:text-indigo-300 font-medium"
+                        >
+                          View all {extractedCardsData.length} in table &rarr;
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] text-center space-y-1">
+                  <div className="flex justify-center text-gray-600">
+                    <Table className="w-5 h-5" />
+                  </div>
+                  <p className="text-[11px] text-gray-300 font-medium">No extracted cards yet</p>
+                  <p className="text-[10px] text-gray-500 max-w-xs mx-auto">
+                    Execute this node or run the workflow to view structured cards in the interactive table with instant export.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -9326,6 +9749,15 @@ Rules:
           </div>
         </div>
       )}
+
+      {/* Extracted Cards Table Inspection Modal */}
+      <TableModal
+        isOpen={isScrapeTableModalOpen}
+        onClose={() => setIsScrapeTableModalOpen(false)}
+        title={`Extracted Cards Table (${extractedCardsData.length} items)`}
+        data={extractedCardsData}
+        defaultFilename={props.exportFilename || props.outputVariable || 'scraped_products'}
+      />
     </aside>
   );
 };

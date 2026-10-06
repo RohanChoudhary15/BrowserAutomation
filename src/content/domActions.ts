@@ -1009,19 +1009,42 @@ export function resolveElementAttribute(el: Element, attributeType?: string): st
     }
 
     if (imgEl) {
-      // Check data-src / data-lazy / data-original (common lazy loaders)
-      const dataSrc = imgEl.getAttribute('data-src') ||
-        imgEl.getAttribute('data-original') ||
+      // Check data-src / data-lazy / data-original (common lazy loaders across Amazon, Shopify, AliExpress, Walmart)
+      const dataSrc =
+        imgEl.getAttribute('data-src') ||
         imgEl.getAttribute('data-lazy-src') ||
-        imgEl.getAttribute('data-url');
-      if (dataSrc && !dataSrc.startsWith('data:image')) {
-        return toAbsoluteUrl(dataSrc);
-      }
+        imgEl.getAttribute('data-original') ||
+        imgEl.getAttribute('data-url') ||
+        imgEl.getAttribute('data-old-hires') ||
+        imgEl.getAttribute('data-hi-res') ||
+        imgEl.getAttribute('data-highres') ||
+        imgEl.getAttribute('data-zoom-image') ||
+        imgEl.getAttribute('data-image') ||
+        imgEl.getAttribute('data-actualsrc') ||
+        imgEl.getAttribute('data-lazy');
 
-      // Check srcset (pick highest resolution candidate)
-      const srcset = imgEl.getAttribute('srcset');
+      const isPlaceholder = (url?: string | null) =>
+        !url ||
+        url.startsWith('data:image/svg+xml') ||
+        url.startsWith('data:image/gif') ||
+        url.includes('blank.gif') ||
+        url.includes('transparent.png') ||
+        url.includes('1x1') ||
+        url.includes('placeholder') ||
+        url.includes('spinner');
+
+      // Check srcset on img or inside picture source (pick highest resolution candidate)
+      const srcset =
+        imgEl.getAttribute('srcset') ||
+        imgEl.getAttribute('data-srcset') ||
+        el.querySelector('picture source[srcset]')?.getAttribute('srcset') ||
+        el.querySelector('source[srcset]')?.getAttribute('srcset');
+
       if (srcset) {
-        const candidates = srcset.split(',').map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
+        const candidates = srcset
+          .split(',')
+          .map((s) => s.trim().split(/\s+/)[0])
+          .filter((u) => u && !isPlaceholder(u));
         if (candidates.length > 0) {
           return toAbsoluteUrl(candidates[candidates.length - 1]);
         }
@@ -1029,11 +1052,31 @@ export function resolveElementAttribute(el: Element, attributeType?: string): st
 
       // Check direct src / currentSrc
       const directSrc = imgEl.currentSrc || imgEl.src || imgEl.getAttribute('src');
-      if (directSrc && !directSrc.startsWith('data:image/svg+xml') && !directSrc.startsWith('data:image/gif')) {
+      if (directSrc && !isPlaceholder(directSrc)) {
         return toAbsoluteUrl(directSrc);
       }
 
+      if (dataSrc && !isPlaceholder(dataSrc)) {
+        return toAbsoluteUrl(dataSrc);
+      }
+
       if (dataSrc) return toAbsoluteUrl(dataSrc);
+      if (directSrc) return toAbsoluteUrl(directSrc);
+    }
+
+    // Check picture source if no img element was found
+    const picSource = el.querySelector('picture source[srcset], source[srcset]');
+    if (picSource) {
+      const srcset = picSource.getAttribute('srcset');
+      if (srcset) {
+        const candidates = srcset
+          .split(',')
+          .map((s) => s.trim().split(/\s+/)[0])
+          .filter(Boolean);
+        if (candidates.length > 0) {
+          return toAbsoluteUrl(candidates[candidates.length - 1]);
+        }
+      }
     }
 
     // Check CSS background-image (inline or computed)
@@ -1053,7 +1096,7 @@ export function resolveElementAttribute(el: Element, attributeType?: string): st
     }
 
     // Raw attribute fallback
-    const rawSrc = el.getAttribute('src');
+    const rawSrc = el.getAttribute('src') || el.getAttribute('data-src');
     if (rawSrc) return toAbsoluteUrl(rawSrc);
     return '';
   }
@@ -1064,14 +1107,18 @@ export function resolveElementAttribute(el: Element, attributeType?: string): st
     if (el instanceof HTMLAnchorElement || el.tagName.toLowerCase() === 'a') {
       anchor = el as HTMLAnchorElement;
     } else {
-      anchor = el.querySelector('a[href]');
+      anchor = el.querySelector('a[href]') || el.closest('a[href]');
     }
 
     if (anchor && anchor.href) {
       return anchor.href;
     }
 
-    const rawHref = el.getAttribute('href');
+    const rawHref =
+      el.getAttribute('href') ||
+      el.getAttribute('data-href') ||
+      el.getAttribute('data-url') ||
+      el.getAttribute('data-link');
     if (rawHref) return toAbsoluteUrl(rawHref);
     return '';
   }
@@ -1275,32 +1322,43 @@ export function safeQuerySingleElement(root: ParentNode, sel: string): Element |
  * Automatically identifies repeating product card/item containers when the user
  * did not specify a containerSelector or when the provided containerSelector found 0 elements.
  */
-export function findRepeatingCardContainers(root: ParentNode, fields: ExtractDatasetField[]): Element[] {
+export function findRepeatingCardContainers(root: ParentNode = document, fields: ExtractDatasetField[] = []): Element[] {
   const commonCardSelectors = [
-    'article.Box-row',
-    '.Box-row',
-    'li.Box-row',
+    '.s-result-item[data-asin]',
+    '.s-card-container',
+    '[data-component-type="s-search-result"]',
+    '.s-result-item',
+    '.s-item',
+    'li.s-item',
+    '[data-testid*="product" i]',
+    '[data-testid*="card" i]',
+    '[data-testid*="item" i]',
+    '[data-cy*="product" i]',
+    '[data-asin]',
     'article.product_pod',
     '.product-card',
     '.product-item',
     '.productCard',
     '.productItem',
-    '.s-result-item',
-    '.s-item',
-    'article',
-    '[data-component-type="s-search-result"]',
-    '[data-testid*="product" i]',
-    '[data-testid*="card" i]',
     '[class*="product-card" i]',
+    '[class*="ProductCard" i]',
     '[class*="product-item" i]',
+    '[class*="ProductItem" i]',
     '[class*="productCard" i]',
     '[class*="productItem" i]',
-    '[class*="product_pod" i]',
+    '[class*="item-card" i]',
+    '[class*="ItemCard" i]',
     '[class*="grid-item" i]',
     '[class*="listing-item" i]',
     '[class*="search-result" i]',
+    'article.Box-row',
+    '.Box-row',
+    'li.Box-row',
+    'article',
     'li.product',
     'li.item',
+    'li[class*="product" i]',
+    'li[class*="item" i]',
     'div.product',
     'tr.athing',
     '[class*="card" i]:not(body):not(html):not(#root):not(#app)',
@@ -1319,7 +1377,7 @@ export function findRepeatingCardContainers(root: ParentNode, fields: ExtractDat
   }
 
   // Fallback: Infer repeating cards from field selectors (e.g. h2, h3, p)
-  const candidateSelectors = fields
+  const candidateSelectors = (Array.isArray(fields) ? fields : [])
     .map(f => (f.selector || '').trim())
     .filter(s => s && !s.includes('//') && s.length < 50);
 
@@ -1411,8 +1469,39 @@ export function extractFieldFromElement(
     return resolveElementAttribute(container, attrType);
   }
 
+  // If container itself is an anchor and we need a link/href, extract immediately
+  if (attrType === 'href' || attrType === 'link' || attrType === 'url') {
+    if (container.tagName.toLowerCase() === 'a') {
+      const anchorHref = (container as HTMLAnchorElement).href || container.getAttribute('href');
+      if (anchorHref && anchorHref.trim() !== '') return toAbsoluteUrl(anchorHref);
+    }
+    const containerHref =
+      container.getAttribute('href') ||
+      container.getAttribute('data-href') ||
+      container.getAttribute('data-url') ||
+      container.getAttribute('data-link');
+    if (containerHref && containerHref.trim() !== '') {
+      return toAbsoluteUrl(containerHref);
+    }
+  }
+
+  // If container itself is an image and we need src, extract immediately
+  if (attrType === 'src' || attrType === 'image' || attrType === 'image_url' || attrType === 'img') {
+    if (container.tagName.toLowerCase() === 'img') {
+      const src = resolveElementAttribute(container, 'src');
+      if (src && src.trim() !== '') return src;
+    }
+  }
+
   // 1. Direct query within container
   const candidateEls = safeQueryElements(container, effectiveSel);
+  if (container.matches) {
+    try {
+      if (container.matches(effectiveSel) && !candidateEls.includes(container)) {
+        candidateEls.unshift(container);
+      }
+    } catch {}
+  }
 
   // If candidate elements found:
   if (candidateEls.length > 0) {
@@ -1422,7 +1511,10 @@ export function extractFieldFromElement(
     if (isPriceField && (attrType === 'text' || attrType === 'innertext' || attrType === 'textcontent')) {
       for (const el of candidateEls) {
         const hasPriceClass = el.className && typeof el.className === 'string' && /price/i.test(el.className);
-        const val = resolveElementAttribute(el, attrType);
+        let val = resolveElementAttribute(el, attrType);
+        if (!val || val.trim() === '') {
+          val = el.getAttribute('content') || el.getAttribute('data-price') || el.getAttribute('data-amount') || '';
+        }
         if (val && (PRICE_REGEX.test(val) || hasPriceClass)) {
           return val;
         }
@@ -1442,6 +1534,9 @@ export function extractFieldFromElement(
             break;
           }
         }
+      }
+      if (!val || val.trim() === '') {
+        val = el.getAttribute('content') || el.getAttribute('data-price') || el.getAttribute('title') || el.getAttribute('aria-label') || '';
       }
       if (val && val.trim() !== '') {
         return val;
@@ -1495,7 +1590,7 @@ export function extractFieldFromElement(
       if (hSel.toLowerCase() === effectiveSel.toLowerCase()) continue;
       const fallbackEls = safeQueryElements(container, hSel);
       for (const el of fallbackEls) {
-        const val = resolveElementAttribute(el, 'text');
+        const val = resolveElementAttribute(el, 'text') || el.getAttribute('title') || el.getAttribute('aria-label') || '';
         if (val && val.trim() !== '') {
           return val;
         }
@@ -1544,17 +1639,33 @@ export function extractFieldFromElement(
 
   if (isPriceTarget && (attrType === 'text' || attrType === 'innertext' || attrType === 'textcontent')) {
     const priceFallbacks = [
+      '.a-price .a-offscreen',
+      '.a-price-whole',
+      '.a-price',
+      '[class*="a-price" i]',
+      '[data-automation-id*="price" i]',
+      '.s-item__price',
+      '[itemprop="price"]',
+      'meta[itemprop="price"]',
+      '[data-price]',
+      '[data-amount]',
+      '[data-product-price]',
       '.price',
       '[class*="price" i]',
+      '.amount',
+      '[class*="amount" i]',
+      '.money',
+      '[class*="money" i]',
+      '.current-price',
+      '[class*="current-price" i]',
+      '.sale-price',
+      '[class*="sale-price" i]',
       'p.price',
       'p[class*="price" i]',
       'span.price',
       'span[class*="price" i]',
       'div[class*="price" i]',
-      '[data-test*="price" i]',
       '[id*="price" i]',
-      '.amount',
-      '[class*="amount" i]',
       'b',
       'strong',
       'p',
@@ -1565,7 +1676,10 @@ export function extractFieldFromElement(
       if (prSel.toLowerCase() === effectiveSel.toLowerCase()) continue;
       const fallbackEls = safeQueryElements(container, prSel);
       for (const el of fallbackEls) {
-        const val = resolveElementAttribute(el, 'text');
+        let val = resolveElementAttribute(el, 'text');
+        if (!val || val.trim() === '') {
+          val = el.getAttribute('content') || el.getAttribute('data-price') || el.getAttribute('data-amount') || '';
+        }
         if (val && /[\$€£¥₹\d]/.test(val)) {
           return val;
         }
@@ -1589,20 +1703,24 @@ export function extractFieldFromElement(
       const href = resolveElementAttribute(a, 'href');
       if (href && href.trim() !== '') return href;
     }
+    const closestAnchor = container.closest('a[href]');
+    if (closestAnchor && (closestAnchor as HTMLAnchorElement).href) {
+      return (closestAnchor as HTMLAnchorElement).href;
+    }
   }
 
   // 6. Fallback for image/src when selector targeted a container
   if (attrType === 'src' || attrType === 'image' || attrType === 'image_url') {
     if (candidateEls.length > 0) {
       for (const el of candidateEls) {
-        const imgEl = el.querySelector('img, picture source') || (el.tagName.toLowerCase() === 'img' ? el : null);
+        const imgEl = el.querySelector('img, picture source, picture img') || (el.tagName.toLowerCase() === 'img' ? el : null);
         if (imgEl) {
           const src = resolveElementAttribute(imgEl, 'src');
           if (src && src.trim() !== '') return src;
         }
       }
     }
-    const anyImgs = safeQueryElements(container, 'img, picture source');
+    const anyImgs = safeQueryElements(container, 'img, picture source, [class*="image" i] img');
     for (const img of anyImgs) {
       const src = resolveElementAttribute(img, 'src');
       if (src && src.trim() !== '') return src;

@@ -1,10 +1,26 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { Icon } from '../components/common/Icon';
 import { NODE_REGISTRY, CATEGORIES } from './registry';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Play, CheckCircle2, AlertCircle, Loader2, Repeat, Trash2 } from 'lucide-react';
+import {
+  Play,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Repeat,
+  Trash2,
+  Table as TableIcon,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Maximize2,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import { exportAndDownloadDataset } from '../utils/documentExporter';
+import { TableModal } from '../components/properties/TableModal';
 
 export interface IteratorNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -186,6 +202,138 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
         </div>
       )}
 
+      {/* Table Output & Table Export Button for Extracted Cards */}
+      {items.length > 0 && (
+        <div className="pt-2 border-t border-[#232a3b] space-y-1.5 mb-2">
+          <div className="flex items-center justify-between gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowTablePreview(!showTablePreview);
+              }}
+              className="text-[10px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+              title="Toggle Table Output Preview"
+            >
+              <TableIcon className="w-3 h-3" />
+              <span>Table Output ({items.length})</span>
+              {showTablePreview ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+            </button>
+
+            {/* Table Export Button with Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowExportMenu(!showExportMenu);
+                }}
+                className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[10px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                title="Export Table (CSV, Excel XLSX, JSON)"
+              >
+                <Download className="w-2.5 h-2.5" />
+                <span>Export</span>
+              </button>
+
+              {showExportMenu && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 top-full mt-1 z-30 w-36 bg-[#161a26] border border-[#283247] rounded-lg shadow-xl p-1 text-[10px] space-y-0.5 animate-fadeIn"
+                >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      exportAndDownloadDataset(items, 'csv', `${data.properties?.outputVariable || 'scraped_products'}`);
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-2 py-1 text-gray-200 hover:bg-white/10 rounded flex items-center gap-1.5 transition-colors"
+                  >
+                    <Download className="w-3 h-3 text-orange-400" />
+                    <span>Export CSV</span>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      exportAndDownloadDataset(items, 'xlsx', `${data.properties?.outputVariable || 'scraped_products'}`);
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-2 py-1 text-gray-200 hover:bg-white/10 rounded flex items-center gap-1.5 transition-colors"
+                  >
+                    <FileSpreadsheet className="w-3 h-3 text-emerald-400" />
+                    <span>Export Excel</span>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      exportAndDownloadDataset(items, 'json', `${data.properties?.outputVariable || 'scraped_products'}`);
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-2 py-1 text-gray-200 hover:bg-white/10 rounded flex items-center gap-1.5 transition-colors"
+                  >
+                    <FileText className="w-3 h-3 text-indigo-400" />
+                    <span>Export JSON</span>
+                  </button>
+                  <div className="pt-0.5 border-t border-[#232a3b]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowExportMenu(false);
+                        setIsTableModalOpen(true);
+                      }}
+                      className="w-full text-left px-2 py-1 text-indigo-400 hover:bg-white/10 rounded flex items-center gap-1.5 font-medium transition-colors"
+                    >
+                      <Maximize2 className="w-3 h-3" />
+                      <span>View Full Table</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Inline Mini-Table Preview */}
+          {showTablePreview && (
+            <div className="rounded border border-[#232a3b] bg-[#0c0e14] overflow-hidden text-[9px] mt-1">
+              <div className="overflow-x-auto max-h-32">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-[#181d2a] text-indigo-300 border-b border-[#232a3b]">
+                      {headers.map((h) => (
+                        <th key={h} className="py-0.5 px-1 text-left truncate max-w-[80px] whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e2433]">
+                    {items.slice(0, 6).map((row, rIdx) => (
+                      <tr key={rIdx} className="hover:bg-white/5">
+                        {headers.map((h) => (
+                          <td key={h} className="py-0.5 px-1 truncate max-w-[80px] text-gray-300">
+                            {String(row[h] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-1 bg-[#141824] border-t border-[#232a3b] flex items-center justify-between text-[8px] text-gray-400">
+                <span>Showing {Math.min(items.length, 6)} of {items.length} cards</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsTableModalOpen(true);
+                  }}
+                  className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+                >
+                  View all
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Output Handle Labels */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">
         <div className="text-indigo-400 flex items-center gap-1">
@@ -215,6 +363,17 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
         className="!w-3 !h-3 !bg-gray-400 !border-2 !border-[#11141c] hover:!bg-gray-300 transition-colors"
         title="Done (continues when collection finishes)"
       />
+
+      {/* Full Screen Table Modal */}
+      {isTableModalOpen && (
+        <TableModal
+          isOpen={isTableModalOpen}
+          onClose={() => setIsTableModalOpen(false)}
+          title={`${data.label || 'Extracted Cards'} Table Output`}
+          data={items}
+          defaultFilename={data.properties?.outputVariable || 'scraped_products'}
+        />
+      )}
     </div>
   );
 });

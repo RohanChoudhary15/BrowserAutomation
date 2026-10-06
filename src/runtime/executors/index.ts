@@ -2566,16 +2566,54 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
     nodeName: node.data.label,
   });
 
+  const headers =
+    items.length > 0 && typeof items[0] === 'object' && items[0] !== null
+      ? Object.keys(items[0])
+      : (fields.map((f: any) => f.name).filter(Boolean).length > 0
+        ? fields.map((f: any) => f.name).filter(Boolean)
+        : ['value']);
+
+  const tableData = {
+    headers,
+    rows: items,
+    count: items.length,
+  };
+  const csvData = jsonToCsv(items);
+  const htmlTable = dataToHtmlTable(items);
+
   ctx.variables[outputVariable] = items;
   ctx.variables[`${outputVariable}_count`] = items.length;
+  ctx.variables[`${outputVariable}_table`] = tableData;
+  ctx.variables[`${outputVariable}_csv`] = csvData;
+  ctx.variables[`${outputVariable}_htmlTable`] = htmlTable;
+
+  if (exportResult) {
+    ctx.variables[`${outputVariable}_dataUrl`] = exportResult.dataUrl;
+    ctx.variables[`${outputVariable}_filename`] = exportResult.filename;
+  }
+
+  if (typeof ctx.updateNodeState === 'function') {
+    ctx.updateNodeState(node.id, {
+      status: 'success',
+      dynamicState: {
+        table: tableData,
+        count: items.length,
+        message: `Scraped ${items.length} cards`,
+      },
+    });
+  }
 
   return {
     success: true,
     output: items,
     items,
+    table: tableData,
     variables: {
       [outputVariable]: items,
       [`${outputVariable}_count`]: items.length,
+      [`${outputVariable}_table`]: tableData,
+      [`${outputVariable}_csv`]: csvData,
+      [`${outputVariable}_htmlTable`]: htmlTable,
       ...(exportResult
         ? {
             [`${outputVariable}_dataUrl`]: exportResult.dataUrl,
@@ -6516,7 +6554,7 @@ async function handleScraperExport(
   }
 }
 
-function formatScraperTableOutput(
+export function formatScraperTableOutput(
   items: any[],
   outputVariable: string,
   ctx: ExecutionContext,
@@ -6547,25 +6585,27 @@ function formatScraperTableOutput(
     ctx.variables[k] = v;
   }
 
-  if (errorMessage && items.length === 0) {
-    ctx.updateNodeState(nodeId, {
-      status: 'error',
-      dynamicState: {
-        table: { headers, rows: [], count: 0 },
-        count: 0,
-        message: `${nodeLabel}: ${errorMessage}`,
-        error: errorMessage,
-      },
-    });
-  } else {
-    ctx.updateNodeState(nodeId, {
-      status: 'success',
-      dynamicState: {
-        table: { headers, rows: items.slice(0, 10), count: items.length },
-        count: items.length,
-        message: `${nodeLabel}: ${items.length} items ready`,
-      },
-    });
+  if (typeof ctx.updateNodeState === 'function') {
+    if (errorMessage && items.length === 0) {
+      ctx.updateNodeState(nodeId, {
+        status: 'error',
+        dynamicState: {
+          table: { headers, rows: [], count: 0 },
+          count: 0,
+          message: `${nodeLabel}: ${errorMessage}`,
+          error: errorMessage,
+        },
+      });
+    } else {
+      ctx.updateNodeState(nodeId, {
+        status: 'success',
+        dynamicState: {
+          table: { headers, rows: items, count: items.length },
+          count: items.length,
+          message: `${nodeLabel}: ${items.length} items ready`,
+        },
+      });
+    }
   }
 
   return {
