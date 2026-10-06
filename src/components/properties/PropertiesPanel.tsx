@@ -2016,7 +2016,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, Firecrawl, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data', 'dataset_input'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -2034,8 +2034,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* Collection Iterator: Item Variable Name */}
-        {/* Collection Iterator: Item Variable Name */}
+        {/* Collection Iterator: Item Variable Name & Starting Offset */}
         {['extract_image', 'extract_all_images', 'extract_multiple', 'crawl_pagination', 'scrape_elements'].includes(selectedNode.data.type) && (
           <div className="pt-2 border-t border-[#1c2230] space-y-2">
             <div>
@@ -2053,6 +2052,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 When lines are connected to the "For Each" handle, each item is exposed as &#123;&#123;{props.itemVariable || (['extract_image', 'extract_all_images'].includes(selectedNode.data.type) ? 'currentImage' : (selectedNode.data.type === 'scrape_elements' ? 'currentProduct' : (selectedNode.data.type === 'crawl_pagination' ? 'crawledItem' : 'currentElement')))}&#125;&#125;
               </p>
             </div>
+
+            {/* General Start Item # / Index Offset */}
+            <div className="grid grid-cols-2 gap-2 p-2 bg-[#141924] rounded-lg border border-[#202738]">
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  Start from Item # (1-based)
+                </label>
+                <input
+                  type="number"
+                  value={props.startItem ?? ''}
+                  onChange={(e) => handlePropChange('startItem', e.target.value === '' ? '' : Number(e.target.value))}
+                  min={1}
+                  placeholder="1 (default)"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                />
+                <p className="text-[9px] text-gray-500 mt-0.5">E.g. 5 starts at 5th element</p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  Start Index (0-based)
+                </label>
+                <input
+                  type="number"
+                  value={props.startIndex ?? ''}
+                  onChange={(e) => handlePropChange('startIndex', e.target.value === '' ? '' : Number(e.target.value))}
+                  min={0}
+                  placeholder="0 (default)"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                />
+                <p className="text-[9px] text-gray-500 mt-0.5">E.g. 4 is equivalent to #5</p>
+              </div>
+            </div>
+
 
             {/* Field Extraction / Item Extract Mode for Scrape Elements */}
             {selectedNode.data.type === 'scrape_elements' && (
@@ -5989,38 +6021,99 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
         {/* Loop Node */}
         {selectedNode.data.type === 'loop' && (
-          <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">Iteration Count</label>
-            <input
-              type="number"
-              value={props.count || 3}
-              onChange={(e) => handlePropChange('count', Number(e.target.value))}
-              min={1}
-              max={500}
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-            />
-            <p className="text-[10px] text-gray-500 mt-1">
-              Loop body provides &#123;&#123;index&#125;&#125; (0, 1, 2...)
-            </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Iteration Count</label>
+              <input
+                type="number"
+                value={props.count || 3}
+                onChange={(e) => handlePropChange('count', Number(e.target.value))}
+                min={1}
+                max={500}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Loop body provides &#123;&#123;index&#125;&#125; (0, 1, 2...)
+              </p>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Start Count / Offset (Optional)</label>
+              <input
+                type="number"
+                value={props.startCount ?? 0}
+                onChange={(e) => handlePropChange('startCount', e.target.value === '' ? '' : Number(e.target.value))}
+                min={0}
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+                placeholder="0 (default)"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Initial offset for &#123;&#123;index&#125;&#125; or count counter (e.g. 0, 1...)
+              </p>
+            </div>
           </div>
         )}
 
         {/* For Each Node */}
         {selectedNode.data.type === 'for_each' && (
-          <div>
-            <label className="block text-[11px] font-medium text-gray-400 mb-1">Array Variable</label>
-            <input
-              type="text"
-              value={props.array || ''}
-              onChange={(e) => handlePropChange('array', e.target.value)}
-              placeholder="&#123;&#123;products&#125;&#125;"
-              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-            />
-            <p className="text-[10px] text-gray-500 mt-1">
-              Loop body exposes &#123;&#123;item&#125;&#125; and &#123;&#123;index&#125;&#125;
-            </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Array Variable</label>
+              <input
+                type="text"
+                value={props.array || ''}
+                onChange={(e) => handlePropChange('array', e.target.value)}
+                placeholder="&#123;&#123;products&#125;&#125;"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Loop body exposes &#123;&#123;item&#125;&#125; and &#123;&#123;index&#125;&#125;
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Item Variable Name</label>
+              <input
+                type="text"
+                value={props.itemVariable || 'item'}
+                onChange={(e) => handlePropChange('itemVariable', e.target.value)}
+                placeholder="item"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 p-2 bg-[#141924] rounded-lg border border-[#202738]">
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  Start from Item # (1-based)
+                </label>
+                <input
+                  type="number"
+                  value={props.startItem ?? ''}
+                  onChange={(e) => handlePropChange('startItem', e.target.value === '' ? '' : Number(e.target.value))}
+                  min={1}
+                  placeholder="1 (default)"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                />
+                <p className="text-[9px] text-gray-500 mt-0.5">E.g. 5 starts at 5th element</p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-gray-400 mb-1">
+                  Start Index (0-based)
+                </label>
+                <input
+                  type="number"
+                  value={props.startIndex ?? ''}
+                  onChange={(e) => handlePropChange('startIndex', e.target.value === '' ? '' : Number(e.target.value))}
+                  min={0}
+                  placeholder="0 (default)"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono outline-none"
+                />
+                <p className="text-[9px] text-gray-500 mt-0.5">E.g. 4 is equivalent to #5</p>
+              </div>
+            </div>
           </div>
         )}
+
 
         {/* Set Variable Node */}
         {selectedNode.data.type === 'set_variable' && (

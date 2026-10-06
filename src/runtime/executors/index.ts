@@ -49,6 +49,7 @@ import {
   StorageScope,
 } from '../../utils/simpleStorage';
 import { wait } from '../../utils/human';
+import { parseCsv, parseJsonDataset } from '../../utils/datasetImporter';
 import {
   scrapeYouTubeSearch,
   scrapeYouTubeVideoDetails,
@@ -5246,6 +5247,67 @@ export const executeCombineDatasets: NodeExecutor = async (node, ctx) => {
 };
 
 /**
+ * Imports CSV, TSV, or JSON dataset from file or text, exposes items and headers
+ * into workflow variables for downstream looping or processing.
+ */
+export const executeDatasetInput: NodeExecutor = async (node, ctx) => {
+  const props = node.data.properties || {};
+  const outVar = props.outputVariable || 'dataset';
+  let items: Record<string, any>[] = Array.isArray(props.importedItems) ? [...props.importedItems] : [];
+  let headers: string[] = Array.isArray(props.importedHeaders) ? [...props.importedHeaders] : [];
+
+  // If rawContent was supplied via string or variable interpolation
+  if (items.length === 0 && props.rawContent) {
+    const raw = String(interpolateVariables(props.rawContent, ctx.variables)).trim();
+    if (raw.startsWith('[') || raw.startsWith('{')) {
+      const parsed = parseJsonDataset(raw);
+      items = parsed.rows;
+      headers = parsed.headers;
+    } else if (raw.length > 0) {
+      const parsed = parseCsv(raw);
+      items = parsed.rows;
+      headers = parsed.headers;
+    }
+  }
+
+  if (headers.length === 0 && items.length > 0) {
+    headers = Object.keys(items[0] || {});
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Dataset Input loaded ${items.length} rows (${headers.length} columns) into {{${outVar}}}`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.variables[outVar] = items;
+  if (!ctx.variables.items) ctx.variables.items = items;
+  if (!ctx.variables.dataset) ctx.variables.dataset = items;
+  ctx.variables[`${outVar}_count`] = items.length;
+  ctx.variables[`${outVar}_headers`] = headers;
+
+  const result = {
+    success: true,
+    items,
+    rowCount: items.length,
+    headers,
+    output: items,
+  };
+
+  return {
+    success: true,
+    output: result,
+    variables: {
+      [outVar]: items,
+      items,
+      rowCount: items.length,
+      headers,
+    },
+  };
+};
+
+/**
  * Executes multiple workflow branches or actions concurrently in parallel.
  */
 export const executeAsyncParallel: NodeExecutor = async (node, ctx) => {
@@ -8046,6 +8108,9 @@ export const executors: Record<string, NodeExecutor> = {
   async_parallel: executeAsyncParallel,
   generate_pdf: executeGeneratePdf,
   simple_storage: executeSimpleStorage,
+  dataset_input: executeDatasetInput,
+  input: executeDatasetInput,
+  input_data: executeDatasetInput,
   print: executePrint,
   // New Context & System Data
   get_page_info: executeGetPageInfo,

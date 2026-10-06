@@ -96,6 +96,7 @@ export type NodeType =
   | 'combine_datasets'
   | 'generate_pdf'
   | 'simple_storage'
+  | 'dataset_input'
   | 'print'
   // Utility
   | 'screenshot'
@@ -163,6 +164,9 @@ export interface WorkflowSettings {
   humanCursor?: boolean;
   humanMinDelay?: number;
   humanMaxDelay?: number;
+  humanSmoothScroll?: boolean;
+  humanSimulateTypos?: boolean;
+  humanClickDwell?: boolean;
 }
 
 export interface Workflow {

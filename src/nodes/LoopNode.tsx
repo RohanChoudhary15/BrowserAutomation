@@ -3,8 +3,7 @@ import { Handle, Position, NodeProps } from '@xyflow/react';
 import { Icon } from '../components/common/Icon';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Loader2, CheckCircle2, AlertCircle, Play, Trash2, Upload, Check } from 'lucide-react';
-import { importDatasetFile } from '../utils/datasetImporter';
+import { Loader2, CheckCircle2, AlertCircle, Play, Trash2, Check } from 'lucide-react';
 
 export interface LoopNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -20,7 +19,6 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
 
   const isForEach = data.type === 'for_each';
   const [copiedVar, setCopiedVar] = React.useState<string | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const exposedVars: string[] = React.useMemo(() => {
     if (Array.isArray(data.properties?.exposedVariables) && data.properties.exposedVariables.length > 0) {
@@ -36,32 +34,6 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
   }, [data.properties?.exposedVariables, data.properties?.importedHeaders, data.properties?.importedItems]);
 
   const itemVar = data.properties?.itemVariable || 'item';
-
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = await importDatasetFile(file);
-      window.dispatchEvent(
-        new CustomEvent('autoflow:update-node-properties', {
-          detail: {
-            nodeId: id,
-            properties: {
-              importedItems: parsed.rows,
-              importedHeaders: parsed.headers,
-              importedFilename: parsed.filename,
-              exposedVariables: parsed.headers,
-              array: `importedItems`,
-            },
-          },
-        })
-      );
-    } catch (err: any) {
-      console.error('Import failed:', err);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
 
   const summary = isForEach
     ? `For each in ${data.properties?.array || '[]'}`
@@ -84,38 +56,6 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
 
   return (
     <div
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes('Files')) {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-        }
-      }}
-      onDrop={async (e) => {
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-          e.preventDefault();
-          e.stopPropagation();
-          const file = e.dataTransfer.files[0];
-          try {
-            const parsed = await importDatasetFile(file);
-            window.dispatchEvent(
-              new CustomEvent('autoflow:update-node-properties', {
-                detail: {
-                  nodeId: id,
-                  properties: {
-                    importedItems: parsed.rows,
-                    importedHeaders: parsed.headers,
-                    importedFilename: parsed.filename,
-                    exposedVariables: parsed.headers,
-                    array: `importedItems`,
-                  },
-                },
-              })
-            );
-          } catch (err) {
-            console.error('File drop import failed:', err);
-          }
-        }
-      }}
       className={`group relative min-w-[220px] max-w-[270px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
@@ -204,6 +144,27 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
         </div>
       )}
 
+      {/* Starting Item / Offset Widget */}
+      {isForEach && (
+        <div className="flex items-center justify-between text-[10px] text-gray-400 bg-[#161a24] px-2 py-1 rounded border border-[#1c2230] mb-2 font-mono">
+          <span>Start from:</span>
+          <span className="text-indigo-300 font-semibold">
+            {data.properties?.startItem
+              ? `Item #${data.properties.startItem}`
+              : data.properties?.startIndex !== undefined && data.properties?.startIndex !== ''
+              ? `Index ${data.properties.startIndex} (#${Number(data.properties.startIndex) + 1})`
+              : 'Item #1 (start)'}
+          </span>
+        </div>
+      )}
+
+      {!isForEach && data.properties?.startCount !== undefined && Number(data.properties.startCount) > 0 && (
+        <div className="flex items-center justify-between text-[10px] text-gray-400 bg-[#161a24] px-2 py-1 rounded border border-[#1c2230] mb-2 font-mono">
+          <span>Start count:</span>
+          <span className="text-indigo-300 font-semibold">{data.properties.startCount}</span>
+        </div>
+      )}
+
       {status === 'success' && runtime?.dynamicState?.message && (
         <div className="text-[10px] text-emerald-400 font-mono mb-2 flex items-center gap-1">
           <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
@@ -246,33 +207,6 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
           </div>
         </div>
       )}
-
-      {/* For Each: Option to import CSV / JSON directly */}
-      {isForEach && (
-        <div className="mb-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              fileInputRef.current?.click();
-            }}
-            className="w-full py-1 px-1.5 rounded-lg bg-indigo-950/30 hover:bg-indigo-900/40 border border-dashed border-indigo-500/30 hover:border-indigo-400 text-indigo-300 text-[9px] font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
-            title="Import CSV or JSON file to loop over its rows"
-          >
-            <Upload className="w-2.5 h-2.5 text-indigo-400" />
-            <span>{Array.isArray(data.properties?.importedItems) ? `Replace Dataset (${data.properties.importedItems.length})` : 'Import CSV / JSON to Loop'}</span>
-          </button>
-        </div>
-      )}
-
-      {/* Hidden File Input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".csv,.tsv,.json"
-        onChange={handleImportFile}
-        className="hidden"
-      />
 
       {/* Output Handle Labels */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">

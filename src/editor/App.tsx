@@ -614,6 +614,9 @@ export const App: React.FC = () => {
   const humanIntensity: HumanIntensity = activeWorkflow.settings?.humanIntensity || 'natural';
   const humanCursor = activeWorkflow.settings?.humanCursor !== false;
 
+  const humanSmoothScroll = activeWorkflow.settings?.humanSmoothScroll !== false;
+  const humanSimulateTypos = activeWorkflow.settings?.humanSimulateTypos === true;
+
   const handleToggleHumanMode = useCallback(() => {
     handleUpdateSettings({ humanMode: !humanMode });
   }, [handleUpdateSettings, humanMode]);
@@ -628,6 +631,14 @@ export const App: React.FC = () => {
   const handleToggleHumanCursor = useCallback(() => {
     handleUpdateSettings({ humanCursor: !humanCursor });
   }, [handleUpdateSettings, humanCursor]);
+
+  const handleToggleHumanSmoothScroll = useCallback(() => {
+    handleUpdateSettings({ humanSmoothScroll: !humanSmoothScroll });
+  }, [handleUpdateSettings, humanSmoothScroll]);
+
+  const handleToggleHumanSimulateTypos = useCallback(() => {
+    handleUpdateSettings({ humanSimulateTypos: !humanSimulateTypos });
+  }, [handleUpdateSettings, humanSimulateTypos]);
 
   // Execution: Run Workflow
   const handleRunWorkflow = useCallback(() => {
@@ -1281,9 +1292,13 @@ export const App: React.FC = () => {
         humanMode={humanMode}
         humanIntensity={humanIntensity}
         humanCursor={humanCursor}
+        humanSmoothScroll={humanSmoothScroll}
+        humanSimulateTypos={humanSimulateTypos}
         onToggleHumanMode={handleToggleHumanMode}
         onChangeHumanIntensity={handleChangeHumanIntensity}
         onToggleHumanCursor={handleToggleHumanCursor}
+        onToggleHumanSmoothScroll={handleToggleHumanSmoothScroll}
+        onToggleHumanSimulateTypos={handleToggleHumanSimulateTypos}
         onRenameWorkflow={handleRenameWorkflow}
         onRun={handleRunWorkflow}
         onPause={handlePauseWorkflow}

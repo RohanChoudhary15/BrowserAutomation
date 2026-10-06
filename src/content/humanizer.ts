@@ -20,12 +20,27 @@ import {
 const CURSOR_ID = 'autoflow-human-cursor';
 const VISIBLE_CLASS = 'autoflow-cursor--visible';
 const CLICK_CLASS = 'autoflow-cursor--click';
+const PRESSED_CLASS = 'autoflow-cursor--pressed';
 
 let cursorEl: HTMLDivElement | null = null;
 let clickResetTimer: ReturnType<typeof setTimeout> | null = null;
 let idleFadeTimer: ReturnType<typeof setTimeout> | null = null;
 let currentPos: HumanPoint = { x: -60, y: -60 };
 let hasPosition = false;
+let lastKnownPointer: HumanPoint | null = null;
+
+// Track genuine user mouse position if available
+if (typeof window !== 'undefined') {
+  try {
+    window.addEventListener(
+      'mousemove',
+      (e: MouseEvent) => {
+        lastKnownPointer = { x: e.clientX, y: e.clientY };
+      },
+      { passive: true, capture: true }
+    );
+  } catch {}
+}
 
 /** How long the cursor lingers after the last movement before fading out. */
 const IDLE_FADE_MS = 2500;
@@ -83,6 +98,22 @@ function dispatchMousemove(x: number, y: number) {
       clientY: y,
     };
     target.dispatchEvent(new MouseEvent('mousemove', init));
+
+    // Dynamic cursor styling when hovering clickable or text elements
+    if (cursorEl) {
+      const isClickable = target.closest('button, a, input[type="button"], input[type="submit"], [role="button"], select');
+      const isInput = target.closest('input:not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]');
+      if (isClickable) {
+        cursorEl.classList.add('autoflow-cursor--pointer');
+        cursorEl.classList.remove('autoflow-cursor--text');
+      } else if (isInput) {
+        cursorEl.classList.add('autoflow-cursor--text');
+        cursorEl.classList.remove('autoflow-cursor--pointer');
+      } else {
+        cursorEl.classList.remove('autoflow-cursor--pointer');
+        cursorEl.classList.remove('autoflow-cursor--text');
+      }
+    }
   } catch {
     // Views without layout (or non-DOM test environments) simply skip the synthetic event.
   }
@@ -102,7 +133,23 @@ export async function moveCursorTo(
   const el = ensureCursorEl();
   if (!el || signal?.aborted) return;
 
-  const from = hasPosition ? { ...currentPos } : { x: target.x, y: target.y };
+  // Real entry point: if we haven't established position yet, enter gracefully
+  let from: HumanPoint;
+  if (hasPosition) {
+    from = { ...currentPos };
+  } else if (lastKnownPointer) {
+    from = { ...lastKnownPointer };
+  } else if (typeof window !== 'undefined') {
+    // Enter smoothly from realistic viewport top or side
+    const startX = Math.round(window.innerWidth > 100 ? window.innerWidth * 0.35 : 20);
+    from = { x: startX, y: 0 };
+    currentPos = { ...from };
+  } else {
+    from = { x: target.x, y: target.y };
+  }
+
+  el.style.left = `${Math.round(from.x)}px`;
+  el.style.top = `${Math.round(from.y)}px`;
   el.classList.add(VISIBLE_CLASS);
 
   const path = buildCursorPath(from, target, { reduceMotion: prefersReducedMotion() });
@@ -123,6 +170,18 @@ export async function moveCursorTo(
   currentPos = signal?.aborted ? { ...last } : { ...target };
   hasPosition = true;
   scheduleIdleFade();
+}
+
+/** Sets or clears the visual press (depressed button) state on the cursor. */
+export function markCursorPress(pressed: boolean, config?: HumanConfig) {
+  if (config && !config.cursor) return;
+  const el = cursorEl;
+  if (!el) return;
+  if (pressed) {
+    el.classList.add(PRESSED_CLASS);
+  } else {
+    el.classList.remove(PRESSED_CLASS);
+  }
 }
 
 /** Briefly flashes the press/ripple state on the synthetic cursor. */
@@ -163,8 +222,35 @@ export function teardownHumanCursor() {
 }
 
 /**
- * Animates the cursor onto an element's center (with a small human offset and
- * pre-action hover pause), then returns the exact point to click.
+ * Waits for an element's position on the screen to settle (e.g. after smooth scroll or layout transitions).
+ */
+export async function waitForElementSettle(el: Element, timeoutMs = 600, signal?: AbortSignal): Promise<DOMRect> {
+  if (typeof window === 'undefined' || typeof el.getBoundingClientRect !== 'function') {
+    return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+  }
+  let prevRect = el.getBoundingClientRect();
+  const startTime = Date.now();
+  let stableTicks = 0;
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (signal?.aborted) break;
+    await wait(35, signal);
+    const currRect = el.getBoundingClientRect();
+    const delta = Math.hypot(currRect.left - prevRect.left, currRect.top - prevRect.top);
+    if (delta < 1) {
+      stableTicks++;
+      if (stableTicks >= 2) return currRect;
+    } else {
+      stableTicks = 0;
+    }
+    prevRect = currRect;
+  }
+  return el.getBoundingClientRect();
+}
+
+/**
+ * Animates the cursor onto an element's center or inner bounds (with scroll-settle detection,
+ * human distribution and pre-click aiming pause), then returns the exact coordinates where the cursor landed.
  */
 export async function approachElement(
   el: Element,
@@ -173,20 +259,52 @@ export async function approachElement(
   options: { center?: boolean; pause?: number } = {}
 ): Promise<{ x: number; y: number }> {
   let point = { x: 0, y: 0 };
-  try {
-    const rect = el.getBoundingClientRect();
-    const useCenter = options.center !== false;
-    point = {
-      x: rect.left + rect.width * (useCenter ? 0.5 : 0.35) + (Math.random() * 4 - 2),
-      y: rect.top + rect.height * (useCenter ? 0.5 : 0.4) + (Math.random() * 4 - 2),
-    };
-  } catch {
-    return point;
+  if (!el || typeof el.getBoundingClientRect !== 'function') return point;
+
+  // 1. If element is not in viewport, smoothly scroll it into view
+  if (typeof window !== 'undefined' && typeof el.scrollIntoView === 'function') {
+    const initRect = el.getBoundingClientRect();
+    const inViewport = (
+      initRect.top >= 20 &&
+      initRect.left >= 20 &&
+      initRect.bottom <= (window.innerHeight - 20) &&
+      initRect.right <= (window.innerWidth - 20)
+    );
+    if (!inViewport && (initRect.width > 0 || initRect.height > 0)) {
+      try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      } catch {}
+    }
   }
 
+  // 2. Wait for any scroll animation or layout transition to settle
+  const rect = await waitForElementSettle(el, 600, signal);
+
+  // 3. Aim inside the target element with natural human spread
+  const useCenter = options.center !== false;
+  if (useCenter) {
+    point = {
+      x: rect.left + rect.width * 0.5 + (Math.random() * 4 - 2),
+      y: rect.top + rect.height * 0.5 + (Math.random() * 4 - 2),
+    };
+  } else {
+    const padX = Math.min(10, Math.max(2, rect.width * 0.15));
+    const padY = Math.min(10, Math.max(2, rect.height * 0.15));
+    const innerW = Math.max(4, rect.width - padX * 2);
+    const innerH = Math.max(4, rect.height - padY * 2);
+    point = {
+      x: rect.left + padX + innerW * (0.35 + (Math.random() + Math.random()) * 0.15),
+      y: rect.top + padY + innerH * (0.35 + (Math.random() + Math.random()) * 0.15),
+    };
+  }
+
+  // 4. Move synthetic cursor along curved path to target
   await moveCursorTo(point, config, signal);
 
-  const pause = options.pause ?? actionPause(config);
+  // 5. Aiming hesitation (cognitive verification pause before click)
+  const pause = options.pause !== undefined
+    ? options.pause
+    : (config.aimHesitationMin ? clusteredBetween(config.aimHesitationMin, config.aimHesitationMax) : actionPause(config));
   if (pause > 0) await wait(pause, signal);
 
   return point;

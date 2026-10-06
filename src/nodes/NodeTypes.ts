@@ -9,6 +9,7 @@ import { AsyncParallelNode } from './AsyncParallelNode';
 import { SimpleStorageNode } from './SimpleStorageNode';
 import { SwitchNode } from './SwitchNode';
 import { ScraperNode } from './ScraperNode';
+import { DatasetInputNode } from './DatasetInputNode';
 
 export const nodeTypes = {
   customNode: BaseNode,
@@ -22,5 +23,6 @@ export const nodeTypes = {
   simpleStorageNode: SimpleStorageNode,
   switchNode: SwitchNode,
   scraperNode: ScraperNode,
+  datasetInputNode: DatasetInputNode,
 };
 

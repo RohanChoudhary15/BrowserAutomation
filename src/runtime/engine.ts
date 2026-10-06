@@ -447,9 +447,28 @@ export class WorkflowEngine {
         const itemExtractField = node.data.properties?.itemExtractField || 'all';
         const itemExtractCustomField = node.data.properties?.itemExtractCustomField;
 
+        // General start index / item offset support
+        let startOffset = 0;
+        const rawStartItem = interpolateVariables(node.data.properties?.startItem, ctx.variables);
+        const rawStartIndex = interpolateVariables(
+          node.data.properties?.startIndex ?? node.data.properties?.startAt ?? node.data.properties?.startFrom,
+          ctx.variables
+        );
+        if (rawStartItem !== undefined && rawStartItem !== null && String(rawStartItem).trim() !== '') {
+          const num = Number(rawStartItem);
+          if (!isNaN(num) && num >= 1) startOffset = Math.floor(num) - 1;
+        } else if (rawStartIndex !== undefined && rawStartIndex !== null && String(rawStartIndex).trim() !== '') {
+          const num = Number(rawStartIndex);
+          if (!isNaN(num) && num >= 0) startOffset = Math.floor(num);
+        }
+
+        const totalOriginal = items.length;
+        const validOffset = Math.max(0, Math.min(startOffset, totalOriginal));
+        items = items.slice(validOffset);
+
         this.log({
           level: 'info',
-          message: `Iterating loop body for ${items.length} items from ${node.data.label}`,
+          message: `Iterating loop body for ${items.length} items${validOffset > 0 ? ` (started from item #${validOffset + 1} of ${totalOriginal})` : ''} from ${node.data.label}`,
           nodeId: node.id,
           nodeName: node.data.label,
         });
@@ -459,8 +478,14 @@ export class WorkflowEngine {
           if (ctx.signal.aborted) break;
           const rawItem = items[index];
           const item = createInspectableItem(rawItem);
+          const absoluteIndex = validOffset + index;
+          const itemNumber = validOffset + index + 1;
 
-          ctx.variables.index = index;
+          ctx.variables.index = absoluteIndex;
+          ctx.variables.loop_index = absoluteIndex;
+          ctx.variables.item_number = itemNumber;
+          ctx.variables.loop_iteration = index + 1;
+          ctx.variables.total_items = totalOriginal;
           ctx.variables.item = item;
           if (isImageNode) {
             ctx.variables.currentImage = item;
@@ -694,6 +719,24 @@ export class WorkflowEngine {
 
     const isForEach = loopNode.data.type === 'for_each';
     let iterations: any[] = [];
+    let startOffset = 0;
+
+    // Start index / item offset support
+    const rawStartItem = interpolateVariables(loopNode.data.properties?.startItem, ctx.variables);
+    const rawStartIndex = interpolateVariables(
+      loopNode.data.properties?.startIndex ?? loopNode.data.properties?.startAt ?? loopNode.data.properties?.startFrom,
+      ctx.variables
+    );
+
+    if (rawStartItem !== undefined && rawStartItem !== null && String(rawStartItem).trim() !== '') {
+      const num = Number(rawStartItem);
+      if (!isNaN(num) && num >= 1) startOffset = Math.floor(num) - 1;
+    } else if (rawStartIndex !== undefined && rawStartIndex !== null && String(rawStartIndex).trim() !== '') {
+      const num = Number(rawStartIndex);
+      if (!isNaN(num) && num >= 0) startOffset = Math.floor(num);
+    }
+
+    let totalOriginal = 0;
 
     if (isForEach) {
       let arrayVal = interpolateVariables(loopNode.data.properties.array, ctx.variables);
@@ -708,10 +751,15 @@ export class WorkflowEngine {
       if (!Array.isArray(arrayVal) && Array.isArray(loopNode.data.properties?.importedItems) && loopNode.data.properties.importedItems.length > 0) {
         arrayVal = loopNode.data.properties.importedItems;
       }
-      iterations = Array.isArray(arrayVal) ? arrayVal : [];
+      const rawIterations = Array.isArray(arrayVal) ? arrayVal : [];
+      totalOriginal = rawIterations.length;
+      const validOffset = Math.max(0, Math.min(startOffset, totalOriginal));
+      iterations = rawIterations.slice(validOffset);
     } else {
+      const startCount = Number(interpolateVariables(loopNode.data.properties?.startCount ?? loopNode.data.properties?.fromCount ?? loopNode.data.properties?.startIndex ?? 0, ctx.variables)) || 0;
       const count = Number(interpolateVariables(loopNode.data.properties.count, ctx.variables)) || 1;
-      iterations = Array.from({ length: Math.min(count, 500) }, (_, i) => i);
+      totalOriginal = Math.min(count, 500);
+      iterations = Array.from({ length: totalOriginal }, (_, i) => startCount + i);
     }
 
     const bodyNodes = this.getNextNodes(loopNode.id, 'loop_body');
@@ -719,7 +767,7 @@ export class WorkflowEngine {
 
     this.log({
       level: 'info',
-      message: `Starting loop with ${iterations.length} iterations`,
+      message: `Starting loop with ${iterations.length} iterations${isForEach && startOffset > 0 ? ` (started from item #${startOffset + 1} of ${totalOriginal})` : ''}`,
       nodeId: loopNode.id,
       nodeName: loopNode.data.label,
     });
@@ -731,7 +779,15 @@ export class WorkflowEngine {
       const rawItem = iterations[index];
       const item = createInspectableItem(rawItem);
       const itemVar = loopNode.data.properties?.itemVariable || 'item';
-      ctx.variables.index = index;
+      const absoluteIndex = isForEach ? (startOffset + index) : (typeof rawItem === 'number' ? rawItem : index);
+      const itemNumber = isForEach ? (startOffset + index + 1) : (typeof rawItem === 'number' ? rawItem + 1 : index + 1);
+
+      ctx.variables.index = absoluteIndex;
+
+      ctx.variables.loop_index = absoluteIndex;
+      ctx.variables.item_number = itemNumber;
+      ctx.variables.loop_iteration = index + 1;
+      ctx.variables.total_items = totalOriginal;
       ctx.variables[itemVar] = item;
       ctx.variables.item = item;
       if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
@@ -760,7 +816,7 @@ export class WorkflowEngine {
           currentItem: item,
           progress,
           message: isForEach
-            ? `Item ${index + 1} of ${totalIterations}`
+            ? `Item ${itemNumber} of ${totalOriginal} (${index + 1}/${totalIterations})`
             : `Iteration ${index + 1} of ${totalIterations}`,
           detail: isForEach ? detail : undefined,
         },

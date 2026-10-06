@@ -37,6 +37,8 @@ interface HeaderBarProps {
   humanMode?: boolean;
   humanIntensity?: HumanIntensity;
   humanCursor?: boolean;
+  humanSmoothScroll?: boolean;
+  humanSimulateTypos?: boolean;
   onRenameWorkflow: (name: string) => void;
   onRun: () => void;
   onPause: () => void;
@@ -57,6 +59,8 @@ interface HeaderBarProps {
   onToggleHumanMode?: () => void;
   onChangeHumanIntensity?: (intensity: HumanIntensity) => void;
   onToggleHumanCursor?: () => void;
+  onToggleHumanSmoothScroll?: () => void;
+  onToggleHumanSimulateTypos?: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -86,9 +90,14 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onToggleAiCopilot,
   isAiCopilotOpen,
   onOpenBrowserAgent,
+  humanSmoothScroll,
+  humanSimulateTypos,
+
   onToggleHumanMode,
   onChangeHumanIntensity,
   onToggleHumanCursor,
+  onToggleHumanSmoothScroll,
+  onToggleHumanSimulateTypos,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(workflowName);
@@ -340,9 +349,28 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                   <span>Show moving cursor</span>
                 </label>
 
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={humanSmoothScroll !== false}
+                    onChange={() => onToggleHumanSmoothScroll?.()}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-amber-500"
+                  />
+                  <span>Smooth inertial scrolling</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={humanSimulateTypos === true}
+                    onChange={() => onToggleHumanSimulateTypos?.()}
+                    className="rounded bg-[#161a24] border-[#232a3b] text-amber-500"
+                  />
+                  <span>Typo simulation & corrections</span>
+                </label>
+
                 <p className="text-[10px] text-gray-500 leading-relaxed border-t border-[#1c2230] pt-2">
-                  Adds curved cursor travel and small jittered pauses between steps. Per-node typing
-                  delays still take precedence.
+                  Adds curved cursor travel, aiming hesitations, realistic click dwell, and organic pauses.
                 </p>
               </div>
             )}

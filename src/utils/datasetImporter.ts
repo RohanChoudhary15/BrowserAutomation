@@ -260,3 +260,19 @@ export async function importDatasetFile(file: File): Promise<ParsedDataset> {
     return { headers, rows, filename, format: 'csv' };
   }
 }
+
+/**
+ * Parse a raw string containing CSV, TSV, or JSON dataset.
+ */
+export function parseDatasetString(text: string, filename = 'pasted_dataset'): ParsedDataset {
+  const trimmed = (text || '').trim();
+  const isJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+  if (isJson) {
+    const { headers, rows } = parseJsonDataset(trimmed);
+    return { headers, rows, filename, format: 'json' };
+  } else {
+    const { headers, rows } = parseCsv(trimmed);
+    return { headers, rows, filename, format: 'csv' };
+  }
+}
+

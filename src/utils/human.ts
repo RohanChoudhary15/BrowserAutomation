@@ -21,6 +21,16 @@ export interface HumanConfig {
   /** Pre/post action micro-pause range (ms). */
   actionPauseMin: number;
   actionPauseMax: number;
+  /** Human button press dwell time (mousedown to mouseup) in ms. */
+  clickDwellMin: number;
+  clickDwellMax: number;
+  /** Pre-click aiming settling pause (ms). */
+  aimHesitationMin: number;
+  aimHesitationMax: number;
+  /** Natural smooth scrolling with wheel emulation. */
+  smoothScroll: boolean;
+  /** Realistic typo simulation with backspace correction. */
+  simulateTypos: boolean;
 }
 
 export interface HumanPoint {
@@ -38,6 +48,12 @@ export const HUMAN_INTENSITY_PRESETS: Record<HumanIntensity, Omit<HumanConfig, '
     typingMax: 110,
     actionPauseMin: 20,
     actionPauseMax: 60,
+    clickDwellMin: 45,
+    clickDwellMax: 80,
+    aimHesitationMin: 40,
+    aimHesitationMax: 100,
+    smoothScroll: true,
+    simulateTypos: false,
   },
   natural: {
     minDelay: 80,
@@ -47,6 +63,12 @@ export const HUMAN_INTENSITY_PRESETS: Record<HumanIntensity, Omit<HumanConfig, '
     typingMax: 160,
     actionPauseMin: 40,
     actionPauseMax: 140,
+    clickDwellMin: 60,
+    clickDwellMax: 120,
+    aimHesitationMin: 80,
+    aimHesitationMax: 180,
+    smoothScroll: true,
+    simulateTypos: true,
   },
   slow: {
     minDelay: 200,
@@ -56,6 +78,12 @@ export const HUMAN_INTENSITY_PRESETS: Record<HumanIntensity, Omit<HumanConfig, '
     typingMax: 260,
     actionPauseMin: 80,
     actionPauseMax: 240,
+    clickDwellMin: 90,
+    clickDwellMax: 180,
+    aimHesitationMin: 150,
+    aimHesitationMax: 350,
+    smoothScroll: true,
+    simulateTypos: true,
   },
 };
 
@@ -101,6 +129,12 @@ export function resolveHumanConfig(settings?: Partial<WorkflowSettings> | null):
     typingMax: preset.typingMax,
     actionPauseMin: preset.actionPauseMin,
     actionPauseMax: preset.actionPauseMax,
+    clickDwellMin: preset.clickDwellMin,
+    clickDwellMax: preset.clickDwellMax,
+    aimHesitationMin: preset.aimHesitationMin,
+    aimHesitationMax: preset.aimHesitationMax,
+    smoothScroll: settings.humanSmoothScroll !== false ? preset.smoothScroll : false,
+    simulateTypos: settings.humanSimulateTypos !== undefined ? settings.humanSimulateTypos : preset.simulateTypos,
   };
 }
 /** Uniform random float in [min, max]. */
@@ -186,12 +220,16 @@ export function buildCursorPath(from: HumanPoint, to: HumanPoint, options: Curso
   const points: HumanPoint[] = [{ ...from }];
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
-    const inv = 1 - t;
-    const x = inv * inv * from.x + 2 * inv * t * control.x + t * t * to.x;
-    const y = inv * inv * from.y + 2 * inv * t * control.y + t * t * to.y;
+    // Human minimum-jerk / cubic ease-in-out: starts gently, glides fast in mid-flight, and settles smoothly
+    const easedT = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const inv = 1 - easedT;
+    const x = inv * inv * from.x + 2 * inv * easedT * control.x + easedT * easedT * to.x;
+    const y = inv * inv * from.y + 2 * inv * easedT * control.y + easedT * easedT * to.y;
+    // Subtle hand tremor / micro-jitter
+    const wave = Math.sin(t * Math.PI * 3) * (jitter * 0.35);
     points.push({
-      x: x + randomBetween(-jitter, jitter),
-      y: y + randomBetween(-jitter, jitter),
+      x: x + wave + randomBetween(-jitter, jitter),
+      y: y + wave + randomBetween(-jitter, jitter),
     });
   }
 
@@ -231,7 +269,47 @@ export function actionPause(config: HumanConfig, factor = 1): number {
 /** Per-character typing delay for humanized typing. */
 export function typingDelayFor(config: HumanConfig, character?: string): number {
   const base = clusteredBetween(config.typingMin, config.typingMax);
-  // Pause a touch longer at word boundaries, like real hands.
+  // Pause a touch longer at word boundaries and punctuation, like real hands.
   if (character && /\s/.test(character)) return Math.round(base * randomBetween(1.5, 2.2));
+  if (character && /[,.?!;:]/.test(character)) return Math.round(base * randomBetween(1.8, 2.6));
   return base;
+}
+
+/** Adjacent QWERTY keyboard map for realistic typo simulation. */
+export const ADJACENT_KEYS: Record<string, string[]> = {
+  q: ['w', 'a', 's'],
+  w: ['q', 'e', 's', 'a', 'd'],
+  e: ['w', 'r', 'd', 's', 'f'],
+  r: ['e', 't', 'f', 'd', 'g'],
+  t: ['r', 'y', 'g', 'f', 'h'],
+  y: ['t', 'u', 'h', 'g', 'j'],
+  u: ['y', 'i', 'j', 'h', 'k'],
+  i: ['u', 'o', 'k', 'j', 'l'],
+  o: ['i', 'p', 'l', 'k'],
+  p: ['o', 'l'],
+  a: ['q', 'w', 's', 'z'],
+  s: ['a', 'w', 'e', 'd', 'x', 'z'],
+  d: ['s', 'e', 'r', 'f', 'c', 'x'],
+  f: ['d', 'r', 't', 'g', 'v', 'c'],
+  g: ['f', 't', 'y', 'h', 'b', 'v'],
+  h: ['g', 'y', 'u', 'j', 'n', 'b'],
+  j: ['h', 'u', 'i', 'k', 'm', 'n'],
+  k: ['j', 'i', 'o', 'l', 'm'],
+  l: ['k', 'o', 'p'],
+  z: ['a', 's', 'x'],
+  x: ['z', 's', 'd', 'c'],
+  c: ['x', 'd', 'f', 'v'],
+  v: ['c', 'f', 'g', 'b'],
+  b: ['v', 'g', 'h', 'n'],
+  n: ['b', 'h', 'j', 'm'],
+  m: ['n', 'j', 'k'],
+};
+
+/** Returns an adjacent typo candidate for a character, or null. */
+export function getAdjacentTypo(char: string): string | null {
+  const lower = char.toLowerCase();
+  const candidates = ADJACENT_KEYS[lower];
+  if (!candidates || candidates.length === 0) return null;
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  return char === char.toUpperCase() ? pick.toUpperCase() : pick;
 }

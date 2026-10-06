@@ -1232,6 +1232,22 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       outputVariable: 'storageResult',
     },
   },
+  dataset_input: {
+    type: 'dataset_input',
+    label: 'Dataset / File Input',
+    category: 'data',
+    description: 'Import CSV, TSV, or JSON dataset, preview rows, and expose items for looping or downstream nodes',
+    icon: 'FileSpreadsheet',
+    reactFlowType: 'datasetInputNode',
+    defaultProperties: {
+      sourceType: 'file', // 'file' | 'paste'
+      importedItems: [],
+      importedHeaders: [],
+      importedFilename: '',
+      rawContent: '',
+      outputVariable: 'dataset',
+    },
+  },
   print: {
     type: 'print',
     label: 'Print',

@@ -1,13 +1,15 @@
 import { waitForElement, queryElement, queryElements, isElementVisible } from '../selectors/finder';
 import { InteractiveElement } from '../ai/types';
-import { HumanConfig, randomBetween, wait } from '../utils/human';
+import { HumanConfig, clusteredBetween, getAdjacentTypo, randomBetween, wait } from '../utils/human';
 import {
   approachElement,
   getCursorPosition,
   humanActionPause,
   humanTypingDelay,
   markCursorClick,
+  markCursorPress,
   moveCursorTo,
+  waitForElementSettle,
 } from './humanizer';
 import { matchesText, findMatchingElement, TextMatchOptions } from '../utils/textMatcher';
 export { waitForElement, queryElement, queryElements };
@@ -34,9 +36,11 @@ export async function clickElement(
       const waitTimeout = attempt === 0 ? (params.timeout ?? 8000) : 3000;
       const el = await waitForElement(selector, { timeout: waitTimeout, visible: true }, signal);
 
-      // Scroll into view smoothly
-      if (typeof el.scrollIntoView === 'function') {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      // Scroll into view smoothly if not human (human approachElement handles smooth scroll + settle detection)
+      if (!human && typeof el.scrollIntoView === 'function') {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        } catch {}
       }
 
       // Highlight briefly
@@ -48,14 +52,17 @@ export async function clickElement(
 
       // Human mode: glide the synthetic cursor onto the element and hover a beat
       // before pressing, like a real user aiming at a target.
+      let clickPoint = { x: 0, y: 0 };
       if (human) {
-        await approachElement(el, human, signal, { pause: attempt === 0 ? undefined : 0 });
+        clickPoint = await approachElement(el, human, signal, { pause: attempt === 0 ? undefined : 0 });
+      } else {
+        const rect = el.getBoundingClientRect();
+        clickPoint = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       }
 
       const clickType = params.clickType || 'left';
-      const rect = el.getBoundingClientRect();
-      const clientX = rect.left + rect.width / 2;
-      const clientY = rect.top + rect.height / 2;
+      const clientX = clickPoint.x;
+      const clientY = clickPoint.y;
 
       const eventInit: MouseEventInit = {
         bubbles: true,
@@ -68,19 +75,33 @@ export async function clickElement(
       };
 
       if (clickType === 'right') {
+        if (human) markCursorPress(true, human);
         el.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        if (human) {
+          const dwell = clusteredBetween(human.clickDwellMin ?? 60, human.clickDwellMax ?? 110);
+          await wait(dwell, signal);
+          markCursorPress(false, human);
+          markCursorClick(human);
+        }
         el.dispatchEvent(new MouseEvent('mouseup', eventInit));
         el.dispatchEvent(new MouseEvent('contextmenu', eventInit));
       } else if (clickType === 'double') {
+        if (human) markCursorPress(true, human);
         el.dispatchEvent(new MouseEvent('mousedown', eventInit));
         el.dispatchEvent(new MouseEvent('mouseup', eventInit));
         el.dispatchEvent(new MouseEvent('click', eventInit));
+        if (human) await wait(randomBetween(40, 80), signal);
         el.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        if (human) {
+          markCursorPress(false, human);
+          markCursorClick(human);
+        }
         el.dispatchEvent(new MouseEvent('mouseup', eventInit));
         el.dispatchEvent(new MouseEvent('click', eventInit));
         el.dispatchEvent(new MouseEvent('dblclick', eventInit));
       } else {
         // Left click
+        if (human) markCursorPress(true, human);
         try {
           el.dispatchEvent(new PointerEvent('pointerdown', eventInit));
         } catch {
@@ -92,6 +113,15 @@ export async function clickElement(
             el.focus();
           } catch {}
         }
+
+        // Realistic human dwell time: hold click down before releasing
+        if (human) {
+          const dwell = clusteredBetween(human.clickDwellMin ?? 60, human.clickDwellMax ?? 110);
+          await wait(dwell, signal);
+          markCursorPress(false, human);
+          markCursorClick(human);
+        }
+
         try {
           el.dispatchEvent(new PointerEvent('pointerup', eventInit));
         } catch {
@@ -105,9 +135,8 @@ export async function clickElement(
         }
       }
 
-      // Human mode: show the press ripple, then linger before the next action.
+      // Human mode: linger before the next action.
       if (human) {
-        markCursorClick(human);
         await humanActionPause(human, 1.1, signal);
       }
 
@@ -297,6 +326,38 @@ export async function performRobustTyping(
     if (options.signal?.aborted) throw new Error('Typing aborted.');
     const char = text[i];
     const isLetter = /^[a-zA-Z]$/.test(char);
+
+    // Realistic typo simulation & self-correction if enabled
+    if (human?.simulateTypos && isLetter && i > 1 && i < text.length - 1 && Math.random() < 0.03) {
+      const typoChar = getAdjacentTypo(char);
+      if (typoChar && typoChar !== char) {
+        const typoInit: KeyboardEventInit = { key: typoChar, code: `Key${typoChar.toUpperCase()}`, bubbles: true, cancelable: true, composed: true };
+        el.dispatchEvent(new KeyboardEvent('keydown', typoInit));
+        if (isInput) {
+          const input = el as HTMLInputElement | HTMLTextAreaElement;
+          const current = input.value || '';
+          setNativeInputValue(input, current + typoChar);
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: typoChar, inputType: 'insertText' }));
+        }
+        el.dispatchEvent(new KeyboardEvent('keyup', typoInit));
+
+        await wait(randomBetween(70, 130), options.signal);
+
+        const bsInit: KeyboardEventInit = { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true, composed: true };
+        el.dispatchEvent(new KeyboardEvent('keydown', bsInit));
+        if (isInput) {
+          const input = el as HTMLInputElement | HTMLTextAreaElement;
+          const current = input.value || '';
+          if (current.length > 0) {
+            setNativeInputValue(input, current.slice(0, -1));
+            input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward' }));
+          }
+        }
+        el.dispatchEvent(new KeyboardEvent('keyup', bsInit));
+        await wait(randomBetween(50, 90), options.signal);
+      }
+    }
+
     const code = isLetter ? `Key${char.toUpperCase()}` : (/^[0-9]$/.test(char) ? `Digit${char}` : (char === ' ' ? 'Space' : ''));
 
     const keyInit: KeyboardEventInit = {
@@ -682,6 +743,18 @@ export async function scrollPage(params: {
       } else {
         window.scrollBy({ left: stepX, top: stepY, behavior });
       }
+      try {
+        const cur = getCursorPosition();
+        const wheelInit: WheelEventInit = {
+          bubbles: true,
+          cancelable: true,
+          deltaX: stepX,
+          deltaY: stepY,
+          clientX: cur.x > 0 ? cur.x : 200,
+          clientY: cur.y > 0 ? cur.y : 200,
+        };
+        (target || document.body).dispatchEvent(new WheelEvent('wheel', wheelInit));
+      } catch {}
       await wait(randomBetween(40, 130), params.signal);
     }
 

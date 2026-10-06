@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCsv, parseJsonDataset } from '../src/utils/datasetImporter';
+import { parseCsv, parseJsonDataset, parseDatasetString } from '../src/utils/datasetImporter';
 import { WorkflowEngine } from '../src/runtime/engine';
 import { Workflow, WorkflowNode, WorkflowEdge } from '../src/types/workflow';
 import * as React from 'react';
@@ -8,6 +8,8 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { IteratorNode } from '../src/nodes/IteratorNode';
 import { ScraperNode } from '../src/nodes/ScraperNode';
 import { LoopNode } from '../src/nodes/LoopNode';
+import { DatasetInputNode } from '../src/nodes/DatasetInputNode';
+
 
 describe('Dataset Importer & For Each Variable Exposing', () => {
   describe('parseCsv', () => {
@@ -351,7 +353,7 @@ Product B,29.99,https://example.com/b`;
       expect(container.innerHTML).toContain('Import');
     });
 
-    it('renders LoopNode for for_each with exposed variables and Import button', async () => {
+    it('renders LoopNode for for_each with exposed variables and start item badge', async () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
       const root = createRoot(container);
@@ -377,6 +379,7 @@ Product B,29.99,https://example.com/b`;
                 properties: {
                   array: '{{scrapedProducts}}',
                   exposedVariables: ['title', 'price', 'link'],
+                  startItem: 3,
                 },
               },
             })
@@ -389,7 +392,288 @@ Product B,29.99,https://example.com/b`;
       expect(container.innerHTML).toContain('title');
       expect(container.innerHTML).toContain('price');
       expect(container.innerHTML).toContain('link');
-      expect(container.innerHTML).toContain('Import CSV / JSON to Loop');
+      expect(container.innerHTML).toContain('Start from:');
+      expect(container.innerHTML).toContain('Item #3');
+    });
+
+    it('renders DatasetInputNode with import bar, table preview, and draggable For Each loop', async () => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+
+      await React.act(async () => {
+        root.render(
+          React.createElement(
+            ReactFlowProvider,
+            null,
+            React.createElement(DatasetInputNode, {
+              id: 'ds-node-1',
+              selected: false,
+              type: 'dataset_input',
+              zIndex: 1,
+              isConnectable: true,
+              positionAbsoluteX: 0,
+              positionAbsoluteY: 0,
+              dragging: false,
+              data: {
+                label: 'Product Catalog Import',
+                type: 'dataset_input',
+                category: 'data',
+                properties: {
+                  outputVariable: 'catalog',
+                  importedFilename: 'products.csv',
+                  importedItems: [
+                    { id: 1, name: 'Gadget A', category: 'Tech' },
+                    { id: 2, name: 'Gadget B', category: 'Home' },
+                  ],
+                  importedHeaders: ['id', 'name', 'category'],
+                },
+              },
+            })
+          )
+        );
+      });
+
+      expect(container).toBeDefined();
+      expect(container.innerHTML).toContain('Product Catalog Import');
+      expect(container.innerHTML).toContain('catalog');
+      expect(container.innerHTML).toContain('products.csv');
+      expect(container.innerHTML).toContain('2 rows');
+      expect(container.innerHTML).toContain('Gadget A');
+      expect(container.innerHTML).toContain('Drag For Each Loop');
+    });
+  });
+
+  describe('Starting Loop from Specified Array Number / Index', () => {
+    it('starts for_each loop from specified 1-based startItem', async () => {
+      const items = ['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5'];
+      const visited: any[] = [];
+
+      const loopNode: WorkflowNode = {
+        id: 'loop_offset',
+        type: 'for_each',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Loop With Start Item',
+          type: 'for_each',
+          category: 'control_flow',
+          properties: {
+            array: '{{myItems}}',
+            itemVariable: 'entry',
+            startItem: 3, // Starts at Item 3 (1-based)
+          },
+        },
+      };
+
+      const bodyNode: WorkflowNode = {
+        id: 'body_offset',
+        type: 'customNode',
+        position: { x: 0, y: 100 },
+        data: {
+          label: 'Capture Entry',
+          type: 'set_variable',
+          category: 'data',
+          properties: {
+            name: 'lastEntry',
+            value: '{{entry}}',
+          },
+        },
+      };
+
+      const workflow: Workflow = {
+        id: 'wf_offset',
+        name: 'Offset Workflow',
+        nodes: [loopNode, bodyNode],
+        edges: [
+          {
+            id: 'e_body',
+            source: 'loop_offset',
+            target: 'body_offset',
+            sourceHandle: 'loop_body',
+          },
+        ],
+        variables: {
+          myItems: items,
+        },
+        settings: { timeout: 5000, retryCount: 0, retryDelay: 100, stopOnError: true, highlightElements: false },
+      };
+
+      let lastIdx = -1;
+      const engine = new WorkflowEngine(workflow, {
+        onVariablesChange: (vars) => {
+          if (vars.entry && vars.index !== lastIdx) {
+            lastIdx = vars.index;
+            visited.push({
+              entry: vars.entry,
+              index: vars.index,
+              itemNumber: vars.item_number,
+              iteration: vars.loop_iteration,
+            });
+          }
+        },
+      });
+
+      await engine.run();
+
+      expect(visited).toHaveLength(3);
+      expect(visited[0].entry).toBe('Item 3');
+      expect(visited[0].index).toBe(2);
+      expect(visited[0].itemNumber).toBe(3);
+      expect(visited[1].entry).toBe('Item 4');
+      expect(visited[2].entry).toBe('Item 5');
+    });
+
+    it('starts for_each loop from specified 0-based startIndex', async () => {
+      const items = ['A', 'B', 'C', 'D'];
+      const visited: any[] = [];
+
+      const loopNode: WorkflowNode = {
+        id: 'loop_idx',
+        type: 'for_each',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Loop With Start Index',
+          type: 'for_each',
+          category: 'control_flow',
+          properties: {
+            array: '{{letters}}',
+            startIndex: 2, // Starts at index 2 ('C')
+          },
+        },
+      };
+
+      const bodyNode: WorkflowNode = {
+        id: 'body_idx',
+        type: 'customNode',
+        position: { x: 0, y: 100 },
+        data: {
+          label: 'Capture Letter',
+          type: 'set_variable',
+          category: 'data',
+          properties: {
+            name: 'lastLetter',
+            value: '{{item}}',
+          },
+        },
+      };
+
+      const workflow: Workflow = {
+        id: 'wf_idx',
+        name: 'Index Workflow',
+        nodes: [loopNode, bodyNode],
+        edges: [
+          {
+            id: 'e_idx',
+            source: 'loop_idx',
+            target: 'body_idx',
+            sourceHandle: 'loop_body',
+          },
+        ],
+        variables: {
+          letters: items,
+        },
+        settings: { timeout: 5000, retryCount: 0, retryDelay: 100, stopOnError: true, highlightElements: false },
+      };
+
+      let lastIdx = -1;
+      const engine = new WorkflowEngine(workflow, {
+        onVariablesChange: (vars) => {
+          if (vars.item && vars.index !== lastIdx) {
+            lastIdx = vars.index;
+            visited.push(vars.item);
+          }
+        },
+      });
+
+      await engine.run();
+
+      expect(visited).toEqual(['C', 'D']);
+    });
+
+    it('starts count loop with startCount offset', async () => {
+      const visitedCounts: number[] = [];
+
+      const loopNode: WorkflowNode = {
+        id: 'loop_count',
+        type: 'loop',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Count Loop',
+          type: 'loop',
+          category: 'control_flow',
+          properties: {
+            count: 3,
+            startCount: 10,
+          },
+        },
+      };
+
+      const bodyNode: WorkflowNode = {
+        id: 'body_count',
+        type: 'customNode',
+        position: { x: 0, y: 100 },
+        data: {
+          label: 'Record Count',
+          type: 'set_variable',
+          category: 'data',
+          properties: {
+            name: 'currentIteration',
+            value: '{{index}}',
+          },
+        },
+      };
+
+      const workflow: Workflow = {
+        id: 'wf_count',
+        name: 'Count Workflow',
+        nodes: [loopNode, bodyNode],
+        edges: [
+          {
+            id: 'e_cnt',
+            source: 'loop_count',
+            target: 'body_count',
+            sourceHandle: 'loop_body',
+          },
+        ],
+        variables: {},
+        settings: { timeout: 5000, retryCount: 0, retryDelay: 100, stopOnError: true, highlightElements: false },
+      };
+
+      let lastIndex = -1;
+      const engine = new WorkflowEngine(workflow, {
+        onVariablesChange: (vars) => {
+          if (vars.index !== undefined && vars.index !== lastIndex) {
+            lastIndex = vars.index;
+            visitedCounts.push(vars.index);
+          }
+        },
+      });
+
+      await engine.run();
+
+      expect(visitedCounts).toEqual([10, 11, 12]);
+    });
+  });
+
+  describe('parseDatasetString', () => {
+    it('parses raw CSV text string', () => {
+      const rawCsv = `name,score\nAlice,98\nBob,87`;
+      const result = parseDatasetString(rawCsv);
+      expect(result.format).toBe('csv');
+      expect(result.headers).toEqual(['name', 'score']);
+      expect(result.rows).toHaveLength(2);
+      expect(result.rows[0].name).toBe('Alice');
+      expect(result.rows[0].score).toBe(98);
+    });
+
+    it('parses raw JSON text string', () => {
+      const rawJson = `[{"city":"Tokyo","pop":14000000},{"city":"Paris","pop":2160000}]`;
+      const result = parseDatasetString(rawJson);
+      expect(result.format).toBe('json');
+      expect(result.headers).toEqual(['city', 'pop']);
+      expect(result.rows).toHaveLength(2);
+      expect(result.rows[0].city).toBe('Tokyo');
     });
   });
 });
+
