@@ -62,6 +62,35 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
     summary = `Output: {{${data.properties?.outputVariable || 'items'}}}`;
   }
 
+  // Extract items for Table Output
+  const items: any[] = React.useMemo(() => {
+    if (Array.isArray(runtime?.output)) return runtime.output;
+    if (runtime?.output?.items && Array.isArray(runtime.output.items)) return runtime.output.items;
+    if (runtime?.dynamicState?.table?.rows && Array.isArray(runtime.dynamicState.table.rows)) {
+      return runtime.dynamicState.table.rows;
+    }
+    if (Array.isArray(runtime?.dynamicState?.items)) return runtime.dynamicState.items;
+    return [];
+  }, [runtime?.output, runtime?.dynamicState]);
+
+  const headers = React.useMemo(() => {
+    if (runtime?.dynamicState?.table?.headers && Array.isArray(runtime.dynamicState.table.headers)) {
+      return runtime.dynamicState.table.headers;
+    }
+    if (items.length > 0 && typeof items[0] === 'object' && items[0] !== null) {
+      return Object.keys(items[0]);
+    }
+    if (Array.isArray(data.properties?.fields) && data.properties.fields.length > 0) {
+      return data.properties.fields.map((f: any) => f.name).filter(Boolean);
+    }
+    return ['title', 'price', 'link'];
+  }, [runtime?.dynamicState?.table?.headers, items, data.properties?.fields]);
+
+  // Local table preview and export dropdown states
+  const [showTablePreview, setShowTablePreview] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+
   // Status-specific border and glow
   let borderClass = 'border-[#232a3b] hover:border-indigo-500/60';
   let glowClass = '';

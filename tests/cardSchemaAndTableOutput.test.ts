@@ -16,6 +16,10 @@ import {
 import { formatScraperTableOutput, executeScrapeElements } from '../src/runtime/executors';
 import { ExecutionContext } from '../src/types/execution';
 import { WorkflowNode } from '../src/types/workflow';
+import * as React from 'react';
+import { createRoot } from 'react-dom/client';
+import { IteratorNode } from '../src/nodes/IteratorNode';
+import { ReactFlowProvider } from '@xyflow/react';
 
 describe('Card Schema Store & Table Output Enhancements', () => {
   beforeEach(() => {
@@ -366,6 +370,65 @@ describe('Card Schema Store & Table Output Enhancements', () => {
           }),
         })
       );
+    });
+  });
+
+  describe('IteratorNode Canvas Component', () => {
+    it('renders IteratorNode without ReferenceError and handles table output data', () => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+
+      root.render(
+        React.createElement(
+          ReactFlowProvider,
+          null,
+          React.createElement(IteratorNode, {
+            id: 'iter-1',
+            selected: false,
+            type: 'scrape_elements',
+            zIndex: 1,
+            isConnectable: true,
+            positionAbsoluteX: 0,
+            positionAbsoluteY: 0,
+            dragging: false,
+            data: {
+              label: 'Product Scraper',
+              type: 'scrape_elements',
+              category: 'extraction',
+              properties: {
+                containerSelector: '.card',
+                fields: [{ name: 'title', selector: 'h2' }],
+                outputVariable: 'products',
+              },
+              runtimeState: {
+                status: 'success',
+                output: [
+                  { title: 'Item 1', price: '$10' },
+                  { title: 'Item 2', price: '$20' },
+                ],
+                dynamicState: {
+                  count: 2,
+                  items: [
+                    { title: 'Item 1', price: '$10' },
+                    { title: 'Item 2', price: '$20' },
+                  ],
+                  table: {
+                    headers: ['title', 'price'],
+                    rows: [
+                      { title: 'Item 1', price: '$10' },
+                      { title: 'Item 2', price: '$20' },
+                    ],
+                    count: 2,
+                  },
+                },
+              },
+            },
+          })
+        )
+      );
+
+      expect(container).toBeDefined();
     });
   });
 });
