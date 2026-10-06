@@ -696,7 +696,18 @@ export class WorkflowEngine {
     let iterations: any[] = [];
 
     if (isForEach) {
-      const arrayVal = interpolateVariables(loopNode.data.properties.array, ctx.variables);
+      let arrayVal = interpolateVariables(loopNode.data.properties.array, ctx.variables);
+      if (typeof arrayVal === 'string') {
+        try {
+          const parsed = JSON.parse(arrayVal);
+          if (Array.isArray(parsed)) arrayVal = parsed;
+        } catch {
+          // not json
+        }
+      }
+      if (!Array.isArray(arrayVal) && Array.isArray(loopNode.data.properties?.importedItems) && loopNode.data.properties.importedItems.length > 0) {
+        arrayVal = loopNode.data.properties.importedItems;
+      }
       iterations = Array.isArray(arrayVal) ? arrayVal : [];
     } else {
       const count = Number(interpolateVariables(loopNode.data.properties.count, ctx.variables)) || 1;
@@ -719,15 +730,21 @@ export class WorkflowEngine {
 
       const rawItem = iterations[index];
       const item = createInspectableItem(rawItem);
+      const itemVar = loopNode.data.properties?.itemVariable || 'item';
       ctx.variables.index = index;
+      ctx.variables[itemVar] = item;
       ctx.variables.item = item;
       if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
         for (const [k, v] of Object.entries(item)) {
+          // Direct variable by column name: {{title}}, {{price}}, etc.
           ctx.variables[k] = v;
-          ctx.variables[`item_${k}`] = v;
+          ctx.variables[`${itemVar}.${k}`] = v;
+          ctx.variables[`${itemVar}_${k}`] = v;
           ctx.variables[`item.${k}`] = v;
+          ctx.variables[`item_${k}`] = v;
         }
       }
+      Object.assign(this.variables, ctx.variables);
       this.events.onVariablesChange?.(this.variables);
 
       const progress = Math.round(((index + 1) / Math.max(1, totalIterations)) * 100);

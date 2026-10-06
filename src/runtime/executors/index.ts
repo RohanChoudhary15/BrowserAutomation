@@ -2454,20 +2454,52 @@ export const executeScrapeElements: NodeExecutor = async (node, ctx) => {
     nodeName: node.data.label,
   });
 
-  const res = await sendDomAction(
-    'extract_dataset',
-    {
-      containerSelector,
-      fields,
-      timeout,
-      excludeEmpty,
-      filterEmptyMode,
-    },
-    ctx,
-    timeout
-  );
+  let items: any[] = [];
+  const importedItems = Array.isArray(node.data.properties.importedItems) ? node.data.properties.importedItems : [];
 
-  let items = res?.items || [];
+  if (node.data.properties.useImportedData && importedItems.length > 0) {
+    items = importedItems;
+    ctx.log({
+      level: 'info',
+      message: `Using imported dataset (${items.length} items from ${node.data.properties.importedFilename || 'import'})`,
+      nodeId: node.id,
+      nodeName: node.data.label,
+    });
+  } else if (!containerSelector && importedItems.length > 0) {
+    items = importedItems;
+  } else {
+    try {
+      const res = await sendDomAction(
+        'extract_dataset',
+        {
+          containerSelector,
+          fields,
+          timeout,
+          excludeEmpty,
+          filterEmptyMode,
+        },
+        ctx,
+        timeout
+      );
+      items = res?.items || [];
+    } catch (err: any) {
+      if (importedItems.length > 0) {
+        ctx.log({
+          level: 'warn',
+          message: `Live scrape failed (${err.message}), falling back to imported dataset (${importedItems.length} items)`,
+          nodeId: node.id,
+          nodeName: node.data.label,
+        });
+        items = importedItems;
+      } else {
+        throw err;
+      }
+    }
+
+    if (items.length === 0 && importedItems.length > 0) {
+      items = importedItems;
+    }
+  }
 
   // Apply data post-processing (URL normalization, price cleaning, date formatting, and row pattern filtering)
   if (

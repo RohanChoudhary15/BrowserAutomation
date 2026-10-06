@@ -18,8 +18,13 @@ import {
   Maximize2,
   ChevronDown,
   ChevronUp,
+  Upload,
+  GripVertical,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { exportAndDownloadDataset } from '../utils/documentExporter';
+import { importDatasetFile } from '../utils/datasetImporter';
 import { TableModal } from '../components/properties/TableModal';
 
 export interface IteratorNodeProps extends NodeProps {
@@ -62,6 +67,11 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
     summary = `Output: {{${data.properties?.outputVariable || 'items'}}}`;
   }
 
+  // Local imported dataset fallback state
+  const [localImported, setLocalImported] = useState<{ headers: string[]; rows: any[]; filename?: string } | null>(null);
+  const [copiedVar, setCopiedVar] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   // Extract items for Table Output
   const items: any[] = React.useMemo(() => {
     if (Array.isArray(runtime?.output)) return runtime.output;
@@ -70,12 +80,24 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
       return runtime.dynamicState.table.rows;
     }
     if (Array.isArray(runtime?.dynamicState?.items)) return runtime.dynamicState.items;
+    if (Array.isArray(data.properties?.importedItems) && data.properties.importedItems.length > 0) {
+      return data.properties.importedItems;
+    }
+    if (localImported?.rows && localImported.rows.length > 0) {
+      return localImported.rows;
+    }
     return [];
-  }, [runtime?.output, runtime?.dynamicState]);
+  }, [runtime?.output, runtime?.dynamicState, data.properties?.importedItems, localImported]);
 
   const headers = React.useMemo(() => {
     if (runtime?.dynamicState?.table?.headers && Array.isArray(runtime.dynamicState.table.headers)) {
       return runtime.dynamicState.table.headers;
+    }
+    if (Array.isArray(data.properties?.importedHeaders) && data.properties.importedHeaders.length > 0) {
+      return data.properties.importedHeaders;
+    }
+    if (localImported?.headers && localImported.headers.length > 0) {
+      return localImported.headers;
     }
     if (items.length > 0 && typeof items[0] === 'object' && items[0] !== null) {
       return Object.keys(items[0]);
@@ -84,12 +106,46 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
       return data.properties.fields.map((f: any) => f.name).filter(Boolean);
     }
     return ['title', 'price', 'link'];
-  }, [runtime?.dynamicState?.table?.headers, items, data.properties?.fields]);
+  }, [runtime?.dynamicState?.table?.headers, data.properties?.importedHeaders, localImported, items, data.properties?.fields]);
 
   // Local table preview and export dropdown states
   const [showTablePreview, setShowTablePreview] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await importDatasetFile(file);
+      setLocalImported({ headers: parsed.headers, rows: parsed.rows, filename: parsed.filename });
+      setShowTablePreview(true);
+      window.dispatchEvent(
+        new CustomEvent('autoflow:update-node-properties', {
+          detail: {
+            nodeId: id,
+            properties: {
+              importedItems: parsed.rows,
+              importedHeaders: parsed.headers,
+              importedFilename: parsed.filename,
+              useImportedData: true,
+            },
+          },
+        })
+      );
+    } catch (err: any) {
+      console.error('Import failed:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleCopyVar = (varName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(`{{${varName}}}`);
+    setCopiedVar(varName);
+    setTimeout(() => setCopiedVar(null), 1500);
+  };
 
   // Status-specific border and glow
   let borderClass = 'border-[#232a3b] hover:border-indigo-500/60';
@@ -249,20 +305,35 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
               {showTablePreview ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
             </button>
 
-            {/* Table Export Button with Dropdown */}
-            <div className="relative">
+            {/* Table Import & Export Buttons */}
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setShowExportMenu(!showExportMenu);
+                  fileInputRef.current?.click();
                 }}
-                className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[10px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
-                title="Export Table (CSV, Excel XLSX, JSON)"
+                className="px-1.5 py-0.5 rounded bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 text-[10px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                title="Import CSV or JSON dataset"
               >
-                <Download className="w-2.5 h-2.5" />
-                <span>Export</span>
+                <Upload className="w-2.5 h-2.5" />
+                <span>Import</span>
               </button>
+
+              {/* Table Export Button with Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowExportMenu(!showExportMenu);
+                  }}
+                  className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[10px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                  title="Export Table (CSV, Excel XLSX, JSON)"
+                >
+                  <Download className="w-2.5 h-2.5" />
+                  <span>Export</span>
+                </button>
 
               {showExportMenu && (
                 <div
@@ -319,6 +390,7 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
               )}
             </div>
           </div>
+        </div>
 
           {/* Inline Mini-Table Preview */}
           {showTablePreview && (
@@ -362,6 +434,100 @@ export const IteratorNode: React.FC<IteratorNodeProps> = memo(({ id, data, selec
           )}
         </div>
       )}
+
+      {/* Empty items state: quick import button */}
+      {items.length === 0 && (
+        <div className="mb-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            className="w-full py-1.5 px-2 rounded-lg bg-indigo-950/40 hover:bg-indigo-900/50 border border-dashed border-indigo-500/40 hover:border-indigo-400 text-indigo-300 text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+            title="Import CSV or JSON to populate dataset"
+          >
+            <Upload className="w-3 h-3 text-indigo-400" />
+            <span>Import CSV / JSON</span>
+          </button>
+        </div>
+      )}
+
+      {/* Draggable "For Each" Loop Node for this collection */}
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData('application/autoflow-node', 'for_each');
+          e.dataTransfer.setData(
+            'application/autoflow-node-props',
+            JSON.stringify({
+              array: `{{${data.properties?.outputVariable || 'scrapedProducts'}}}`,
+              itemVariable: 'item',
+              exposedVariables: headers,
+            })
+          );
+          e.dataTransfer.setData('application/autoflow-source-node', id);
+          e.dataTransfer.setData('application/autoflow-source-handle', 'loop_done');
+          e.dataTransfer.effectAllowed = 'copyMove';
+        }}
+        className="mb-2 p-1.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 hover:bg-indigo-900/50 hover:border-indigo-400 cursor-grab active:cursor-grabbing transition-all select-none shadow-sm group/drag"
+        title="Drag onto canvas to create a For Each loop iterating over this dataset"
+      >
+        <div className="flex items-center justify-between gap-1 text-[10px] mb-1">
+          <div className="flex items-center gap-1 text-indigo-300 font-medium">
+            <GripVertical className="w-3 h-3 text-indigo-400/80 group-hover/drag:text-indigo-200 shrink-0" />
+            <Repeat className="w-3 h-3 text-indigo-400 shrink-0" />
+            <span>Drag &quot;For Each&quot; Loop</span>
+          </div>
+          <span className="text-[9px] font-mono text-indigo-300 bg-indigo-900/60 px-1 py-0.5 rounded border border-indigo-700/40">
+            &#123;&#123;{data.properties?.outputVariable || 'scrapedProducts'}&#125;&#125;
+          </span>
+        </div>
+
+        {/* Exposed Column Variables preview */}
+        <div className="pt-1 border-t border-indigo-500/20">
+          <div className="text-[8px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center justify-between">
+            <span>Exposes Variables:</span>
+            <span className="text-indigo-400/80 font-mono text-[8px] lowercase">click to copy</span>
+          </div>
+          <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+            {headers.slice(0, 6).map((col) => {
+              const isCopied = copiedVar === col;
+              return (
+                <button
+                  key={col}
+                  type="button"
+                  onClick={(e) => handleCopyVar(col, e)}
+                  className={`text-[8px] font-mono px-1 py-0.5 rounded border transition-colors flex items-center gap-0.5 truncate max-w-[85px] ${
+                    isCopied
+                      ? 'bg-emerald-900/60 text-emerald-200 border-emerald-500/60'
+                      : 'bg-indigo-900/40 hover:bg-indigo-800/60 text-indigo-200 border-indigo-500/30 hover:border-indigo-400'
+                  }`}
+                  title={`Click to copy {{${col}}} (also {{item.${col}}})`}
+                >
+                  {isCopied ? <Check className="w-2 h-2 text-emerald-300 shrink-0" /> : null}
+                  <span>&#123;&#123;{col}&#125;&#125;</span>
+                </button>
+              );
+            })}
+            {headers.length > 6 && (
+              <span className="text-[8px] font-mono px-1 py-0.5 rounded bg-indigo-900/20 text-indigo-400/70 border border-indigo-500/20">
+                +{headers.length - 6} more
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Hidden File Input for CSV/JSON import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,.tsv,.json"
+        onChange={handleImportFile}
+        className="hidden"
+      />
 
       {/* Output Handle Labels */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">

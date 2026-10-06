@@ -91,6 +91,7 @@ import {
   CardSchemaPreset,
 } from '../../storage/cardSchemaStore';
 import { exportAndDownloadDataset } from '../../utils/documentExporter';
+import { importDatasetFile } from '../../utils/datasetImporter';
 
 const getImagePreviews = (output: any): string[] => {
   if (!output) return [];
@@ -299,6 +300,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const extractedCardsData = React.useMemo(() => {
     if (selectedNode?.data?.type !== 'scrape_elements') return [];
+    if (Array.isArray(selectedNode?.data?.properties?.importedItems) && selectedNode.data.properties.importedItems.length > 0) {
+      return selectedNode.data.properties.importedItems;
+    }
     const dynItems = runtimeState?.dynamicState?.items || runtimeState?.dynamicState?.table?.rows;
     if (Array.isArray(dynItems) && dynItems.length > 0) return dynItems;
     if (Array.isArray(runtimeState?.output) && runtimeState.output.length > 0) return runtimeState.output;
@@ -311,7 +315,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       return variables[`${outVar}_table`].rows;
     }
     return [];
-  }, [selectedNode?.data?.type, selectedNode?.data?.properties?.outputVariable, runtimeState, variables]);
+  }, [selectedNode?.data?.type, selectedNode?.data?.properties?.importedItems, selectedNode?.data?.properties?.outputVariable, runtimeState, variables]);
 
   // Memoized array of images for the currently selected node
   const activeNodeImages = React.useMemo<string[]>(() => {
@@ -716,6 +720,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       console.warn('Export cards error:', err);
     } finally {
       setIsExportingCards(false);
+    }
+  };
+
+  const propertiesScrapeFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleImportCardsDataset = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await importDatasetFile(file);
+      handlePropChange('importedItems', parsed.rows);
+      handlePropChange('importedHeaders', parsed.headers);
+      handlePropChange('importedFilename', parsed.filename);
+      handlePropChange('useImportedData', true);
+    } catch (err: any) {
+      console.warn('Import cards error:', err);
+    } finally {
+      if (propertiesScrapeFileInputRef.current) propertiesScrapeFileInputRef.current.value = '';
     }
   };
 
@@ -3089,6 +3111,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     </button>
 
                     <div className="flex items-center gap-1">
+                      <input
+                        ref={propertiesScrapeFileInputRef}
+                        type="file"
+                        accept=".csv,.tsv,.json"
+                        onChange={handleImportCardsDataset}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => propertiesScrapeFileInputRef.current?.click()}
+                        className="px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-[10px] text-emerald-300 hover:text-white flex items-center gap-1 transition-colors"
+                        title="Import CSV or JSON to populate dataset"
+                      >
+                        <Upload className="w-3 h-3 text-emerald-400" />
+                        <span>Import</span>
+                      </button>
                       <button
                         type="button"
                         disabled={isExportingCards}
@@ -3214,16 +3252,96 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] text-center space-y-1">
+                <div className="p-3 rounded-xl bg-[#0e121a] border border-[#1e2433] text-center space-y-2">
                   <div className="flex justify-center text-gray-600">
                     <Table className="w-5 h-5" />
                   </div>
                   <p className="text-[11px] text-gray-300 font-medium">No extracted cards yet</p>
                   <p className="text-[10px] text-gray-500 max-w-xs mx-auto">
-                    Execute this node or run the workflow to view structured cards in the interactive table with instant export.
+                    Execute this node or import a dataset file to view structured cards in the interactive table.
                   </p>
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => propertiesScrapeFileInputRef.current?.click()}
+                      className="py-1 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium flex items-center gap-1.5 transition-colors shadow-sm"
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>Import CSV / JSON</span>
+                    </button>
+                  </div>
                 </div>
               )}
+
+              {/* Draggable "For Each" Loop Card */}
+              {(() => {
+                const cols = Array.from(
+                  new Set([
+                    ...(Array.isArray(props.fields) ? props.fields.map((f: any) => f.name).filter(Boolean) : []),
+                    ...extractedCardsData.slice(0, 5).flatMap((item: any) =>
+                      item && typeof item === 'object' ? Object.keys(item) : []
+                    ),
+                    'title',
+                    'price',
+                    'link',
+                  ])
+                ).slice(0, 8);
+
+                return (
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      e.dataTransfer.setData('application/autoflow-node', 'for_each');
+                      e.dataTransfer.setData(
+                        'application/autoflow-node-props',
+                        JSON.stringify({
+                          array: `{{${props.outputVariable || 'scrapedProducts'}}}`,
+                          itemVariable: props.itemVariable || 'currentProduct',
+                          exposedVariables: cols,
+                        })
+                      );
+                      e.dataTransfer.setData('application/autoflow-source-node', selectedNode.id);
+                      e.dataTransfer.setData('application/autoflow-source-handle', 'loop_done');
+                      e.dataTransfer.effectAllowed = 'copyMove';
+                    }}
+                    className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent border border-indigo-500/30 hover:border-indigo-400 cursor-grab active:cursor-grabbing transition-all select-none space-y-2 group/drag shadow-sm"
+                    title="Drag onto canvas to create a connected 'For Each' loop node"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-indigo-300 font-semibold text-xs">
+                        <GripVertical className="w-3.5 h-3.5 text-indigo-400/80 group-hover/drag:text-indigo-200" />
+                        <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Drag &quot;For Each&quot; Loop to Canvas</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-indigo-300 bg-indigo-900/50 px-1.5 py-0.5 rounded border border-indigo-700/40">
+                        &#123;&#123;{props.outputVariable || 'scrapedProducts'}&#125;&#125;
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] text-gray-400">
+                      In the loop body, each item exposes all columns as individual variables:
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {cols.map((colName) => (
+                        <button
+                          key={colName}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard?.writeText(`{{${colName}}}`);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900 text-indigo-200 border border-indigo-500/30 text-[9px] font-mono flex items-center gap-0.5 transition-colors"
+                          title={`Click to copy {{${colName}}} (also {{${props.itemVariable || 'currentProduct'}.${colName}}})`}
+                        >
+                          <span>&#123;&#123;{colName}&#125;&#125;</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

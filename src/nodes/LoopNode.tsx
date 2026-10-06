@@ -3,7 +3,8 @@ import { Handle, Position, NodeProps } from '@xyflow/react';
 import { Icon } from '../components/common/Icon';
 import { WorkflowNodeData } from '../types/workflow';
 import { NodeRuntimeState } from '../types/execution';
-import { Loader2, CheckCircle2, AlertCircle, Play, Trash2 } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Play, Trash2, Upload, Check } from 'lucide-react';
+import { importDatasetFile } from '../utils/datasetImporter';
 
 export interface LoopNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -18,6 +19,50 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
   const status = runtime?.status || (data.disabled ? 'disabled' : 'idle');
 
   const isForEach = data.type === 'for_each';
+  const [copiedVar, setCopiedVar] = React.useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const exposedVars: string[] = React.useMemo(() => {
+    if (Array.isArray(data.properties?.exposedVariables) && data.properties.exposedVariables.length > 0) {
+      return data.properties.exposedVariables;
+    }
+    if (Array.isArray(data.properties?.importedHeaders) && data.properties.importedHeaders.length > 0) {
+      return data.properties.importedHeaders;
+    }
+    if (Array.isArray(data.properties?.importedItems) && data.properties.importedItems.length > 0) {
+      return Object.keys(data.properties.importedItems[0] || {});
+    }
+    return [];
+  }, [data.properties?.exposedVariables, data.properties?.importedHeaders, data.properties?.importedItems]);
+
+  const itemVar = data.properties?.itemVariable || 'item';
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await importDatasetFile(file);
+      window.dispatchEvent(
+        new CustomEvent('autoflow:update-node-properties', {
+          detail: {
+            nodeId: id,
+            properties: {
+              importedItems: parsed.rows,
+              importedHeaders: parsed.headers,
+              importedFilename: parsed.filename,
+              exposedVariables: parsed.headers,
+              array: `importedItems`,
+            },
+          },
+        })
+      );
+    } catch (err: any) {
+      console.error('Import failed:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const summary = isForEach
     ? `For each in ${data.properties?.array || '[]'}`
     : `Repeat ${data.properties?.count || 1} times`;
@@ -39,6 +84,38 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
 
   return (
     <div
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={async (e) => {
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          const file = e.dataTransfer.files[0];
+          try {
+            const parsed = await importDatasetFile(file);
+            window.dispatchEvent(
+              new CustomEvent('autoflow:update-node-properties', {
+                detail: {
+                  nodeId: id,
+                  properties: {
+                    importedItems: parsed.rows,
+                    importedHeaders: parsed.headers,
+                    importedFilename: parsed.filename,
+                    exposedVariables: parsed.headers,
+                    array: `importedItems`,
+                  },
+                },
+              })
+            );
+          } catch (err) {
+            console.error('File drop import failed:', err);
+          }
+        }
+      }}
       className={`group relative min-w-[220px] max-w-[270px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
@@ -133,6 +210,69 @@ export const LoopNode: React.FC<LoopNodeProps> = memo(({ id, data, selected }) =
           <span className="truncate">{runtime.dynamicState.message}</span>
         </div>
       )}
+
+      {/* For Each Exposed Variables Badges */}
+      {isForEach && exposedVars.length > 0 && (
+        <div className="mb-2 p-1.5 rounded-lg bg-indigo-950/40 border border-indigo-500/25">
+          <div className="text-[8px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center justify-between">
+            <span>Exposed Variables:</span>
+            <span className="text-indigo-400 font-mono text-[8px] lowercase">click to copy</span>
+          </div>
+          <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+            {exposedVars.map((v) => {
+              const isCopied = copiedVar === v;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard?.writeText(`{{${v}}}`);
+                    setCopiedVar(v);
+                    setTimeout(() => setCopiedVar(null), 1500);
+                  }}
+                  className={`text-[8px] font-mono px-1 py-0.5 rounded border transition-colors flex items-center gap-0.5 truncate max-w-[85px] ${
+                    isCopied
+                      ? 'bg-emerald-900/60 text-emerald-200 border-emerald-500/60'
+                      : 'bg-indigo-900/40 hover:bg-indigo-800/60 text-indigo-200 border-indigo-500/30 hover:border-indigo-400'
+                  }`}
+                  title={`Click to copy {{${v}}} (also {{${itemVar}.${v}}})`}
+                >
+                  {isCopied ? <Check className="w-2 h-2 text-emerald-300 shrink-0" /> : null}
+                  <span>&#123;&#123;{v}&#125;&#125;</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* For Each: Option to import CSV / JSON directly */}
+      {isForEach && (
+        <div className="mb-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            className="w-full py-1 px-1.5 rounded-lg bg-indigo-950/30 hover:bg-indigo-900/40 border border-dashed border-indigo-500/30 hover:border-indigo-400 text-indigo-300 text-[9px] font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
+            title="Import CSV or JSON file to loop over its rows"
+          >
+            <Upload className="w-2.5 h-2.5 text-indigo-400" />
+            <span>{Array.isArray(data.properties?.importedItems) ? `Replace Dataset (${data.properties.importedItems.length})` : 'Import CSV / JSON to Loop'}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Hidden File Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,.tsv,.json"
+        onChange={handleImportFile}
+        className="hidden"
+      />
 
       {/* Output Handle Labels */}
       <div className="flex items-center justify-between pt-1 border-t border-[#1c2230] px-1 text-[10px] font-semibold">

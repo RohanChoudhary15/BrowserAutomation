@@ -21,8 +21,13 @@ import {
   ChevronUp,
   FileCode,
   Sparkles,
+  Upload,
+  GripVertical,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { exportAndDownloadDataset } from '../utils/documentExporter';
+import { importDatasetFile } from '../utils/datasetImporter';
 import { TableModal } from '../components/properties/TableModal';
 
 export interface ScraperNodeProps extends NodeProps {
@@ -142,6 +147,11 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
     glowClass = 'shadow-[0_0_12px_rgba(249,115,22,0.3)]';
   }
 
+  // Local imported dataset fallback state
+  const [localImported, setLocalImported] = useState<{ headers: string[]; rows: any[]; filename?: string } | null>(null);
+  const [copiedVar, setCopiedVar] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   // Extract items for Table Output
   const items: any[] = Array.isArray(runtime?.output)
     ? runtime.output
@@ -151,16 +161,24 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
         ? runtime.dynamicState.table.rows
         : (Array.isArray(runtime?.dynamicState?.items)
           ? runtime.dynamicState.items
-          : [])));
+          : (Array.isArray(data.properties?.importedItems) && data.properties.importedItems.length > 0
+            ? data.properties.importedItems
+            : (localImported?.rows && localImported.rows.length > 0
+              ? localImported.rows
+              : [])))));
 
   const resultCount = items.length > 0
     ? items.length
     : (runtime?.dynamicState?.count ?? (Array.isArray(runtime?.output) ? runtime.output.length : undefined));
 
   const headers = runtime?.dynamicState?.table?.headers ||
-    (items.length > 0 && typeof items[0] === 'object' && items[0] !== null
-      ? Object.keys(items[0])
-      : ['title', 'url']);
+    (Array.isArray(data.properties?.importedHeaders) && data.properties.importedHeaders.length > 0
+      ? data.properties.importedHeaders
+      : (localImported?.headers && localImported.headers.length > 0
+        ? localImported.headers
+        : (items.length > 0 && typeof items[0] === 'object' && items[0] !== null
+          ? Object.keys(items[0])
+          : ['title', 'url'])));
 
   // Local table preview and export dropdown states
   const [showTablePreview, setShowTablePreview] = useState(false);
@@ -174,8 +192,75 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
     setShowExportMenu(false);
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await importDatasetFile(file);
+      setLocalImported({ headers: parsed.headers, rows: parsed.rows, filename: parsed.filename });
+      setShowTablePreview(true);
+      window.dispatchEvent(
+        new CustomEvent('autoflow:update-node-properties', {
+          detail: {
+            nodeId: id,
+            properties: {
+              importedItems: parsed.rows,
+              importedHeaders: parsed.headers,
+              importedFilename: parsed.filename,
+              useImportedData: true,
+            },
+          },
+        })
+      );
+    } catch (err: any) {
+      console.error('Import failed:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleCopyVar = (varName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(`{{${varName}}}`);
+    setCopiedVar(varName);
+    setTimeout(() => setCopiedVar(null), 1500);
+  };
+
   return (
     <div
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={async (e) => {
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          const file = e.dataTransfer.files[0];
+          try {
+            const parsed = await importDatasetFile(file);
+            setLocalImported({ headers: parsed.headers, rows: parsed.rows, filename: parsed.filename });
+            setShowTablePreview(true);
+            window.dispatchEvent(
+              new CustomEvent('autoflow:update-node-properties', {
+                detail: {
+                  nodeId: id,
+                  properties: {
+                    importedItems: parsed.rows,
+                    importedHeaders: parsed.headers,
+                    importedFilename: parsed.filename,
+                    useImportedData: true,
+                  },
+                },
+              })
+            );
+          } catch (err) {
+            console.error('File drop import failed:', err);
+          }
+        }
+      }}
       className={`group relative min-w-[250px] max-w-[310px] rounded-xl bg-[#11141c] p-3 text-xs text-gray-200 border transition-all duration-150 ${borderClass} ${glowClass} ${
         data.disabled ? 'opacity-50 grayscale' : ''
       }`}
@@ -291,6 +376,21 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
                 {showTablePreview ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
               </button>
 
+            {/* Table Import & Export Buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="px-1.5 py-0.5 rounded bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 text-[10px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                title="Import CSV or JSON dataset"
+              >
+                <Upload className="w-2.5 h-2.5" />
+                <span>Import</span>
+              </button>
+
               {/* Table Export Button with Dropdown */}
               <div className="relative">
                 <button
@@ -349,6 +449,7 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
                 )}
               </div>
             </div>
+          </div>
 
             {/* Inline Mini-Table Preview */}
             {showTablePreview && (
@@ -393,6 +494,100 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
             )}
           </div>
         )}
+
+        {/* Empty items quick import button */}
+        {items.length === 0 && (
+          <div className="pt-2 border-t border-[#232a3b]">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
+              className="w-full py-1.5 px-2 rounded-lg bg-orange-950/30 hover:bg-orange-900/40 border border-dashed border-orange-500/30 hover:border-orange-400 text-orange-300 text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+              title="Import CSV or JSON to populate dataset"
+            >
+              <Upload className="w-3 h-3 text-orange-400" />
+              <span>Import CSV / JSON</span>
+            </button>
+          </div>
+        )}
+
+        {/* Draggable "For Each" Loop Node for this scraper */}
+        <div
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('application/autoflow-node', 'for_each');
+            e.dataTransfer.setData(
+              'application/autoflow-node-props',
+              JSON.stringify({
+                array: `{{${outVar}}}`,
+                itemVariable: itemVar || 'item',
+                exposedVariables: headers,
+              })
+            );
+            e.dataTransfer.setData('application/autoflow-source-node', id);
+            e.dataTransfer.setData('application/autoflow-source-handle', 'loop_done');
+            e.dataTransfer.effectAllowed = 'copyMove';
+          }}
+          className="mt-2 p-1.5 rounded-lg bg-orange-950/30 border border-orange-500/30 hover:bg-orange-900/40 hover:border-orange-400 cursor-grab active:cursor-grabbing transition-all select-none shadow-sm group/drag"
+          title="Drag onto canvas to create a For Each loop iterating over each scraped item"
+        >
+          <div className="flex items-center justify-between gap-1 text-[10px] mb-1">
+            <div className="flex items-center gap-1 text-orange-300 font-medium">
+              <GripVertical className="w-3 h-3 text-orange-400/80 group-hover/drag:text-orange-200 shrink-0" />
+              <Repeat className="w-3 h-3 text-orange-400 shrink-0" />
+              <span>Drag &quot;For Each&quot; Loop</span>
+            </div>
+            <span className="text-[9px] font-mono text-orange-300 bg-orange-900/60 px-1 py-0.5 rounded border border-orange-700/40">
+              &#123;&#123;{outVar}&#125;&#125;
+            </span>
+          </div>
+
+          {/* Exposed Column Variables preview */}
+          <div className="pt-1 border-t border-orange-500/20">
+            <div className="text-[8px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center justify-between">
+              <span>Exposes Variables:</span>
+              <span className="text-orange-400/80 font-mono text-[8px] lowercase">click to copy</span>
+            </div>
+            <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+              {headers.slice(0, 6).map((col) => {
+                const isCopied = copiedVar === col;
+                return (
+                  <button
+                    key={col}
+                    type="button"
+                    onClick={(e) => handleCopyVar(col, e)}
+                    className={`text-[8px] font-mono px-1 py-0.5 rounded border transition-colors flex items-center gap-0.5 truncate max-w-[85px] ${
+                      isCopied
+                        ? 'bg-emerald-900/60 text-emerald-200 border-emerald-500/60'
+                        : 'bg-orange-900/40 hover:bg-orange-800/60 text-orange-200 border border-orange-500/30 hover:border-orange-400'
+                    }`}
+                    title={`Click to copy {{${col}}} (also {{${itemVar}.${col}}})`}
+                  >
+                    {isCopied ? <Check className="w-2 h-2 text-emerald-300 shrink-0" /> : null}
+                    <span>&#123;&#123;{col}&#125;&#125;</span>
+                  </button>
+                );
+              })}
+              {headers.length > 6 && (
+                <span className="text-[8px] font-mono px-1 py-0.5 rounded bg-orange-900/20 text-orange-400/70 border border-orange-500/20">
+                  +{headers.length - 6} more
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Hidden File Input for CSV/JSON import */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.tsv,.json"
+          onChange={handleImportFile}
+          className="hidden"
+        />
       </div>
 
       {/* Output Handles Header */}
