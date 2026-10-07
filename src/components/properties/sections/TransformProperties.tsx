@@ -18,6 +18,11 @@ import {
   Terminal,
   HelpCircle,
   Repeat,
+  ListFilter,
+  CheckSquare,
+  Globe,
+  Calculator,
+  Clock,
 } from 'lucide-react';
 import { applyStringOperation } from '../../../utils/stringTransform';
 
@@ -32,9 +37,12 @@ type OperationCategory =
   | 'casing'
   | 'replace_pad'
   | 'split_join'
-  | 'numbers_currency'
-  | 'data_objects'
-  | 'web_dates';
+  | 'arrays_lists'
+  | 'dates_time'
+  | 'boolean_logic'
+  | 'urls_links'
+  | 'numbers_math'
+  | 'data_objects';
 
 interface OperationDef {
   id: string;
@@ -88,31 +96,65 @@ const OPERATIONS: OperationDef[] = [
   { id: 'join', label: 'Join Array to String', description: 'Combine array elements into a single delimited text string', category: 'split_join', example: '["a", "b", "c"] join ", " → "a, b, c"' },
   { id: 'count', label: 'Count (Chars, Words, Lines, Occurrences)', description: 'Calculate total length, word count, line count, or matches', category: 'split_join', example: '"Word count test" → 3 words' },
 
-  // Numbers & Currency
-  { id: 'cleanPrice', label: 'Clean Price / Extract Number', description: 'Extract numeric value from currency strings like $1,299.99', category: 'numbers_currency', example: '"$1,299.99 USD" → "1299.99"' },
-  { id: 'formatCurrency', label: 'Format as Currency', description: 'Format number into clean currency with symbol and decimal formatting', category: 'numbers_currency', example: '1299.99 → "$1,299.99"' },
-  { id: 'roundNumber', label: 'Round / Floor / Ceil Number', description: 'Round numeric value to specified decimal precision', category: 'numbers_currency', example: '3.14159 round 2 → 3.14' },
-  { id: 'parseNumber', label: 'Extract / Parse Raw Number', description: 'Strip all non-numeric characters and parse as float/integer', category: 'numbers_currency', example: '"Score: 98.5%" → 98.5' },
+  // Arrays & Lists (NEW)
+  { id: 'array_deduplicate', label: 'Deduplicate / Unique List', description: 'Remove duplicate rows, URLs, or objects by unique property or value', category: 'arrays_lists', example: '["a", "b", "a"] → ["a", "b"]' },
+  { id: 'array_filter', label: 'Filter List by Condition', description: 'Keep items where price < 50 or in_stock == true', category: 'arrays_lists', example: 'items where price < 50' },
+  { id: 'array_sort', label: 'Sort List (Asc / Desc)', description: 'Sort list alphabetically, numerically, or by object key', category: 'arrays_lists', example: '[3, 1, 2] → [1, 2, 3]' },
+  { id: 'array_chunk', label: 'Chunk into Batches of N', description: 'Split list of 100 items into batches of 10 for pagination or rate limits', category: 'arrays_lists', example: '[1, 2, 3, 4] batch 2 → [[1, 2], [3, 4]]' },
+  { id: 'array_take', label: 'Take First / Last N Items', description: 'Extract only the first N or last N items from array', category: 'arrays_lists', example: '[1, 2, 3, 4] take 2 → [1, 2]' },
+  { id: 'array_drop', label: 'Drop First / Last N Items', description: 'Remove first N or last N items from array', category: 'arrays_lists', example: '[1, 2, 3, 4] drop 2 → [3, 4]' },
+  { id: 'array_flatten', label: 'Flatten Nested Arrays', description: 'Merge nested arrays [[1, 2], [3]] into [1, 2, 3]', category: 'arrays_lists', example: '[[1, 2], [3]] → [1, 2, 3]' },
+
+  // Dates & Timestamps (NEW)
+  { id: 'date_math', label: 'Date Math (+7 days, -2 hours)', description: 'Add/subtract days, hours, minutes (+7 days, -1 month)', category: 'dates_time', example: '"now" + 7 days → "2026-10-14..."' },
+  { id: 'date_relative_parse', label: 'Relative Time Parser', description: 'Convert "2 hours ago" or "yesterday" into standard ISO format', category: 'dates_time', example: '"2 hours ago" → ISO timestamp' },
+  { id: 'date_diff', label: 'Date Difference', description: 'Calculate difference between two dates in days, hours, or minutes', category: 'dates_time', example: 'date1 - date2 in days → 5' },
+  { id: 'date_format_mask', label: 'Format Mask (YYYY-MM-DD)', description: 'Format date with mask like YYYY-MM-DD, DD/MM/YYYY, hh:mm A', category: 'dates_time', example: '"2026-10-07" → "07/10/2026"' },
+  { id: 'date_timezone', label: 'Timezone Conversion', description: 'Convert UTC timestamp to local browser or target timezone', category: 'dates_time', example: '"2026-10-07T12:00:00Z" → "America/New_York"' },
+  { id: 'formatDate', label: 'Legacy Date Formatter', description: 'Parse relative date or date string into ISO Date or Timestamp', category: 'dates_time', example: '"2 hours ago" → "2024-05-18"' },
+
+  // Booleans & Logic (NEW)
+  { id: 'is_empty', label: 'Is Empty Check', description: 'Test if string, array, or object has no data (null, empty string, [])', category: 'boolean_logic', example: '"" or [] → true' },
+  { id: 'is_not_empty', label: 'Is Not Empty Check', description: 'Test if string, array, or object has data', category: 'boolean_logic', example: '"hello" → true' },
+  { id: 'boolean_not', label: 'Logical NOT / Invert', description: 'Flip boolean flag (true → false, false → true)', category: 'boolean_logic', example: 'true → false' },
+  { id: 'boolean_compare', label: 'Compare Values (==, !=, <, >, includes)', description: 'Compare input with value using comparison operator', category: 'boolean_logic', example: 'price < 50 → true' },
+  { id: 'boolean_coerce', label: 'Truthy / Falsy Coercion', description: 'Convert string "true" / "0" / "" to genuine boolean', category: 'boolean_logic', example: '"true" → true, "0" → false' },
+
+  // URLs & Links (NEW)
+  { id: 'url_extract_param', label: 'Extract Query Parameter', description: 'Get specific query value like ?v=dQw4w9WgXcQ or ?id=123', category: 'urls_links', example: '"?v=dQw4w9WgXcQ" param "v" → "dQw4w9WgXcQ"' },
+  { id: 'url_extract_domain', label: 'Extract Domain / Hostname', description: 'https://sub.domain.com/path → sub.domain.com', category: 'urls_links', example: '"https://sub.domain.com/path" → "sub.domain.com"' },
+  { id: 'url_extract_path', label: 'Extract Pathname', description: 'Extract pathname from URL: /products/electronics/item-1', category: 'urls_links', example: '"https://example.com/item" → "/item"' },
+  { id: 'url_build_query', label: 'Build Query String', description: 'Convert { search: "laptop", page: 2 } into ?search=laptop&page=2', category: 'urls_links', example: '{ search: "laptop" } → "?search=laptop"' },
+  { id: 'normalizeUrl', label: 'Normalize URL (Prepend Base / Strip Tracking)', description: 'Prepend domain prefix to relative URLs and strip tracking parameters', category: 'urls_links', example: '"/dp/B08X" → "https://amazon.com/dp/B08X"' },
+
+  // Numbers & Math (NEW)
+  { id: 'math_expression', label: 'Math Expression ((a * b) + c)', description: 'Safe arithmetic calculation like (x * 1.2) + 5 or percentage discount', category: 'numbers_math', example: '(x * 1.2) + 5' },
+  { id: 'math_clamp', label: 'Clamp Number [min, max]', description: 'Restrict number between min and max boundaries', category: 'numbers_math', example: 'clamp(150, 0, 100) → 100' },
+  { id: 'math_random', label: 'Random Number in Range', description: 'Generate random number between min and max for dynamic delays', category: 'numbers_math', example: 'random(1000, 5000)' },
+  { id: 'math_aggregate', label: 'Aggregate (Sum / Avg / Min / Max)', description: 'Aggregate over an array of numbers or object properties', category: 'numbers_math', example: '[10, 20, 30] avg → 20' },
+  { id: 'cleanPrice', label: 'Clean Price / Extract Number', description: 'Extract numeric value from currency strings like $1,299.99', category: 'numbers_math', example: '"$1,299.99 USD" → "1299.99"' },
+  { id: 'formatCurrency', label: 'Format as Currency', description: 'Format number into clean currency with symbol and decimal formatting', category: 'numbers_math', example: '1299.99 → "$1,299.99"' },
+  { id: 'roundNumber', label: 'Round / Floor / Ceil Number', description: 'Round numeric value to specified decimal precision', category: 'numbers_math', example: '3.14159 round 2 → 3.14' },
+  { id: 'parseNumber', label: 'Extract / Parse Raw Number', description: 'Strip all non-numeric characters and parse as float/integer', category: 'numbers_math', example: '"Score: 98.5%" → 98.5' },
 
   // Data & Objects
   { id: 'parseJSON', label: 'Parse JSON String to Object', description: 'Parse JSON string into a structured JavaScript object', category: 'data_objects', example: '\'{"id": 1}\' → { id: 1 }' },
   { id: 'stringifyJSON', label: 'Convert Object to JSON String', description: 'Serialize object or array into pretty-printed JSON string', category: 'data_objects', example: '{ id: 1 } → \'{"id": 1}\'' },
   { id: 'defaultFallback', label: 'Fallback Value if Empty', description: 'Return fallback value if input is null, undefined, or empty string', category: 'data_objects', example: '"" fallback "N/A" → "N/A"' },
-
-  // Web & Dates
-  { id: 'normalizeUrl', label: 'Normalize URL (Prepend Base / Strip Tracking)', description: 'Prepend domain prefix to relative URLs and strip tracking query parameters', category: 'web_dates', example: '"/dp/B08X" → "https://amazon.com/dp/B08X"' },
-  { id: 'formatDate', label: 'Format Date / Timestamp', description: 'Parse relative date or date string into ISO Date or Timestamp', category: 'web_dates', example: '"2 hours ago" → "2024-05-18"' },
 ];
 
 const CATEGORY_TABS: { id: OperationCategory; label: string; icon: React.FC<{ className?: string }> }[] = [
+  { id: 'arrays_lists', label: 'Arrays & Lists', icon: ListFilter },
   { id: 'slice_extract', label: 'Slice & Extract', icon: Scissors },
   { id: 'strip_clean', label: 'Strip & Clean', icon: Sparkles },
   { id: 'casing', label: 'Case & Format', icon: Type },
   { id: 'replace_pad', label: 'Replace & Pad', icon: SlidersHorizontal },
   { id: 'split_join', label: 'Split & Join', icon: Layers },
-  { id: 'numbers_currency', label: 'Numbers & Currency', icon: DollarSign },
+  { id: 'numbers_math', label: 'Numbers & Math', icon: Calculator },
+  { id: 'dates_time', label: 'Dates & Time', icon: Calendar },
+  { id: 'boolean_logic', label: 'Booleans & Logic', icon: CheckSquare },
+  { id: 'urls_links', label: 'URLs & Links', icon: Globe },
   { id: 'data_objects', label: 'Data & JSON', icon: Braces },
-  { id: 'web_dates', label: 'Web & Dates', icon: Calendar },
 ];
 
 export const TransformProperties: React.FC<TransformPropertiesProps> = ({
@@ -137,6 +179,20 @@ export const TransformProperties: React.FC<TransformPropertiesProps> = ({
     if (currentOp === 'slice') return 'Hello World 2024';
     if (currentOp === 'remove_start' || currentOp === 'remove_end') return 'PREFIX_User_12345_SUFFIX';
     if (currentOp === 'substring_between') return 'Item SKU: (SKU-99482) - In Stock';
+    if (currentOp.startsWith('array_') || currentOp === 'math_aggregate') {
+      return '[{"name":"Laptop","price":999},{"name":"Mouse","price":25},{"name":"Keyboard","price":75}]';
+    }
+    if (currentOp === 'date_math') return '2026-10-07';
+    if (currentOp === 'date_relative_parse') return '2 hours ago';
+    if (currentOp === 'date_diff') return '2026-10-15';
+    if (currentOp === 'date_format_mask') return '2026-10-07T14:30:00Z';
+    if (currentOp === 'url_extract_param' || currentOp === 'url_extract_domain' || currentOp === 'url_extract_path') {
+      return 'https://www.example.com/products/item-1?v=dQw4w9WgXcQ&page=2';
+    }
+    if (currentOp === 'url_build_query') return '{"search":"laptop","page":2}';
+    if (currentOp === 'math_expression' || currentOp === 'math_clamp') return '150';
+    if (currentOp === 'math_random') return '100';
+    if (currentOp.startsWith('boolean_') || currentOp.startsWith('is_')) return 'true';
     return 'The quick brown fox jumps over the lazy dog (2024)';
   });
 
@@ -167,6 +223,40 @@ export const TransformProperties: React.FC<TransformPropertiesProps> = ({
         priceMode: props.priceMode,
         field: props.field,
         fallbackValue: props.fallbackValue,
+        // Arrays & Lists
+        key: props.key,
+        filterExpr: props.filterExpr || props.condition,
+        condition: props.condition,
+        operator: props.operator,
+        filterValue: props.filterValue !== undefined ? props.filterValue : props.value,
+        value: props.value,
+        sortKey: props.sortKey,
+        sortOrder: props.sortOrder,
+        sortType: props.sortType,
+        chunkSize: props.chunkSize !== undefined ? Number(props.chunkSize) : undefined,
+        takeMode: props.takeMode,
+        dropMode: props.dropMode,
+        deep: props.deep,
+        // Dates & Timestamps
+        dateMathExpr: props.dateMathExpr || props.expression,
+        dateOffsetValue: props.dateOffsetValue,
+        dateOffsetUnit: props.dateOffsetUnit,
+        compareDate: props.compareDate,
+        diffUnit: props.diffUnit,
+        formatMask: props.formatMask,
+        targetTimezone: props.targetTimezone,
+        // Booleans & Logic
+        compareValue: props.compareValue !== undefined ? props.compareValue : props.value,
+        // URLs & Links
+        paramName: props.paramName || props.param,
+        stripWww: props.stripWww,
+        includeQuestionMark: props.includeQuestionMark,
+        // Numbers & Math
+        expression: props.expression,
+        min: props.min !== undefined ? Number(props.min) : undefined,
+        max: props.max !== undefined ? Number(props.max) : undefined,
+        integer: props.integer,
+        aggregateType: props.aggregateType,
       });
 
       return {
@@ -1053,6 +1143,552 @@ export const TransformProperties: React.FC<TransformPropertiesProps> = ({
               <option value="iso_datetime">ISO DateTime (YYYY-MM-DDTHH:mm:ssZ)</option>
               <option value="timestamp">Timestamp in milliseconds</option>
             </select>
+          </div>
+        )}
+
+        {/* --- Arrays & Lists Controls --- */}
+        {currentOp === 'array_deduplicate' && (
+          <div className="space-y-2">
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">
+              Deduplicate by Property Key (Optional for primitive arrays)
+            </label>
+            <input
+              type="text"
+              value={props.key || props.field || ''}
+              onChange={(e) => onPropChange('key', e.target.value)}
+              placeholder="e.g. url, id, or email (leave blank to deduplicate whole items)"
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+            />
+            <div className="flex gap-1">
+              <span className="text-[10px] text-gray-500 py-0.5">Common keys:</span>
+              {['url', 'id', 'link', 'sku', 'email', 'name'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => onPropChange('key', k)}
+                  className="px-1.5 py-0.5 rounded bg-[#141a29] text-indigo-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'array_filter' && (
+          <div className="space-y-2.5">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-300">
+                  Filter Condition Expression
+                </label>
+                <span className="text-[9px] text-gray-500">e.g. price &lt; 50 or in_stock == true</span>
+              </div>
+              <input
+                type="text"
+                value={props.filterExpr || props.condition || ''}
+                onChange={(e) => {
+                  onPropChange('filterExpr', e.target.value);
+                  onPropChange('condition', e.target.value);
+                }}
+                placeholder="e.g. price < 50, in_stock == true, stock > 0"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-indigo-500/40 focus:border-indigo-400 outline-none font-mono text-xs"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-400 mb-1">Condition Presets:</div>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  'price < 50',
+                  'in_stock == true',
+                  'stock > 0',
+                  'rating >= 4.0',
+                  'status == "active"',
+                  'category == "deals"',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      onPropChange('filterExpr', preset);
+                      onPropChange('condition', preset);
+                    }}
+                    className="px-2 py-1 rounded bg-[#141a29] text-indigo-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'array_sort' && (
+          <div className="space-y-2.5">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Property Key to Sort By (Leave blank for primitive values)
+              </label>
+              <input
+                type="text"
+                value={props.sortKey || props.field || ''}
+                onChange={(e) => onPropChange('sortKey', e.target.value)}
+                placeholder="e.g. price, title, timestamp"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Direction</label>
+                <select
+                  value={props.sortOrder || 'asc'}
+                  onChange={(e) => onPropChange('sortOrder', e.target.value)}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                >
+                  <option value="asc">Ascending (A → Z, 0 → 9)</option>
+                  <option value="desc">Descending (Z → A, 9 → 0)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Sort Type</label>
+                <select
+                  value={props.sortType || 'auto'}
+                  onChange={(e) => onPropChange('sortType', e.target.value)}
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+                >
+                  <option value="auto">Auto (Detect Number / String)</option>
+                  <option value="numeric">Numeric (1, 2, 10)</option>
+                  <option value="alphabetical">Alphabetical</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'array_chunk' && (
+          <div className="space-y-2">
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">
+              Batch / Chunk Size (Items per group)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={props.chunkSize ?? props.count ?? 10}
+                onChange={(e) => onPropChange('chunkSize', Math.max(1, Number(e.target.value)))}
+                className="w-24 bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+              />
+              <div className="flex gap-1">
+                {[5, 10, 20, 25, 50, 100].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onPropChange('chunkSize', s)}
+                    className="px-2 py-1 rounded bg-[#141a29] text-gray-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-500">
+              Splits a list of items into sub-arrays for pagination or batch API requests.
+            </p>
+          </div>
+        )}
+
+        {(currentOp === 'array_take' || currentOp === 'array_drop') && (
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-medium text-gray-300">
+                Number of Items to {currentOp === 'array_take' ? 'Take' : 'Drop'}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={props.count ?? 1}
+                onChange={(e) => onPropChange('count', Math.max(0, Number(e.target.value)))}
+                className="w-20 bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-gray-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="takeDropMode"
+                  checked={props.fromEnd !== true && props.takeMode !== 'last' && props.dropMode !== 'last'}
+                  onChange={() => {
+                    onPropChange('fromEnd', false);
+                    onPropChange('takeMode', 'first');
+                    onPropChange('dropMode', 'first');
+                  }}
+                  className="text-indigo-600"
+                />
+                <span className="text-[10px]">From Start (First N elements)</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-gray-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="takeDropMode"
+                  checked={props.fromEnd === true || props.takeMode === 'last' || props.dropMode === 'last'}
+                  onChange={() => {
+                    onPropChange('fromEnd', true);
+                    onPropChange('takeMode', 'last');
+                    onPropChange('dropMode', 'last');
+                  }}
+                  className="text-indigo-600"
+                />
+                <span className="text-[10px]">From End (Last N elements)</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'array_flatten' && (
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.deep === true}
+              onChange={(e) => onPropChange('deep', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+            />
+            <span className="text-[10px]">Deep Flatten (Recursively flatten all nested arrays)</span>
+          </label>
+        )}
+
+        {/* --- Dates & Timestamps Controls --- */}
+        {currentOp === 'date_math' && (
+          <div className="space-y-2.5">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Date Math Expression (+7 days, -2 hours, +30 mins, -1 month)
+              </label>
+              <input
+                type="text"
+                value={props.dateMathExpr ?? '+7 days'}
+                onChange={(e) => onPropChange('dateMathExpr', e.target.value)}
+                placeholder="e.g. +7 days, -2 hours, +30 mins"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-indigo-500/40 focus:border-indigo-400 outline-none font-mono text-xs"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {['+7 days', '-2 hours', '+30 mins', '+1 month', '-1 day', '+1 year'].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => onPropChange('dateMathExpr', preset)}
+                  className="px-2 py-1 rounded bg-[#141a29] text-indigo-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'date_relative_parse' && (
+          <div className="p-2.5 rounded-lg bg-indigo-950/20 border border-indigo-500/20 text-[10px] text-gray-300 space-y-1">
+            <p className="font-semibold text-indigo-300">Supported Relative Expressions:</p>
+            <p>• "2 hours ago", "yesterday", "tomorrow", "3 days ago", "10 mins ago", "in 5 days", "just now"</p>
+            <p className="text-gray-400">Converts natural scraped timestamps into standardized ISO strings.</p>
+          </div>
+        )}
+
+        {currentOp === 'date_diff' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Compare Date</label>
+              <input
+                type="text"
+                value={props.compareDate || ''}
+                onChange={(e) => onPropChange('compareDate', e.target.value)}
+                placeholder="e.g. 2026-10-15 or now"
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Difference Unit</label>
+              <select
+                value={props.diffUnit || 'days'}
+                onChange={(e) => onPropChange('diffUnit', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="days">Days</option>
+                <option value="hours">Hours</option>
+                <option value="minutes">Minutes</option>
+                <option value="seconds">Seconds</option>
+                <option value="weeks">Weeks</option>
+                <option value="months">Months</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'date_format_mask' && (
+          <div className="space-y-2">
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">Format Mask</label>
+            <input
+              type="text"
+              value={props.formatMask ?? 'YYYY-MM-DD'}
+              onChange={(e) => onPropChange('formatMask', e.target.value)}
+              placeholder="e.g. YYYY-MM-DD or DD/MM/YYYY hh:mm A"
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+            />
+            <div className="flex flex-wrap gap-1">
+              {[
+                'YYYY-MM-DD',
+                'DD/MM/YYYY',
+                'MM/DD/YYYY',
+                'YYYY-MM-DD HH:mm:ss',
+                'hh:mm A',
+                'MMMM D, YYYY',
+              ].map((mask) => (
+                <button
+                  key={mask}
+                  type="button"
+                  onClick={() => onPropChange('formatMask', mask)}
+                  className="px-1.5 py-0.5 rounded bg-[#141a29] text-gray-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                >
+                  {mask}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'date_timezone' && (
+          <div>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">Target Timezone</label>
+            <select
+              value={props.targetTimezone || 'UTC'}
+              onChange={(e) => onPropChange('targetTimezone', e.target.value)}
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
+            >
+              <option value="UTC">UTC (Universal Time Coordinated)</option>
+              <option value="local">Local Browser Timezone</option>
+              <option value="America/New_York">America/New_York (Eastern)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
+              <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+              <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+            </select>
+          </div>
+        )}
+
+        {/* --- Booleans & Logic Controls --- */}
+        {currentOp === 'boolean_compare' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Operator</label>
+              <select
+                value={props.operator || '=='}
+                onChange={(e) => onPropChange('operator', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              >
+                <option value="==">Equal (==)</option>
+                <option value="!=">Not Equal (!=)</option>
+                <option value="<">Less Than (&lt;)</option>
+                <option value="<=">Less Than or Equal (&lt;=)</option>
+                <option value=">">Greater Than (&gt;)</option>
+                <option value=">=">Greater Than or Equal (&gt;=)</option>
+                <option value="contains">Contains (substring)</option>
+                <option value="starts_with">Starts With</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Compare With</label>
+              <input
+                type="text"
+                value={props.compareValue ?? props.value ?? ''}
+                onChange={(e) => {
+                  onPropChange('compareValue', e.target.value);
+                  onPropChange('value', e.target.value);
+                }}
+                placeholder="Target value"
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* --- URLs & Links Controls --- */}
+        {currentOp === 'url_extract_param' && (
+          <div className="space-y-2">
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">
+              Query Parameter Name
+            </label>
+            <input
+              type="text"
+              value={props.paramName || props.param || 'v'}
+              onChange={(e) => {
+                onPropChange('paramName', e.target.value);
+                onPropChange('param', e.target.value);
+              }}
+              placeholder="e.g. v, id, ref, page"
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none font-mono text-xs"
+            />
+            <div className="flex gap-1">
+              <span className="text-[10px] text-gray-500 py-0.5">Presets:</span>
+              {['v', 'id', 'ref', 'page', 'search', 'token'].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    onPropChange('paramName', p);
+                    onPropChange('param', p);
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-[#141a29] text-indigo-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                >
+                  ?{p}=
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'url_extract_domain' && (
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.stripWww === true}
+              onChange={(e) => onPropChange('stripWww', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+            />
+            <span className="text-[10px]">Strip leading "www." (e.g. www.domain.com → domain.com)</span>
+          </label>
+        )}
+
+        {currentOp === 'url_build_query' && (
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.includeQuestionMark !== false}
+              onChange={(e) => onPropChange('includeQuestionMark', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+            />
+            <span className="text-[10px]">Include leading '?' (e.g. ?search=laptop&page=2)</span>
+          </label>
+        )}
+
+        {/* --- Numbers & Math Controls --- */}
+        {currentOp === 'math_expression' && (
+          <div className="space-y-2.5">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">
+                Math Expression (use x or val for input value)
+              </label>
+              <input
+                type="text"
+                value={props.expression ?? '(x * 1.15)'}
+                onChange={(e) => onPropChange('expression', e.target.value)}
+                placeholder="e.g. (x * 1.15) + 5 or (a * b) + c"
+                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-indigo-500/40 focus:border-indigo-400 outline-none font-mono text-xs"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { label: '+15% Tax (x * 1.15)', expr: 'x * 1.15' },
+                { label: '-20% Off (x * 0.8)', expr: 'x * 0.8' },
+                { label: 'Round (round(x))', expr: 'round(x)' },
+                { label: 'C to F ((x * 9/5) + 32)', expr: '(x * 9/5) + 32' },
+              ].map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => onPropChange('expression', p.expr)}
+                  className="px-2 py-1 rounded bg-[#141a29] text-indigo-300 hover:text-white border border-[#222d42] text-[10px] font-mono"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'math_clamp' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Minimum Bound</label>
+              <input
+                type="number"
+                value={props.min ?? 0}
+                onChange={(e) => onPropChange('min', Number(e.target.value))}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Maximum Bound</label>
+              <input
+                type="number"
+                value={props.max ?? 100}
+                onChange={(e) => onPropChange('max', Number(e.target.value))}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {currentOp === 'math_random' && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Min Value</label>
+                <input
+                  type="number"
+                  value={props.min ?? 1000}
+                  onChange={(e) => onPropChange('min', Number(e.target.value))}
+                  placeholder="1000"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-gray-400 mb-1">Max Value</label>
+                <input
+                  type="number"
+                  value={props.max ?? 5000}
+                  onChange={(e) => onPropChange('max', Number(e.target.value))}
+                  placeholder="5000"
+                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.integer !== false}
+                onChange={(e) => onPropChange('integer', e.target.checked)}
+                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+              />
+              <span className="text-[10px]">Integer only (whole numbers for delays)</span>
+            </label>
+          </div>
+        )}
+
+        {currentOp === 'math_aggregate' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Aggregate Type</label>
+              <select
+                value={props.aggregateType || 'sum'}
+                onChange={(e) => onPropChange('aggregateType', e.target.value)}
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs"
+              >
+                <option value="sum">Sum (Total)</option>
+                <option value="average">Average (Mean)</option>
+                <option value="min">Minimum</option>
+                <option value="max">Maximum</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-gray-400 mb-1">Property Key (Optional)</label>
+              <input
+                type="text"
+                value={props.field || ''}
+                onChange={(e) => onPropChange('field', e.target.value)}
+                placeholder="e.g. price, total"
+                className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
+              />
+            </div>
           </div>
         )}
       </div>

@@ -285,5 +285,268 @@ describe('String Transformations & Slice Notation', () => {
       expect(res.success).toBe(true);
       expect(mockCtx.variables.orderNum).toBe('99482');
     });
+
+    it('executes array filter via executeTransform', async () => {
+      mockCtx.variables.products = [
+        { title: 'Item A', price: 29.99, in_stock: true },
+        { title: 'Item B', price: 79.99, in_stock: true },
+        { title: 'Item C', price: 15.0, in_stock: false },
+      ];
+
+      const node: WorkflowNode = {
+        id: 'node_filter',
+        type: 'transform',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Filter Cheap',
+          type: 'transform',
+          properties: {
+            input: '{{products}}',
+            operation: 'array_filter',
+            filterExpr: 'price < 50',
+            outputVariable: 'affordableItems',
+          },
+        },
+      };
+
+      const res = await executeTransform(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(mockCtx.variables.affordableItems).toHaveLength(2);
+      expect(mockCtx.variables.affordableItems[0].title).toBe('Item A');
+      expect(mockCtx.variables.affordableItems[1].title).toBe('Item C');
+    });
+
+    it('executes math expression via executeTransform', async () => {
+      mockCtx.variables.basePrice = 100;
+      const node: WorkflowNode = {
+        id: 'node_math',
+        type: 'transform',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Calculate Total',
+          type: 'transform',
+          properties: {
+            input: '{{basePrice}}',
+            operation: 'math_expression',
+            expression: '(x * 1.2) + 5',
+            outputVariable: 'totalWithTaxAndShipping',
+          },
+        },
+      };
+
+      const res = await executeTransform(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(mockCtx.variables.totalWithTaxAndShipping).toBe(125);
+    });
+
+    it('executes URL query param extraction via executeTransform', async () => {
+      mockCtx.variables.targetUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s';
+      const node: WorkflowNode = {
+        id: 'node_url',
+        type: 'transform',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Get Video ID',
+          type: 'transform',
+          properties: {
+            input: '{{targetUrl}}',
+            operation: 'url_extract_param',
+            paramName: 'v',
+            outputVariable: 'videoId',
+          },
+        },
+      };
+
+      const res = await executeTransform(node, mockCtx);
+      expect(res.success).toBe(true);
+      expect(mockCtx.variables.videoId).toBe('dQw4w9WgXcQ');
+    });
+  });
+
+  describe('Arrays & Lists Operations', () => {
+    it('deduplicates primitive arrays and object arrays by key', () => {
+      const urls = ['https://a.com', 'https://b.com', 'https://a.com', 'https://c.com'];
+      expect(applyStringOperation(urls, 'array_deduplicate')).toEqual([
+        'https://a.com',
+        'https://b.com',
+        'https://c.com',
+      ]);
+
+      const items = [
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Banana' },
+        { id: 1, name: 'Apple Copy' },
+      ];
+      expect(applyStringOperation(items, 'array_deduplicate', { key: 'id' })).toEqual([
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Banana' },
+      ]);
+    });
+
+    it('filters arrays by condition string', () => {
+      const products = [
+        { name: 'Shirt', price: 25, in_stock: true },
+        { name: 'Jacket', price: 120, in_stock: true },
+        { name: 'Hat', price: 15, in_stock: false },
+      ];
+
+      const underFifty = applyStringOperation(products, 'array_filter', { filterExpr: 'price < 50' });
+      expect(underFifty.map((p: any) => p.name)).toEqual(['Shirt', 'Hat']);
+
+      const inStock = applyStringOperation(products, 'array_filter', { filterExpr: 'in_stock == true' });
+      expect(inStock.map((p: any) => p.name)).toEqual(['Shirt', 'Jacket']);
+    });
+
+    it('sorts arrays ascending and descending by property', () => {
+      const items = [{ price: 99 }, { price: 15 }, { price: 45 }];
+      const asc = applyStringOperation(items, 'array_sort', { sortKey: 'price', sortOrder: 'asc' });
+      expect(asc.map((i: any) => i.price)).toEqual([15, 45, 99]);
+
+      const desc = applyStringOperation(items, 'array_sort', { sortKey: 'price', sortOrder: 'desc' });
+      expect(desc.map((i: any) => i.price)).toEqual([99, 45, 15]);
+    });
+
+    it('chunks array into batches of N', () => {
+      const list = [1, 2, 3, 4, 5, 6, 7];
+      expect(applyStringOperation(list, 'array_chunk', { chunkSize: 3 })).toEqual([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7],
+      ]);
+    });
+
+    it('takes and drops first N and last N items', () => {
+      const list = ['A', 'B', 'C', 'D', 'E'];
+      expect(applyStringOperation(list, 'array_take', { count: 2 })).toEqual(['A', 'B']);
+      expect(applyStringOperation(list, 'array_take', { count: 2, fromEnd: true })).toEqual(['D', 'E']);
+      expect(applyStringOperation(list, 'array_drop', { count: 2 })).toEqual(['C', 'D', 'E']);
+      expect(applyStringOperation(list, 'array_drop', { count: 2, fromEnd: true })).toEqual(['A', 'B', 'C']);
+    });
+
+    it('flattens nested arrays', () => {
+      const nested = [[1, 2], [3], [4, [5, 6]]];
+      expect(applyStringOperation(nested, 'array_flatten')).toEqual([1, 2, 3, 4, [5, 6]]);
+      expect(applyStringOperation(nested, 'array_flatten', { deep: true })).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+  });
+
+  describe('Dates & Timestamps Operations', () => {
+    it('performs date math (+7 days, -2 hours)', () => {
+      const base = '2026-01-10T12:00:00.000Z';
+      const plus7 = applyStringOperation(base, 'date_math', { dateMathExpr: '+7 days' });
+      expect(new Date(plus7).getUTCDate()).toBe(17);
+
+      const minus2Hours = applyStringOperation(base, 'date_math', { dateMathExpr: '-2 hours' });
+      expect(new Date(minus2Hours).getUTCHours()).toBe(10);
+    });
+
+    it('parses relative time like "2 hours ago" or "yesterday"', () => {
+      const res = applyStringOperation('2 hours ago', 'date_relative_parse');
+      expect(typeof res).toBe('string');
+      expect(new Date(res).getTime()).toBeLessThan(Date.now());
+      expect(Date.now() - new Date(res).getTime()).toBeGreaterThan(7000 * 1000);
+
+      const yday = applyStringOperation('yesterday', 'date_relative_parse');
+      expect(Date.now() - new Date(yday).getTime()).toBeGreaterThan(80000 * 1000);
+    });
+
+    it('calculates difference between two dates', () => {
+      const d1 = '2026-01-15T00:00:00Z';
+      const d2 = '2026-01-10T00:00:00Z';
+      expect(applyStringOperation(d1, 'date_diff', { compareDate: d2, diffUnit: 'days' })).toBe(5);
+    });
+
+    it('formats date masks', () => {
+      const date = '2026-05-18T14:30:00Z';
+      const formatted = applyStringOperation(date, 'date_format_mask', { formatMask: 'YYYY-MM-DD' });
+      expect(formatted).toMatch(/^2026-\d{2}-\d{2}$/);
+    });
+  });
+
+  describe('Booleans & Logic Operations', () => {
+    it('checks is_empty and is_not_empty', () => {
+      expect(applyStringOperation('', 'is_empty')).toBe(true);
+      expect(applyStringOperation([], 'is_empty')).toBe(true);
+      expect(applyStringOperation({}, 'is_empty')).toBe(true);
+      expect(applyStringOperation(null, 'is_empty')).toBe(true);
+      expect(applyStringOperation('hello', 'is_empty')).toBe(false);
+      expect(applyStringOperation(['item'], 'is_not_empty')).toBe(true);
+    });
+
+    it('inverts boolean flag', () => {
+      expect(applyStringOperation(true, 'boolean_not')).toBe(false);
+      expect(applyStringOperation(false, 'boolean_not')).toBe(true);
+      expect(applyStringOperation('true', 'boolean_not')).toBe(false);
+      expect(applyStringOperation('false', 'boolean_not')).toBe(true);
+    });
+
+    it('compares values', () => {
+      expect(applyStringOperation(50, 'boolean_compare', { operator: '==', compareValue: 50 })).toBe(true);
+      expect(applyStringOperation(50, 'boolean_compare', { operator: '<', compareValue: 100 })).toBe(true);
+      expect(applyStringOperation(50, 'boolean_compare', { operator: '>', compareValue: 100 })).toBe(false);
+      expect(applyStringOperation('Super Phone Pro', 'boolean_compare', { operator: 'contains', compareValue: 'Phone' })).toBe(true);
+    });
+
+    it('coerces values to genuine boolean', () => {
+      expect(applyStringOperation('true', 'boolean_coerce')).toBe(true);
+      expect(applyStringOperation('1', 'boolean_coerce')).toBe(true);
+      expect(applyStringOperation('false', 'boolean_coerce')).toBe(false);
+      expect(applyStringOperation('0', 'boolean_coerce')).toBe(false);
+      expect(applyStringOperation('', 'boolean_coerce')).toBe(false);
+    });
+  });
+
+  describe('URLs & Links Operations', () => {
+    it('extracts query param from URL', () => {
+      const url = 'https://example.com/watch?v=dQw4w9WgXcQ&page=2';
+      expect(applyStringOperation(url, 'url_extract_param', { paramName: 'v' })).toBe('dQw4w9WgXcQ');
+      expect(applyStringOperation(url, 'url_extract_param', { paramName: 'page' })).toBe('2');
+    });
+
+    it('extracts domain and hostname', () => {
+      expect(applyStringOperation('https://sub.domain.com/path', 'url_extract_domain')).toBe('sub.domain.com');
+      expect(applyStringOperation('https://www.example.com/path', 'url_extract_domain', { stripWww: true })).toBe('example.com');
+    });
+
+    it('extracts pathname', () => {
+      expect(applyStringOperation('https://example.com/products/item-1?ref=promo', 'url_extract_path')).toBe('/products/item-1');
+    });
+
+    it('builds query string from object', () => {
+      const params = { search: 'laptop', page: 2 };
+      expect(applyStringOperation(params, 'url_build_query')).toBe('?search=laptop&page=2');
+    });
+  });
+
+  describe('Numbers & Math Operations', () => {
+    it('evaluates safe math expressions', () => {
+      expect(applyStringOperation('100', 'math_expression', { expression: '(x * 1.2) + 5' })).toBe(125);
+      expect(applyStringOperation(null, 'math_expression', { expression: '(10 * 5) + 3' })).toBe(53);
+      expect(applyStringOperation('50', 'math_expression', { expression: 'x * 0.8' })).toBe(40);
+    });
+
+    it('clamps number between min and max', () => {
+      expect(applyStringOperation(120, 'math_clamp', { min: 0, max: 100 })).toBe(100);
+      expect(applyStringOperation(-15, 'math_clamp', { min: 0, max: 100 })).toBe(0);
+      expect(applyStringOperation(42, 'math_clamp', { min: 0, max: 100 })).toBe(42);
+    });
+
+    it('generates random number in range', () => {
+      const rnd = applyStringOperation(null, 'math_random', { min: 1000, max: 5000 });
+      expect(rnd).toBeGreaterThanOrEqual(1000);
+      expect(rnd).toBeLessThanOrEqual(5000);
+      expect(Number.isInteger(rnd)).toBe(true);
+    });
+
+    it('aggregates numbers (sum, average, min, max)', () => {
+      const nums = [10, 20, 30, 40];
+      expect(applyStringOperation(nums, 'math_aggregate', { aggregateType: 'sum' })).toBe(100);
+      expect(applyStringOperation(nums, 'math_aggregate', { aggregateType: 'average' })).toBe(25);
+      expect(applyStringOperation(nums, 'math_aggregate', { aggregateType: 'min' })).toBe(10);
+      expect(applyStringOperation(nums, 'math_aggregate', { aggregateType: 'max' })).toBe(40);
+
+      const items = [{ price: 50 }, { price: 150 }];
+      expect(applyStringOperation(items, 'math_aggregate', { aggregateType: 'sum', field: 'price' })).toBe(200);
+    });
   });
 });

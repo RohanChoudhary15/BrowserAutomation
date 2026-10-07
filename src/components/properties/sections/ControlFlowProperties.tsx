@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { WorkflowNode } from '../../../types/workflow';
 import {
   GitFork,
@@ -8,17 +8,29 @@ import {
   UserCheck,
   Plus,
   Trash2,
+  ShieldAlert,
+  ShieldCheck,
+  AlertCircle,
+  CheckSquare,
+  Square,
+  Search,
+  Check,
+  Layers,
+  Info,
 } from 'lucide-react';
 
 export interface ControlFlowPropertiesProps {
   selectedNode: WorkflowNode;
   onPropChange: (key: string, value: any) => void;
+  allNodes?: WorkflowNode[];
 }
 
 export const ControlFlowProperties: React.FC<ControlFlowPropertiesProps> = ({
   selectedNode,
   onPropChange,
+  allNodes = [],
 }) => {
+  const [nodeSearch, setNodeSearch] = useState('');
   const props = selectedNode.data.properties || {};
   const nodeType = selectedNode.data.type;
 
@@ -476,6 +488,242 @@ export const ControlFlowProperties: React.FC<ControlFlowPropertiesProps> = ({
           </div>
         </div>
       );
+
+    case 'error_handler':
+    case 'try_catch': {
+      const watchMode = props.watchMode || 'chosen';
+      const watchedIds: string[] = Array.isArray(props.watchedNodeIds) ? props.watchedNodeIds : [];
+
+      // Other workflow nodes that can be monitored (excluding this error handler itself)
+      const otherNodes = allNodes.filter((n) => n.id !== selectedNode.id);
+      const filteredNodes = otherNodes.filter((n) => {
+        if (!nodeSearch.trim()) return true;
+        const q = nodeSearch.toLowerCase();
+        return (
+          (n.data?.label || '').toLowerCase().includes(q) ||
+          (n.data?.type || '').toLowerCase().includes(q)
+        );
+      });
+
+      const handleToggleNode = (nodeId: string) => {
+        let next: string[];
+        if (watchedIds.includes(nodeId)) {
+          next = watchedIds.filter((id) => id !== nodeId);
+        } else {
+          next = [...watchedIds, nodeId];
+        }
+        onPropChange('watchedNodeIds', next);
+      };
+
+      const handleSelectAll = () => {
+        onPropChange('watchedNodeIds', otherNodes.map((n) => n.id));
+      };
+
+      const handleClearAll = () => {
+        onPropChange('watchedNodeIds', []);
+      };
+
+      return (
+        <div className="space-y-4 pt-2 border-t border-[#1c2230]">
+          {/* Header Banner */}
+          <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/20 space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs">
+                <ShieldAlert className="w-4 h-4" />
+                <span>Error Handler (Non-Stop Workflow)</span>
+              </div>
+              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 font-mono border border-amber-500/30">
+                Safe Mode
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              Catches errors from chosen nodes without terminating the workflow. Populates <code className="text-amber-300">&#123;&#123;lastError&#125;&#125;</code> and branches to the Error/Catch handle.
+            </p>
+          </div>
+
+          {/* Watch Mode Selector */}
+          <div>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1.5">Error Interception Mode</label>
+            <div className="grid grid-cols-3 gap-1">
+              {[
+                { id: 'chosen', label: 'Chosen Nodes', desc: 'Watch selected nodes' },
+                { id: 'all', label: 'All Nodes', desc: 'Global safety net' },
+                { id: 'try_branch', label: 'Try Branch', desc: 'Nested try-catch flow' },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => onPropChange('watchMode', m.id)}
+                  className={`py-1.5 px-2 rounded-lg border text-left transition-colors flex flex-col justify-between ${
+                    watchMode === m.id
+                      ? 'bg-amber-600/20 border-amber-500/50 text-amber-300 font-medium'
+                      : 'bg-[#11141c] border-[#1c2230] text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span className="text-[11px] font-medium">{m.label}</span>
+                  <span className="text-[9px] opacity-75">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Chosen Nodes Checklist */}
+          {watchMode === 'chosen' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-medium text-gray-300 flex items-center gap-1.5">
+                  <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Choose Nodes to Protect ({watchedIds.length} of {otherNodes.length})</span>
+                </label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    className="text-[10px] text-amber-400 hover:text-amber-300 transition-colors px-1.5 py-0.5 rounded hover:bg-amber-950/40"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-gray-600">|</span>
+                  <button
+                    type="button"
+                    onClick={handleClearAll}
+                    className="text-[10px] text-gray-400 hover:text-white transition-colors px-1.5 py-0.5 rounded hover:bg-gray-800/40"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              {/* Node Search Filter */}
+              {otherNodes.length > 4 && (
+                <div className="relative">
+                  <Search className="w-3 h-3 text-gray-500 absolute left-2 top-2" />
+                  <input
+                    type="text"
+                    value={nodeSearch}
+                    onChange={(e) => setNodeSearch(e.target.value)}
+                    placeholder="Search workflow nodes..."
+                    className="w-full bg-[#0b0e14] text-white pl-7 pr-2 py-1 rounded border border-[#1f2738] focus:border-amber-500 outline-none text-xs"
+                  />
+                </div>
+              )}
+
+              {/* Node List Checkbox Group */}
+              <div className="max-h-48 overflow-y-auto space-y-1 p-1 bg-[#0b0e14] rounded-lg border border-[#1f2738]">
+                {otherNodes.length === 0 ? (
+                  <div className="p-3 text-center text-[11px] text-gray-500">
+                    No other nodes found on the canvas yet. Add other nodes to protect them.
+                  </div>
+                ) : filteredNodes.length === 0 ? (
+                  <div className="p-2 text-center text-[10px] text-gray-500">
+                    No nodes match "{nodeSearch}"
+                  </div>
+                ) : (
+                  filteredNodes.map((n) => {
+                    const isChecked = watchedIds.includes(n.id);
+                    return (
+                      <label
+                        key={n.id}
+                        className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition-colors text-xs ${
+                          isChecked
+                            ? 'bg-amber-950/40 text-amber-200 border border-amber-500/30'
+                            : 'hover:bg-[#151a24] text-gray-300 border border-transparent'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleNode(n.id)}
+                          className="rounded bg-[#161a24] border-[#232a3b] text-amber-600 focus:ring-0"
+                        />
+                        <div className="flex-1 min-w-0 flex items-center justify-between gap-1.5">
+                          <span className="truncate font-medium text-[11px]">
+                            {n.data?.label || n.data?.type || n.id}
+                          </span>
+                          <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/40 text-gray-400 shrink-0">
+                            {n.data?.type}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Action on Error */}
+          <div>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">When Error Occurs</label>
+            <select
+              value={props.action || 'catch_and_continue'}
+              onChange={(e) => onPropChange('action', e.target.value)}
+              className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-amber-500 outline-none text-xs"
+            >
+              <option value="catch_and_continue">
+                Execute Error Branch + Continue Rest of Workflow
+              </option>
+              <option value="skip_node">
+                Skip Failing Node & Continue Next Node Directly
+              </option>
+              <option value="stop">
+                Execute Error Branch and Stop Execution
+              </option>
+            </select>
+          </div>
+
+          {/* Continue Workflow Checkbox */}
+          <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.continueWorkflow !== false}
+              onChange={(e) => onPropChange('continueWorkflow', e.target.checked)}
+              className="rounded bg-[#161a24] border-[#232a3b] text-amber-600 focus:ring-0"
+            />
+            <span className="text-[11px]">
+              Keep workflow running (never stop execution on caught error)
+            </span>
+          </label>
+
+          {/* Output Variable */}
+          <div>
+            <label className="block text-[11px] font-medium text-gray-400 mb-1">Error Information Variable</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={props.outputVariable || 'lastError'}
+                onChange={(e) => onPropChange('outputVariable', e.target.value)}
+                placeholder="lastError"
+                className="flex-1 bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] focus:border-amber-500 outline-none font-mono text-xs"
+              />
+              <span className="px-2 py-1 rounded bg-amber-950/60 border border-amber-700/40 text-amber-300 text-[10px] font-mono shrink-0 select-all">
+                &#123;&#123;{props.outputVariable || 'lastError'}&#125;&#125;
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              <span className="text-[10px] text-gray-500 py-0.5">Available in expressions:</span>
+              {[
+                `{{${props.outputVariable || 'lastError'}}}`,
+                `{{${props.outputVariable || 'lastError'}.message}}`,
+                `{{${props.outputVariable || 'lastError'}.nodeName}}`,
+                '{{lastErrorMessage}}',
+                '{{hasError}}',
+              ].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(v)}
+                  className="px-1.5 py-0.5 rounded bg-[#1c2230] text-amber-300 border border-amber-500/20 text-[10px] font-mono hover:bg-amber-950/40 transition-colors"
+                  title={`Click to copy ${v}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     default:
       return null;

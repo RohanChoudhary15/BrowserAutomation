@@ -75,6 +75,7 @@ export type NodeType =
   | 'manual_approval'
   | 'async_parallel'
   | 'try_catch'
+  | 'error_handler'
   | 'break'
   | 'continue'
   // Data

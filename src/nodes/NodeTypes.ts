@@ -10,6 +10,7 @@ import { SimpleStorageNode } from './SimpleStorageNode';
 import { SwitchNode } from './SwitchNode';
 import { ScraperNode } from './ScraperNode';
 import { DatasetInputNode } from './DatasetInputNode';
+import { ErrorHandlerNode } from './ErrorHandlerNode';
 
 export const nodeTypes = {
   customNode: BaseNode,
@@ -24,5 +25,6 @@ export const nodeTypes = {
   switchNode: SwitchNode,
   scraperNode: ScraperNode,
   datasetInputNode: DatasetInputNode,
+  errorHandlerNode: ErrorHandlerNode,
 };
 

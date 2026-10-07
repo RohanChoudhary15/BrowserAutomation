@@ -614,8 +614,128 @@ export class WorkflowEngine {
         durationMs,
       });
 
+      // Intercept error if an Error Handler node is watching this node
+      const errorHandlerNode = this.findErrorHandlerForNode(node);
+      if (errorHandlerNode) {
+        await this.handleNodeErrorWithHandler(node, errorHandlerNode, friendly, err, ctx);
+        return; // Handled safely without stopping the workflow!
+      }
+
       if (this.workflow.settings.stopOnError !== false) {
         throw err;
+      }
+    }
+  }
+
+  /**
+   * Finds an active Error Handler (or Try/Catch) node that covers this failing node.
+   */
+  private findErrorHandlerForNode(failingNode: WorkflowNode): WorkflowNode | undefined {
+    return this.workflow.nodes.find((n) => {
+      if (n.id === failingNode.id || n.data.disabled) return false;
+      if (n.data.type !== 'error_handler' && n.data.type !== 'try_catch') return false;
+
+      const props = n.data.properties || {};
+      const watchMode = props.watchMode || props.mode || 'chosen';
+
+      // 1. Watch All Nodes
+      if (watchMode === 'all') {
+        return true;
+      }
+
+      // 2. Watch Chosen Nodes (explicit array of node IDs)
+      if (watchMode === 'chosen' || !watchMode) {
+        const watchedIds = Array.isArray(props.watchedNodeIds) ? props.watchedNodeIds : [];
+        if (watchedIds.includes(failingNode.id)) {
+          return true;
+        }
+      }
+
+      // 3. Try branch: node is connected downstream of this error handler's 'try' handle
+      if (watchMode === 'try_branch') {
+        const tryNodes = this.getNextNodes(n.id, 'try');
+        if (tryNodes.some((tn) => tn.id === failingNode.id)) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+  }
+
+  /**
+   * Handles an intercepted error using the designated Error Handler node.
+   * Sets error payload variables, routes to error/catch branch, and continues workflow.
+   */
+  private async handleNodeErrorWithHandler(
+    failingNode: WorkflowNode,
+    handlerNode: WorkflowNode,
+    friendly: any,
+    rawError: any,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    const props = handlerNode.data.properties || {};
+    const outVar = props.outputVariable || 'lastError';
+    const action = props.action || 'catch_and_continue';
+    const continueWorkflow = props.continueWorkflow !== false;
+
+    const errorPayload = {
+      message: friendly.message || rawError?.message || String(rawError),
+      rawMessage: rawError?.message,
+      nodeId: failingNode.id,
+      nodeName: failingNode.data.label,
+      nodeType: failingNode.data.type,
+      timestamp: Date.now(),
+      time: new Date().toLocaleTimeString(),
+      suggestions: friendly.suggestions || [],
+      selector: friendly.selector,
+    };
+
+    // 1. Expose error variables to context
+    ctx.variables[outVar] = errorPayload;
+    ctx.variables[`${outVar}_message`] = errorPayload.message;
+    ctx.variables[`${outVar}_nodeId`] = errorPayload.nodeId;
+    ctx.variables[`${outVar}_nodeName`] = errorPayload.nodeName;
+    ctx.variables['lastError'] = errorPayload;
+    ctx.variables['lastErrorMessage'] = errorPayload.message;
+    ctx.variables['lastErrorNodeId'] = errorPayload.nodeId;
+    ctx.variables['lastErrorNodeName'] = errorPayload.nodeName;
+    ctx.variables['hasError'] = true;
+
+    // 2. Update Error Handler node state
+    this.updateNodeState(handlerNode.id, {
+      status: 'success',
+      output: errorPayload,
+      dynamicState: {
+        message: `Handled error on "${failingNode.data.label}"`,
+        detail: errorPayload.message,
+        errorNode: failingNode.data.label,
+        lastHandledTime: Date.now(),
+      },
+    });
+
+    // 3. Log user-friendly recovery notice
+    this.log({
+      level: 'warn',
+      nodeId: handlerNode.id,
+      nodeName: handlerNode.data.label,
+      message: `[Error Handler] Caught error from "${failingNode.data.label}": "${errorPayload.message}". Executing error flow without stopping workflow.`,
+    });
+
+    // 4. Execute Error Handler's catch/error branch if connected
+    const catchBranchNodes = [
+      ...this.getNextNodes(handlerNode.id, 'error'),
+      ...this.getNextNodes(handlerNode.id, 'catch'),
+    ];
+    if (catchBranchNodes.length > 0) {
+      await this.proceedToNextNodes(handlerNode, { success: true, output: errorPayload }, catchBranchNodes, ctx);
+    }
+
+    // 5. If continueWorkflow is enabled, proceed to failingNode's next nodes so rest of workflow continues
+    if (continueWorkflow && action !== 'stop') {
+      const failingNextNodes = this.getNextNodes(failingNode.id);
+      if (failingNextNodes.length > 0) {
+        await this.proceedToNextNodes(failingNode, { success: false, output: errorPayload }, failingNextNodes, ctx);
       }
     }
   }

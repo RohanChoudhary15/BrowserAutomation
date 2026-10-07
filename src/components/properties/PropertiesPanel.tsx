@@ -5379,6 +5379,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs font-mono"
                   />
                 </div>
+                <div className="mt-2">
+                  <label className="block text-[10px] font-medium text-gray-400 mb-1">Search Output Format</label>
+                  <select
+                    value={props.searchOutputFormat || 'markdown'}
+                    onChange={(e) => handlePropChange('searchOutputFormat', e.target.value)}
+                    className="w-full bg-[#11141c] text-white p-1.5 rounded border border-[#1c2230] text-xs"
+                  >
+                    <option value="markdown">Markdown Text (Clean, readable search summary)</option>
+                    <option value="array">Structured Array (List of result objects for For Each loop)</option>
+                  </select>
+                </div>
               </div>
             )}
 
@@ -5510,6 +5521,88 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 />
               </div>
             </div>
+
+            {/* Output Variable Configuration */}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-300 mb-1">Save Output to Variable</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={props.outputVariable || 'firecrawlMarkdown'}
+                  onChange={(e) => handlePropChange('outputVariable', e.target.value)}
+                  placeholder="firecrawlMarkdown"
+                  className="flex-1 bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] focus:border-orange-500 outline-none text-xs font-mono"
+                />
+                <span className="px-2 py-1.5 rounded bg-orange-950/60 border border-orange-700/40 text-orange-300 text-[10px] font-mono shrink-0 select-all">
+                  &#123;&#123;{props.outputVariable || 'firecrawlMarkdown'}&#125;&#125;
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                <span className="text-[10px] text-gray-500 py-0.5">Exposed variables:</span>
+                {[
+                  `{{${props.outputVariable || 'firecrawlMarkdown'}}}`,
+                  `{{${props.outputVariable || 'firecrawlMarkdown'}_markdown}}`,
+                  `{{${props.outputVariable || 'firecrawlMarkdown'}_screenshot}}`,
+                  '{{firecrawlScreenshot}}',
+                  ...(props.mode === 'search' ? [`{{${props.outputVariable || 'firecrawlMarkdown'}_results}}`] : []),
+                ].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(v)}
+                    className="px-1.5 py-0.5 rounded bg-[#1c2230] text-orange-300 border border-orange-500/20 text-[10px] font-mono hover:bg-orange-950/40 transition-colors"
+                    title={`Click to copy ${v}`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Screenshot Preview Card */}
+            {(() => {
+              const outVar = props.outputVariable || 'firecrawlMarkdown';
+              const screenshot =
+                runtimeState?.dynamicState?.previewUrl ||
+                variables['firecrawlScreenshot'] ||
+                variables['screenshotUrl'] ||
+                (variables && variables[`${outVar}_screenshot`]);
+              if (!screenshot) return null;
+              return (
+                <div className="p-2.5 rounded-lg bg-[#11141c] border border-orange-500/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-orange-400 flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      Page Screenshot Captured
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(screenshot);
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded bg-orange-900/40 hover:bg-orange-800/50 text-orange-200 border border-orange-500/30 transition-colors"
+                      title="Copy screenshot URL to clipboard"
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                  <div className="rounded-lg overflow-hidden border border-[#242b3d] bg-black/60 max-h-48 flex items-center justify-center group relative">
+                    <img
+                      src={screenshot}
+                      alt="Firecrawl Screenshot"
+                      className="w-full object-contain max-h-48 cursor-pointer"
+                      onClick={() => window.open(screenshot, '_blank')}
+                      title="Click to view full screenshot in new tab"
+                    />
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-mono flex items-center justify-between">
+                    <span>
+                      Accessible via <code className="text-orange-300">&#123;&#123;firecrawlScreenshot&#125;&#125;</code> or <code className="text-orange-300">&#123;&#123;screenshotUrl&#125;&#125;</code>
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Live Scraped Markdown Output Preview */}
             {(runtimeState?.output || (props.outputVariable && variables[props.outputVariable])) && (
@@ -9475,6 +9568,7 @@ Rules:
         <ControlFlowProperties
           selectedNode={selectedNode}
           onPropChange={handlePropChange}
+          allNodes={allNodes || []}
         />
 
         {/* Free Scraper Nodes */}

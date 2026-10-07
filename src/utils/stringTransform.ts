@@ -51,6 +51,45 @@ export interface StringTransformOptions {
   // JSON & Extraction
   field?: string;
   fallbackValue?: any;
+
+  // Arrays & Lists
+  key?: string;
+  filterExpr?: string;
+  condition?: string;
+  operator?: string;
+  filterValue?: any;
+  value?: any;
+  sortKey?: string;
+  sortOrder?: 'asc' | 'desc';
+  sortType?: 'auto' | 'numeric' | 'alphabetical';
+  chunkSize?: number;
+  takeMode?: 'first' | 'last';
+  dropMode?: 'first' | 'last';
+  deep?: boolean;
+
+  // Dates & Timestamps
+  dateMathExpr?: string;
+  dateOffsetValue?: number;
+  dateOffsetUnit?: string;
+  compareDate?: string | number | Date;
+  diffUnit?: string;
+  formatMask?: string;
+  targetTimezone?: string;
+
+  // Booleans & Logic
+  compareValue?: any;
+
+  // URLs & Links
+  paramName?: string;
+  stripWww?: boolean;
+  includeQuestionMark?: boolean;
+
+  // Numbers & Math
+  expression?: string;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  aggregateType?: 'sum' | 'average' | 'avg' | 'min' | 'max';
 }
 
 /**
@@ -359,6 +398,698 @@ export function cleanPrice(
 }
 
 /**
+ * Normalizes any input into an Array.
+ * Handles arrays, JSON strings, comma-separated strings, and single values.
+ */
+export function parseAsArray(input: any): any[] {
+  if (Array.isArray(input)) return [...input];
+  if (input === null || input === undefined) return [];
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Not valid JSON, continue
+      }
+    }
+    if (trimmed.includes('\n')) {
+      return trimmed.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    }
+    if (trimmed.includes(',')) {
+      return trimmed.split(',').map((s) => s.trim());
+    }
+    if (trimmed === '') return [];
+    return [trimmed];
+  }
+  return [input];
+}
+
+/**
+ * Deduplicates items in an array.
+ * If key is provided, deduplicates objects by that key; otherwise deduplicates primitives or JSON representation.
+ */
+export function arrayDeduplicate(arr: any[], key?: string): any[] {
+  const list = parseAsArray(arr);
+  if (!key) {
+    const seen = new Set<string>();
+    return list.filter((item) => {
+      const identifier = item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item);
+      if (seen.has(identifier)) return false;
+      seen.add(identifier);
+      return true;
+    });
+  }
+
+  const seenKeys = new Set<any>();
+  return list.filter((item) => {
+    if (item && typeof item === 'object') {
+      const val = item[key];
+      if (seenKeys.has(val)) return false;
+      seenKeys.add(val);
+      return true;
+    }
+    return true;
+  });
+}
+
+/**
+ * Filters array items based on condition string (e.g. "price < 50", "in_stock == true")
+ * or explicit field, operator, and comparison value.
+ */
+export function arrayFilter(
+  arr: any[],
+  condition?: string,
+  field?: string,
+  operator?: string,
+  filterValue?: any
+): any[] {
+  const list = parseAsArray(arr);
+
+  let condField = field;
+  let condOp = operator;
+  let condVal = filterValue;
+
+  if (condition && typeof condition === 'string' && !condOp) {
+    const trimmed = condition.trim();
+    const match = trimmed.match(
+      /^([\w$.]+)\s*(<=|>=|===|!==|==|!=|<|>|contains|includes|startsWith|endsWith)\s*(.+)$/i
+    );
+    if (match) {
+      condField = match[1].trim();
+      condOp = match[2].trim().toLowerCase();
+      const rawVal = match[3].trim();
+      if (
+        (rawVal.startsWith('"') && rawVal.endsWith('"')) ||
+        (rawVal.startsWith("'") && rawVal.endsWith("'"))
+      ) {
+        condVal = rawVal.slice(1, -1);
+      } else if (rawVal === 'true') {
+        condVal = true;
+      } else if (rawVal === 'false') {
+        condVal = false;
+      } else if (rawVal === 'null') {
+        condVal = null;
+      } else if (!isNaN(Number(rawVal))) {
+        condVal = Number(rawVal);
+      } else {
+        condVal = rawVal;
+      }
+    } else {
+      condField = trimmed;
+      condOp = 'truthy';
+    }
+  }
+
+  const op = (condOp || '==').toLowerCase();
+
+  return list.filter((item) => {
+    let targetVal: any;
+    if (item && typeof item === 'object') {
+      if (condField && condField !== 'item' && condField !== 'self') {
+        const parts = condField.split('.');
+        let curr = item;
+        for (const p of parts) {
+          if (curr === undefined || curr === null) break;
+          curr = curr[p];
+        }
+        targetVal = curr;
+      } else {
+        targetVal = item;
+      }
+    } else {
+      targetVal = item;
+    }
+
+    const compareTo = condVal;
+
+    switch (op) {
+      case '<':
+        return Number(targetVal) < Number(compareTo);
+      case '<=':
+        return Number(targetVal) <= Number(compareTo);
+      case '>':
+        return Number(targetVal) > Number(compareTo);
+      case '>=':
+        return Number(targetVal) >= Number(compareTo);
+      case '==':
+      case '===':
+        return String(targetVal).toLowerCase() === String(compareTo).toLowerCase();
+      case '!=':
+      case '!==':
+        return String(targetVal).toLowerCase() !== String(compareTo).toLowerCase();
+      case 'contains':
+      case 'includes':
+        return String(targetVal).toLowerCase().includes(String(compareTo).toLowerCase());
+      case 'startswith':
+        return String(targetVal).toLowerCase().startsWith(String(compareTo).toLowerCase());
+      case 'endswith':
+        return String(targetVal).toLowerCase().endsWith(String(compareTo).toLowerCase());
+      case 'empty':
+      case 'is_empty':
+        return isEmpty(targetVal);
+      case 'not_empty':
+      case 'is_not_empty':
+        return !isEmpty(targetVal);
+      case 'truthy':
+        return coerceBoolean(targetVal);
+      case 'falsy':
+        return !coerceBoolean(targetVal);
+      default:
+        return String(targetVal) === String(compareTo);
+    }
+  });
+}
+
+/**
+ * Sorts array elements ascending or descending by property or primitive value.
+ */
+export function arraySort(
+  arr: any[],
+  key?: string,
+  order: 'asc' | 'desc' = 'asc',
+  sortType: 'auto' | 'numeric' | 'alphabetical' = 'auto'
+): any[] {
+  const list = parseAsArray(arr);
+  const isDesc = (order || 'asc').toLowerCase() === 'desc';
+
+  return [...list].sort((a, b) => {
+    let valA = a;
+    let valB = b;
+    if (key && typeof a === 'object' && a !== null) valA = a[key];
+    if (key && typeof b === 'object' && b !== null) valB = b[key];
+
+    let result = 0;
+    const isNumA = valA !== '' && valA !== null && !isNaN(Number(valA));
+    const isNumB = valB !== '' && valB !== null && !isNaN(Number(valB));
+
+    if (sortType === 'numeric' || (sortType === 'auto' && isNumA && isNumB)) {
+      result = Number(valA) - Number(valB);
+    } else {
+      result = String(valA ?? '').localeCompare(String(valB ?? ''));
+    }
+
+    return isDesc ? -result : result;
+  });
+}
+
+/**
+ * Splits array into chunks of specified size.
+ */
+export function arrayChunk(arr: any[], size = 10): any[][] {
+  const list = parseAsArray(arr);
+  const chunkSize = Math.max(1, Math.floor(Number(size) || 10));
+  const chunks: any[][] = [];
+  for (let i = 0; i < list.length; i += chunkSize) {
+    chunks.push(list.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+/**
+ * Takes first N or last N array elements.
+ */
+export function arrayTake(arr: any[], count = 1, fromEnd = false): any[] {
+  const list = parseAsArray(arr);
+  const n = Math.max(0, Math.floor(Number(count) || 1));
+  if (fromEnd) {
+    return list.slice(Math.max(0, list.length - n));
+  }
+  return list.slice(0, n);
+}
+
+/**
+ * Drops first N or last N array elements.
+ */
+export function arrayDrop(arr: any[], count = 1, fromEnd = false): any[] {
+  const list = parseAsArray(arr);
+  const n = Math.max(0, Math.floor(Number(count) || 1));
+  if (fromEnd) {
+    return list.slice(0, Math.max(0, list.length - n));
+  }
+  return list.slice(n);
+}
+
+/**
+ * Flattens nested arrays.
+ */
+export function arrayFlatten(arr: any[], deep = false): any[] {
+  const list = parseAsArray(arr);
+  return deep ? list.flat(Infinity) : list.flat(1);
+}
+
+/**
+ * Performs date math (add/subtract days, hours, minutes, etc.)
+ */
+export function dateMath(
+  dateInput: any,
+  offsetExpr?: string,
+  offsetVal?: number,
+  offsetUnit?: string
+): string {
+  let date: Date;
+  if (!dateInput || dateInput === 'now' || dateInput === 'current') {
+    date = new Date();
+  } else {
+    date = new Date(dateInput);
+    if (isNaN(date.getTime())) date = new Date();
+  }
+
+  let amount = 0;
+  let unit = 'days';
+
+  if (offsetExpr && typeof offsetExpr === 'string') {
+    const match = offsetExpr.trim().match(/^([+-]?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
+    if (match) {
+      amount = parseFloat(match[1]);
+      unit = (match[2] || 'days').toLowerCase();
+    }
+  } else if (offsetVal !== undefined) {
+    amount = Number(offsetVal) || 0;
+    unit = (offsetUnit || 'days').toLowerCase();
+  }
+
+  if (unit.startsWith('day')) {
+    date.setDate(date.getDate() + amount);
+  } else if (unit.startsWith('week')) {
+    date.setDate(date.getDate() + amount * 7);
+  } else if (unit.startsWith('hour')) {
+    date.setTime(date.getTime() + amount * 3600 * 1000);
+  } else if (unit.startsWith('min')) {
+    date.setTime(date.getTime() + amount * 60 * 1000);
+  } else if (unit.startsWith('sec')) {
+    date.setTime(date.getTime() + amount * 1000);
+  } else if (unit.startsWith('month')) {
+    date.setMonth(date.getMonth() + Math.round(amount));
+  } else if (unit.startsWith('year')) {
+    date.setFullYear(date.getFullYear() + Math.round(amount));
+  }
+
+  return date.toISOString();
+}
+
+/**
+ * Converts relative human time strings ("2 hours ago", "yesterday", "in 5 days") into ISO format.
+ */
+export function parseRelativeTime(text: string, baseDate?: Date): string {
+  const now = baseDate || new Date();
+  const str = String(text || '').trim().toLowerCase();
+
+  if (!str || str === 'now' || str === 'just now') {
+    return now.toISOString();
+  }
+  if (str === 'yesterday') {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 1);
+    return d.toISOString();
+  }
+  if (str === 'tomorrow') {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString();
+  }
+  if (str === 'today') {
+    return now.toISOString();
+  }
+
+  const agoMatch = str.match(
+    /(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s*ago/
+  );
+  if (agoMatch) {
+    const amount = -parseFloat(agoMatch[1]);
+    const unit = agoMatch[2];
+    return dateMath(now, `${amount} ${unit}`);
+  }
+
+  const inMatch = str.match(
+    /in\s*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)/
+  );
+  if (inMatch) {
+    const amount = parseFloat(inMatch[1]);
+    const unit = inMatch[2];
+    return dateMath(now, `+${amount} ${unit}`);
+  }
+
+  const parsed = new Date(text);
+  return !isNaN(parsed.getTime()) ? parsed.toISOString() : now.toISOString();
+}
+
+/**
+ * Calculates difference between two dates in specified units (days, hours, minutes, seconds).
+ */
+export function dateDifference(date1: any, date2: any, unit: string = 'days'): number {
+  const d1 = new Date(date1 || Date.now());
+  const d2 = new Date(date2 || Date.now());
+  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return 0;
+
+  const diffMs = d1.getTime() - d2.getTime();
+  const u = (unit || 'days').toLowerCase();
+
+  let result = 0;
+  if (u.startsWith('sec')) {
+    result = diffMs / 1000;
+  } else if (u.startsWith('min')) {
+    result = diffMs / (60 * 1000);
+  } else if (u.startsWith('hour')) {
+    result = diffMs / (3600 * 1000);
+  } else if (u.startsWith('week')) {
+    result = diffMs / (7 * 86400 * 1000);
+  } else if (u.startsWith('month')) {
+    result = diffMs / (30.4375 * 86400 * 1000);
+  } else if (u.startsWith('year')) {
+    result = diffMs / (365.25 * 86400 * 1000);
+  } else {
+    result = diffMs / (86400 * 1000);
+  }
+
+  return Math.round(result * 100) / 100;
+}
+
+/**
+ * Formats a date using pattern masks (YYYY-MM-DD, DD/MM/YYYY, hh:mm A, etc.)
+ */
+export function formatDateMask(dateInput: any, mask: string = 'YYYY-MM-DD'): string {
+  const d = new Date(dateInput || Date.now());
+  if (isNaN(d.getTime())) return String(dateInput || '');
+
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const date = d.getDate();
+  const hours = d.getHours();
+  const minutes = d.getMinutes();
+  const seconds = d.getSeconds();
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  const shortMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const h12 = hours % 12 || 12;
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+
+  return mask
+    .replace(/\bYYYY\b/g, String(year))
+    .replace(/\bYY\b/g, String(year).slice(-2))
+    .replace(/\bMMMM\b/g, monthNames[month - 1])
+    .replace(/\bMMM\b/g, shortMonthNames[month - 1])
+    .replace(/\bMM\b/g, pad(month))
+    .replace(/\bM\b/g, String(month))
+    .replace(/\bDD\b/g, pad(date))
+    .replace(/\bD\b/g, String(date))
+    .replace(/\bHH\b/g, pad(hours))
+    .replace(/\bH\b/g, String(hours))
+    .replace(/\bhh\b/g, pad(h12))
+    .replace(/\bh\b/g, String(h12))
+    .replace(/\bmm\b/g, pad(minutes))
+    .replace(/\bss\b/g, pad(seconds))
+    .replace(/\bA\b/g, ampm)
+    .replace(/\ba\b/g, ampm.toLowerCase());
+}
+
+/**
+ * Converts date to target timezone.
+ */
+export function convertTimezone(dateInput: any, targetTz: string = 'UTC'): string {
+  const d = new Date(dateInput || Date.now());
+  if (isNaN(d.getTime())) return String(dateInput || '');
+
+  const tz = targetTz === 'local' ? undefined : targetTz;
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .format(d)
+      .replace(', ', 'T');
+  } catch {
+    return d.toISOString();
+  }
+}
+
+/**
+ * Tests if string, array, or object is empty.
+ */
+export function isEmpty(val: any): boolean {
+  if (val === null || val === undefined) return true;
+  if (typeof val === 'string') return val.trim().length === 0;
+  if (Array.isArray(val)) return val.length === 0;
+  if (typeof val === 'object') return Object.keys(val).length === 0;
+  return false;
+}
+
+/**
+ * Tests if string, array, or object has data.
+ */
+export function isNotEmpty(val: any): boolean {
+  return !isEmpty(val);
+}
+
+/**
+ * Inverts a boolean or truthy/falsy value.
+ */
+export function booleanInvert(val: any): boolean {
+  if (typeof val === 'boolean') return !val;
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase();
+    if (s === 'true' || s === '1') return false;
+    if (s === 'false' || s === '0') return true;
+  }
+  return !coerceBoolean(val);
+}
+
+/**
+ * Compares two values with standard operators.
+ */
+export function booleanCompare(a: any, b: any, operator = '=='): boolean {
+  const op = (operator || '==').trim().toLowerCase();
+  switch (op) {
+    case '==':
+    case '===':
+      return String(a).toLowerCase() === String(b).toLowerCase();
+    case '!=':
+    case '!==':
+      return String(a).toLowerCase() !== String(b).toLowerCase();
+    case '>':
+      return Number(a) > Number(b);
+    case '>=':
+      return Number(a) >= Number(b);
+    case '<':
+      return Number(a) < Number(b);
+    case '<=':
+      return Number(a) <= Number(b);
+    case 'contains':
+    case 'includes':
+      return String(a).toLowerCase().includes(String(b).toLowerCase());
+    case 'starts_with':
+    case 'startswith':
+      return String(a).toLowerCase().startsWith(String(b).toLowerCase());
+    case 'ends_with':
+    case 'endswith':
+      return String(a).toLowerCase().endsWith(String(b).toLowerCase());
+    default:
+      return String(a) === String(b);
+  }
+}
+
+/**
+ * Coerces strings or values to true boolean.
+ */
+export function coerceBoolean(val: any): boolean {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val !== 0 && !isNaN(val);
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === 'off' || s === 'null' || s === 'undefined' || s === '') {
+      return false;
+    }
+    return s.length > 0;
+  }
+  if (Array.isArray(val)) return val.length > 0;
+  if (typeof val === 'object' && val !== null) return Object.keys(val).length > 0;
+  return Boolean(val);
+}
+
+/**
+ * Extracts query parameter value from URL or query string.
+ */
+export function extractUrlQueryParam(urlStr: string, paramName: string): string {
+  if (!urlStr || !paramName) return '';
+  try {
+    let searchStr = '';
+    if (urlStr.includes('?')) {
+      searchStr = urlStr.slice(urlStr.indexOf('?'));
+    } else if (urlStr.includes('=')) {
+      searchStr = `?${urlStr}`;
+    } else {
+      const u = new URL(urlStr, 'https://example.com');
+      searchStr = u.search;
+    }
+    const params = new URLSearchParams(searchStr);
+    return params.get(paramName) || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Extracts domain or hostname from URL.
+ */
+export function extractUrlDomain(urlStr: string, stripWww = false): string {
+  if (!urlStr) return '';
+  try {
+    let hostname = '';
+    if (urlStr.startsWith('http://') || urlStr.startsWith('https://')) {
+      hostname = new URL(urlStr).hostname;
+    } else {
+      hostname = urlStr.split('/')[0].split('?')[0];
+    }
+    if (stripWww && hostname.startsWith('www.')) {
+      hostname = hostname.slice(4);
+    }
+    return hostname;
+  } catch {
+    return urlStr;
+  }
+}
+
+/**
+ * Extracts pathname from URL.
+ */
+export function extractUrlPath(urlStr: string): string {
+  if (!urlStr) return '';
+  try {
+    if (urlStr.startsWith('http://') || urlStr.startsWith('https://')) {
+      return new URL(urlStr).pathname;
+    }
+    const withoutQuery = urlStr.split('?')[0].split('#')[0];
+    const slashIdx = withoutQuery.indexOf('/');
+    return slashIdx !== -1 ? withoutQuery.slice(slashIdx) : '/';
+  } catch {
+    return urlStr;
+  }
+}
+
+/**
+ * Builds query string from an object.
+ */
+export function buildUrlQueryString(params: any, includeQuestionMark = true): string {
+  if (!params) return '';
+  let obj = params;
+  if (typeof params === 'string') {
+    try {
+      obj = JSON.parse(params);
+    } catch {
+      return params;
+    }
+  }
+  if (typeof obj !== 'object' || obj === null) return '';
+
+  const searchParams = new URLSearchParams();
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined && val !== null) {
+      searchParams.append(key, String(val));
+    }
+  }
+  const qs = searchParams.toString();
+  if (!qs) return '';
+  return includeQuestionMark ? `?${qs}` : qs;
+}
+
+/**
+ * Safely evaluates math expressions like "(a * b) + c" or percentage change.
+ */
+export function evaluateMathExpression(expr: string, contextValue?: any): number {
+  if (!expr) return Number(contextValue) || 0;
+  let expression = String(expr).trim();
+
+  if (contextValue !== undefined && contextValue !== null && contextValue !== '') {
+    const num = Number(contextValue) || 0;
+    expression = expression.replace(/\b(x|val|item|n|value)\b/gi, String(num));
+  }
+
+  const sanitized = expression
+    .replace(/\^/g, '**')
+    .replace(/\b(round|floor|ceil|abs|min|max|sqrt|pow|PI|E)\b/g, 'Math.$1');
+
+  const isSafe = /^[\d\s+\-*/%(),.Mathabsceilfloorroundminmaxsqrtpow**]+$/.test(sanitized);
+  if (!isSafe) {
+    return 0;
+  }
+
+  try {
+    const fn = new Function(`"use strict"; return (${sanitized});`);
+    const res = fn();
+    return typeof res === 'number' && !isNaN(res) ? Math.round(res * 1000000) / 1000000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Clamps a number between min and max.
+ */
+export function clampNumber(val: number | string, min = 0, max = 100): number {
+  const n = Number(val) || 0;
+  const minVal = Number(min) || 0;
+  const maxVal = Number(max) || 100;
+  return Math.min(Math.max(n, minVal), maxVal);
+}
+
+/**
+ * Generates random number in range [min, max].
+ */
+export function randomNumber(min = 0, max = 100, integer = true): number {
+  const minVal = Number(min) || 0;
+  const maxVal = Number(max) || 100;
+  const r = Math.random() * (maxVal - minVal) + minVal;
+  return integer ? Math.round(r) : Math.round(r * 100) / 100;
+}
+
+/**
+ * Aggregates array of numbers by sum, average, min, or max.
+ */
+export function aggregateNumbers(
+  items: any[],
+  type: 'sum' | 'average' | 'avg' | 'min' | 'max' = 'sum',
+  field?: string
+): number {
+  const list = parseAsArray(items);
+  if (list.length === 0) return 0;
+
+  const numbers: number[] = list
+    .map((item) => {
+      if (item && typeof item === 'object' && field) {
+        return Number(item[field]);
+      }
+      return Number(item);
+    })
+    .filter((n) => !isNaN(n));
+
+  if (numbers.length === 0) return 0;
+
+  const op = (type || 'sum').toLowerCase();
+  if (op === 'min') return Math.min(...numbers);
+  if (op === 'max') return Math.max(...numbers);
+
+  const sum = numbers.reduce((acc, curr) => acc + curr, 0);
+  if (op === 'average' || op === 'avg') {
+    return Math.round((sum / numbers.length) * 100) / 100;
+  }
+  return Math.round(sum * 10000) / 10000;
+}
+
+/**
  * Universal transform function supporting all string, number, and data operations.
  */
 export function applyStringOperation(
@@ -638,6 +1369,163 @@ export function applyStringOperation(
         return curr !== undefined ? curr : '';
       }
       return '';
+    }
+
+    // --- 8. Arrays & Lists ---
+    case 'array_deduplicate':
+    case 'deduplicate':
+    case 'unique': {
+      return arrayDeduplicate(input, options.key || options.field);
+    }
+
+    case 'array_filter':
+    case 'filter': {
+      return arrayFilter(
+        input,
+        options.filterExpr || options.condition,
+        options.field,
+        options.operator,
+        options.filterValue !== undefined ? options.filterValue : options.value
+      );
+    }
+
+    case 'array_sort':
+    case 'sort': {
+      return arraySort(
+        input,
+        options.sortKey || options.field || options.key,
+        options.sortOrder || 'asc',
+        options.sortType || 'auto'
+      );
+    }
+
+    case 'array_chunk':
+    case 'chunk': {
+      return arrayChunk(input, options.chunkSize || options.count || 10);
+    }
+
+    case 'array_take':
+    case 'take': {
+      return arrayTake(
+        input,
+        options.count || 1,
+        options.fromEnd || options.takeMode === 'last'
+      );
+    }
+
+    case 'array_drop':
+    case 'drop': {
+      return arrayDrop(
+        input,
+        options.count || 1,
+        options.fromEnd || options.dropMode === 'last'
+      );
+    }
+
+    case 'array_flatten':
+    case 'flatten': {
+      return arrayFlatten(input, !!options.deep);
+    }
+
+    // --- 9. Dates & Timestamps ---
+    case 'date_math':
+    case 'add_subtract_date': {
+      return dateMath(
+        input,
+        options.dateMathExpr || options.expression,
+        options.dateOffsetValue,
+        options.dateOffsetUnit
+      );
+    }
+
+    case 'date_relative_parse':
+    case 'parse_relative_time': {
+      return parseRelativeTime(str);
+    }
+
+    case 'date_diff':
+    case 'date_difference': {
+      return dateDifference(input, options.compareDate, options.diffUnit);
+    }
+
+    case 'date_format_mask':
+    case 'format_date_mask': {
+      return formatDateMask(input, options.formatMask || 'YYYY-MM-DD');
+    }
+
+    case 'date_timezone':
+    case 'convert_timezone': {
+      return convertTimezone(input, options.targetTimezone || 'UTC');
+    }
+
+    // --- 10. Booleans & Logic ---
+    case 'is_empty': {
+      return isEmpty(input);
+    }
+
+    case 'is_not_empty': {
+      return isNotEmpty(input);
+    }
+
+    case 'boolean_not':
+    case 'invert': {
+      return booleanInvert(input);
+    }
+
+    case 'boolean_compare':
+    case 'compare': {
+      return booleanCompare(
+        input,
+        options.compareValue !== undefined ? options.compareValue : options.value,
+        options.operator || '=='
+      );
+    }
+
+    case 'boolean_coerce':
+    case 'to_boolean': {
+      return coerceBoolean(input);
+    }
+
+    // --- 11. URLs & Links ---
+    case 'url_extract_param':
+    case 'get_query_param': {
+      return extractUrlQueryParam(str, options.paramName || options.field || 'v');
+    }
+
+    case 'url_extract_domain':
+    case 'extract_domain': {
+      return extractUrlDomain(str, !!options.stripWww);
+    }
+
+    case 'url_extract_path':
+    case 'extract_pathname': {
+      return extractUrlPath(str);
+    }
+
+    case 'url_build_query':
+    case 'build_query_string': {
+      return buildUrlQueryString(input, options.includeQuestionMark !== false);
+    }
+
+    // --- 12. Numbers & Math ---
+    case 'math_expression':
+    case 'evaluate_math': {
+      return evaluateMathExpression(options.expression || str, input);
+    }
+
+    case 'math_clamp':
+    case 'clamp': {
+      return clampNumber(input, options.min ?? 0, options.max ?? 100);
+    }
+
+    case 'math_random':
+    case 'random_range': {
+      return randomNumber(options.min ?? 0, options.max ?? 100, options.integer !== false);
+    }
+
+    case 'math_aggregate':
+    case 'aggregate': {
+      return aggregateNumbers(input, options.aggregateType || 'sum', options.field);
     }
 
     default:

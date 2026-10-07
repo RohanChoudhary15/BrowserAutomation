@@ -1332,7 +1332,12 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
     variablesToSet[`${outputVariable}_description`] = description;
     variablesToSet[`${outputVariable}_links`] = links;
     variablesToSet[`${outputVariable}_html`] = html;
-    if (screenshot) variablesToSet[`${outputVariable}_screenshot`] = screenshot;
+    if (screenshot) {
+      variablesToSet[`${outputVariable}_screenshot`] = screenshot;
+      variablesToSet['firecrawlScreenshot'] = screenshot;
+      variablesToSet['screenshotUrl'] = screenshot;
+      variablesToSet['lastScreenshot'] = screenshot;
+    }
     variablesToSet[`${outputVariable}_metadata`] = data.metadata || {};
 
     ctx.log({
@@ -1352,13 +1357,55 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
     });
   } else if (mode === 'search') {
     const results = Array.isArray(data) ? data : (data.results || [data]);
-    primaryOutput = results;
-    variablesToSet[outputVariable] = results;
+
+    // Check if search results have screenshot
+    const screenshot =
+      data.screenshot ||
+      (Array.isArray(results) && results.find((r: any) => r && r.screenshot)?.screenshot) ||
+      '';
+    if (screenshot) {
+      variablesToSet[`${outputVariable}_screenshot`] = screenshot;
+      variablesToSet['firecrawlScreenshot'] = screenshot;
+      variablesToSet['screenshotUrl'] = screenshot;
+      variablesToSet['lastScreenshot'] = screenshot;
+    }
+
+    // Format search results into clean markdown
+    const combinedMarkdown = results
+      .map((item: any, idx: number) => {
+        if (!item || typeof item !== 'object') return String(item ?? '');
+        const itemTitle = item.title || `Result ${idx + 1}`;
+        const itemUrl = item.url ? `\nSource: [${item.url}](${item.url})` : '';
+        const itemContent = item.markdown || item.description || item.snippet || item.content || '';
+        return `### ${itemTitle}${itemUrl}\n\n${itemContent}`;
+      })
+      .filter((s: string) => s.trim().length > 0)
+      .join('\n\n---\n\n');
+
+    const searchOutputFormat = node.data.properties.searchOutputFormat;
+    // If outputVariable is firecrawlMarkdown, or searchOutputFormat === 'markdown', ensure clean markdown string instead of [object Object]
+    const wantsMarkdown =
+      searchOutputFormat === 'markdown' ||
+      (searchOutputFormat !== 'array' && outputVariable === 'firecrawlMarkdown');
+
+    if (wantsMarkdown) {
+      primaryOutput = combinedMarkdown || (results.length > 0 ? JSON.stringify(results, null, 2) : '');
+      variablesToSet[outputVariable] = primaryOutput;
+    } else {
+      primaryOutput = results;
+      variablesToSet[outputVariable] = results;
+    }
+
+    variablesToSet[`${outputVariable}_markdown`] = combinedMarkdown;
+    variablesToSet[`${outputVariable}_results`] = results;
+    variablesToSet[`${outputVariable}_items`] = results;
     variablesToSet[`${outputVariable}_count`] = results.length;
+    variablesToSet[`${outputVariable}_firstMarkdown`] = results[0]?.markdown || results[0]?.description || '';
+    variablesToSet[`${outputVariable}_firstUrl`] = results[0]?.url || '';
 
     ctx.log({
       level: 'success',
-      message: `Firecrawl found ${results.length} search result(s) for "${searchQuery}"`,
+      message: `Firecrawl found ${results.length} search result(s) for "${searchQuery}" (${combinedMarkdown.length} chars markdown)`,
       nodeId: node.id,
       nodeName: node.data.label,
     });
@@ -1366,8 +1413,9 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
     ctx.updateNodeState(node.id, {
       status: 'success',
       dynamicState: {
-        message: `${results.length} search results`,
+        message: `${results.length} search results (${combinedMarkdown.length} chars)`,
         detail: `Query: ${searchQuery.slice(0, 30)}`,
+        previewUrl: screenshot || undefined,
       },
     });
   } else {
@@ -1502,6 +1550,48 @@ export const executeLogicGate: NodeExecutor = async (node, ctx) => {
       summary,
     },
     nextBranch: 'output',
+  };
+};
+
+/**
+ * "Error Handler" / "Try / Catch" node:
+ * Intercepts and catches errors from watched/chosen nodes or nested try branch
+ * allowing the workflow to handle errors gracefully without aborting execution.
+ */
+export const executeErrorHandler: NodeExecutor = async (node, ctx) => {
+  const watchMode = node.data.properties.watchMode || node.data.properties.mode || 'chosen';
+  const watchedNodeIds: string[] = Array.isArray(node.data.properties.watchedNodeIds)
+    ? node.data.properties.watchedNodeIds
+    : [];
+  const outVar = node.data.properties.outputVariable || 'lastError';
+
+  ctx.log?.({
+    level: 'info',
+    message: `[Error Handler "${node.data.label}"] Active (Mode: ${watchMode}, Watched: ${
+      watchMode === 'all' ? 'All Nodes' : `${watchedNodeIds.length} node(s)`
+    })`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  // Ensure initial state in variables if not already set
+  if (ctx.variables[outVar] === undefined) {
+    ctx.variables[outVar] = null;
+  }
+  if (ctx.variables['hasError'] === undefined) {
+    ctx.variables['hasError'] = false;
+  }
+
+  return {
+    success: true,
+    output: {
+      status: 'active',
+      watchMode,
+      mode: watchMode,
+      watchedNodeIds,
+      handledCount: 0,
+    },
+    nextBranch: watchMode === 'try_branch' ? 'try' : 'done',
   };
 };
 
@@ -1762,6 +1852,40 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
       priceMode: node.data.properties.priceMode,
       field: node.data.properties.field || node.data.properties.fieldName || node.data.properties.property,
       fallbackValue: node.data.properties.fallbackValue,
+      // Arrays & Lists
+      key: node.data.properties.key,
+      filterExpr: node.data.properties.filterExpr || node.data.properties.condition,
+      condition: node.data.properties.condition,
+      operator: node.data.properties.operator,
+      filterValue: node.data.properties.filterValue !== undefined ? node.data.properties.filterValue : node.data.properties.value,
+      value: node.data.properties.value,
+      sortKey: node.data.properties.sortKey,
+      sortOrder: node.data.properties.sortOrder,
+      sortType: node.data.properties.sortType,
+      chunkSize: node.data.properties.chunkSize !== undefined ? Number(node.data.properties.chunkSize) : undefined,
+      takeMode: node.data.properties.takeMode,
+      dropMode: node.data.properties.dropMode,
+      deep: node.data.properties.deep,
+      // Dates & Timestamps
+      dateMathExpr: node.data.properties.dateMathExpr || node.data.properties.expression,
+      dateOffsetValue: node.data.properties.dateOffsetValue,
+      dateOffsetUnit: node.data.properties.dateOffsetUnit,
+      compareDate: node.data.properties.compareDate,
+      diffUnit: node.data.properties.diffUnit,
+      formatMask: node.data.properties.formatMask,
+      targetTimezone: node.data.properties.targetTimezone,
+      // Booleans & Logic
+      compareValue: node.data.properties.compareValue !== undefined ? node.data.properties.compareValue : node.data.properties.value,
+      // URLs & Links
+      paramName: node.data.properties.paramName || node.data.properties.param,
+      stripWww: node.data.properties.stripWww,
+      includeQuestionMark: node.data.properties.includeQuestionMark,
+      // Numbers & Math
+      expression: node.data.properties.expression,
+      min: node.data.properties.min !== undefined ? Number(node.data.properties.min) : undefined,
+      max: node.data.properties.max !== undefined ? Number(node.data.properties.max) : undefined,
+      integer: node.data.properties.integer,
+      aggregateType: node.data.properties.aggregateType,
     });
   }
 
@@ -8050,6 +8174,7 @@ export const executors: Record<string, NodeExecutor> = {
   export_data: executeExportData,
   screenshot: executeScreenshot,
   execute_javascript: executeJavaScript,
+  javascript: executeJavaScript,
   http_request: executeHttpRequest,
   storage_manage: executeStorageManage,
   clipboard: executeClipboard,
@@ -8092,6 +8217,8 @@ export const executors: Record<string, NodeExecutor> = {
   retry_block: executeRetryBlock,
   rate_limiter: executeRateLimiter,
   manual_approval: executeManualApproval,
+  error_handler: executeErrorHandler,
+  try_catch: executeErrorHandler,
 };
 
 
