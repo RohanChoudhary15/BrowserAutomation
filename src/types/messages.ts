@@ -56,7 +56,7 @@ export type ExtensionMessage =
       };
     }
   | { type: 'PING' }
-  | { type: 'PROXY_FETCH'; payload: { url: string; options?: any } }
+  | { type: 'PROXY_FETCH'; payload: { url: string; options?: any; isBinary?: boolean } }
   | { type: 'SHOW_NOTIFICATION'; payload: { title: string; message: string; iconUrl?: string } };
 
 export interface MessageResponse<T = any> {

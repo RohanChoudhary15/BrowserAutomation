@@ -70,6 +70,7 @@ import {
   Hash,
   SlidersHorizontal,
   Wand2,
+  Video,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels, queryLlm } from '../../ai/aiService';
@@ -4872,30 +4873,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(e) => {
                   const newModel = e.target.value;
                   handlePropChange('model', newModel);
-                  if (newModel === 'hy-image-v3.5-preview') {
-                    if (!props.size || props.size === '1024x1024') {
-                      handlePropChange('size', '1920x1080');
-                    }
-                  }
                 }}
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
               >
                 <option value="dall-e-3">DALL-E 3 (OpenAI - Flagship)</option>
                 <option value="dall-e-2">DALL-E 2 (OpenAI - Fast & Lightweight)</option>
-                <option value="hy-image-v3.5-preview">Hunyuan Image 3.5 (GMI Cloud - hy-image-v3.5-preview)</option>
                 <option value="custom">Custom Model (e.g. Flux, Stable Diffusion, SDXL)...</option>
               </select>
             </div>
-
-            {props.model === 'hy-image-v3.5-preview' && (
-              <div className="p-2.5 rounded-lg bg-purple-950/20 border border-purple-500/30 flex items-center justify-between text-xs text-purple-300">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  <span>GMI Cloud Request Queue</span>
-                </span>
-                <span className="text-[10px] font-mono bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">hy-image-v3.5-preview</span>
-              </div>
-            )}
 
             {props.model === 'custom' && (
               <div>
@@ -4918,25 +4903,23 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-gray-300">Dedicated API & Base URL Settings</span>
                 <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#1c2230] text-gray-400 font-mono">
-                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud Key' : 'Optional'}
+                  Optional
                 </span>
               </div>
               <p className="text-[10px] text-gray-500 leading-normal">
-                {props.model === 'hy-image-v3.5-preview'
-                  ? 'GMI Cloud requires an API key from console.gmicloud.ai. Enter your key below or in global AI Settings.'
-                  : 'By default, this node uses your global AI Settings. Specify a separate API key or custom OpenAI-compatible gateway (e.g. OpenRouter, Together AI, ExperientialLabs, local endpoint) below if needed.'}
+                By default, this node uses your global AI Settings. Specify a separate API key or custom OpenAI-compatible gateway (e.g. OpenRouter, Together AI, ExperientialLabs, local endpoint) below if needed.
               </p>
 
               <div>
                 <label className="block text-[10px] font-medium text-gray-400 mb-1">
-                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud API Key' : 'Separate API Key'}
+                  Separate API Key
                 </label>
                 <div className="relative">
                   <input
                     type={showImageApiKey ? 'text' : 'password'}
                     value={props.apiKey || ''}
                     onChange={(e) => handlePropChange('apiKey', e.target.value)}
-                    placeholder={props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud API Key (Bearer token)' : 'sk-... (Leave empty to use global key)'}
+                    placeholder="sk-... (Leave empty to use global key)"
                     className="w-full bg-[#0b0e14] text-white p-1.5 pr-8 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
                   />
                   <button
@@ -4952,17 +4935,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
               <div>
                 <label className="block text-[10px] font-medium text-gray-400 mb-1">
-                  {props.model === 'hy-image-v3.5-preview' ? 'GMI Cloud Endpoint (Optional override)' : 'Separate Base URL'}
+                  Separate Base URL
                 </label>
                 <input
                   type="text"
                   value={props.baseUrl || ''}
                   onChange={(e) => handlePropChange('baseUrl', e.target.value)}
-                  placeholder={
-                    props.model === 'hy-image-v3.5-preview'
-                      ? 'https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey/requests (Default)'
-                      : 'https://api.openai.com/v1 or custom gateway'
-                  }
+                  placeholder="https://api.openai.com/v1 or custom gateway"
                   className="w-full bg-[#0b0e14] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none text-xs font-mono"
                 />
               </div>
@@ -4972,29 +4951,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[11px] font-medium text-gray-400">Image Size / Resolution</label>
-                <span className="text-[10px] text-gray-400 font-mono">{props.size || (props.model === 'hy-image-v3.5-preview' ? '1920x1080' : '1024x1024')}</span>
+                <span className="text-[10px] text-gray-400 font-mono">{props.size || '1024x1024'}</span>
               </div>
               <div className="grid grid-cols-3 gap-1">
-                {(props.model === 'hy-image-v3.5-preview' ? [
-                  { id: '1920x1080', label: '1920x1080', desc: 'Full HD 16:9 Landscape' },
-                  { id: '1080x1920', label: '1080x1920', desc: 'Full HD 9:16 Portrait' },
-                  { id: '1024x1024', label: '1024x1024', desc: 'Square 1:1' },
-                  { id: '3840x2160', label: '3840x2160', desc: '4K Ultra HD 16:9' },
-                  { id: '1280x720', label: '1280x720', desc: 'HD 16:9' },
-                  { id: '2048x2048', label: '2048x2048', desc: '2K Square' },
-                ] : [
+                {[
                   { id: '1024x1024', label: '1024x1024', desc: 'Square 1:1' },
                   { id: '1024x1792', label: '1024x1792', desc: 'Portrait 9:16' },
                   { id: '1792x1024', label: '1792x1024', desc: 'Landscape 16:9' },
                   { id: '512x512', label: '512x512', desc: 'DALL-E 2' },
                   { id: '256x256', label: '256x256', desc: 'Thumbnail' },
-                ]).map((s) => (
+                ].map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => handlePropChange('size', s.id)}
                     className={`py-1 px-1.5 text-center rounded border text-[10px] font-mono transition-colors ${
-                      (props.size || (props.model === 'hy-image-v3.5-preview' ? '1920x1080' : '1024x1024')) === s.id
+                      (props.size || '1024x1024') === s.id
                         ? 'bg-indigo-600 text-white border-indigo-500 font-semibold'
                         : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white'
                     }`}
@@ -6498,9 +6470,59 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               >
                 <option value="text">Text Message (sendMessage)</option>
                 <option value="photo">Photo / Screenshot (sendPhoto)</option>
+                <option value="video">Video (sendVideo)</option>
                 <option value="document">Document / File (sendDocument)</option>
               </select>
             </div>
+
+            {/* Video Source */}
+            {props.messageType === 'video' && (
+              <div className="p-2.5 rounded-lg bg-[#11141c] border border-[#1c2230] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-gray-300 flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Video Source</span>
+                  </label>
+                  <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
+                </div>
+                <input
+                  type="text"
+                  value={props.videoUrl || props.imageUrl || ''}
+                  onChange={(e) => {
+                    handlePropChange('videoUrl', e.target.value);
+                    handlePropChange('imageUrl', e.target.value);
+                  }}
+                  placeholder="https://example.com/video.mp4, {{generatedVideoUrl}}, or data:video/mp4;base64,..."
+                  className="w-full bg-[#161a24] text-white p-2 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                />
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-gray-500">Quick insert:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handlePropChange('videoUrl', '{{generatedVideoUrl}}');
+                      handlePropChange('imageUrl', '{{generatedVideoUrl}}');
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono hover:bg-indigo-600/30"
+                  >
+                    &#123;&#123;generatedVideoUrl&#125;&#125;
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handlePropChange('videoUrl', '{{telegramVideoUrl}}');
+                      handlePropChange('imageUrl', '{{telegramVideoUrl}}');
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono hover:bg-indigo-600/30"
+                  >
+                    &#123;&#123;telegramVideoUrl&#125;&#125;
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  Accepts web URLs (https://...), base64 video Data URLs, or output from AutoFlow Video Generator (&#123;&#123;generatedVideoUrl&#125;&#125;).
+                </p>
+              </div>
+            )}
 
             {/* Image / Screenshot Source */}
             {(props.messageType === 'photo' || props.messageType === 'document') && (
@@ -6545,17 +6567,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[11px] font-medium text-gray-400">
-                  {props.messageType === 'photo' || props.messageType === 'document' ? 'Caption (optional)' : 'Message Content'}
+                  {props.messageType === 'photo' || props.messageType === 'video' || props.messageType === 'document' ? 'Caption (optional)' : 'Message Content'}
                 </label>
                 <span className="text-[10px] text-teal-400 font-mono">&#123;&#123;var&#125;&#125; supported</span>
               </div>
               <textarea
-                rows={props.messageType === 'photo' ? 2 : 4}
+                rows={props.messageType === 'photo' || props.messageType === 'video' ? 2 : 4}
                 value={props.message || ''}
                 onChange={(e) => handlePropChange('message', e.target.value)}
                 placeholder={
                   props.messageType === 'photo'
                     ? 'Captured page screenshot: {{pageTitle}}'
+                    : props.messageType === 'video'
+                    ? 'Generated AI video: {{prompt}}'
                     : 'Alert: New item found!&#10;Title: {{extractedTitle}}&#10;Link: {{pageUrl}}'
                 }
                 className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] focus:border-indigo-500 outline-none text-xs font-mono"
@@ -6915,6 +6939,41 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     placeholder="telegramUpdate"
                     className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#1c2230]/60">
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-[10px] text-gray-400">Photo / Image URL</label>
+                    <span className="text-[9px] text-indigo-400 font-mono">&#123;&#123;var&#125;&#125;</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={props.imageUrlVariable || 'telegramImageUrl'}
+                    onChange={(e) => handlePropChange('imageUrlVariable', e.target.value)}
+                    placeholder="telegramImageUrl"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                  <p className="text-[9px] text-gray-500 mt-0.5">
+                    Extracts direct URL of incoming photos.
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-[10px] text-gray-400">Video URL</label>
+                    <span className="text-[9px] text-indigo-400 font-mono">&#123;&#123;var&#125;&#125;</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={props.videoUrlVariable || 'telegramVideoUrl'}
+                    onChange={(e) => handlePropChange('videoUrlVariable', e.target.value)}
+                    placeholder="telegramVideoUrl"
+                    className="w-full bg-[#161a24] text-white p-1.5 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
+                  />
+                  <p className="text-[9px] text-gray-500 mt-0.5">
+                    Extracts direct URL of incoming videos.
+                  </p>
                 </div>
               </div>
             </div>

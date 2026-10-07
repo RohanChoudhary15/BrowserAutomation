@@ -1408,13 +1408,13 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     type: 'generate_image',
     label: 'AI Image Generator',
     category: 'utility',
-    description: 'Generate images using OpenAI DALL-E, GMI Cloud Hunyuan Image 3.5, or custom models with separate API key & base URL',
+    description: 'Generate images using OpenAI DALL-E or custom models with separate API key & base URL',
     icon: 'ImagePlus',
     defaultProperties: {
       prompt: 'A futuristic digital illustration of {{pageTitle}}',
       inputImage: '', // Optional Image URL, base64 data URI, or {{variable}} for img2img / reference
       asyncCount: 1, // 1 | 2 | 4 | 8 (asynchronous generation count)
-      model: 'dall-e-3', // 'dall-e-3' | 'dall-e-2' | 'hy-image-v3.5-preview' | 'custom'
+      model: 'dall-e-3', // 'dall-e-3' | 'dall-e-2' | 'custom'
       size: '1024x1024',
       quality: 'standard',
       style: 'vivid',
@@ -1452,15 +1452,16 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     type: 'telegram_message',
     label: 'Telegram Message',
     category: 'messaging',
-    description: 'Send messages, photos, screenshots, or alerts to Telegram via Bot API',
+    description: 'Send messages, photos, videos, screenshots, or alerts to Telegram via Bot API',
     icon: 'Send',
     defaultProperties: {
       credentialId: '',
       botToken: '',
       chatId: '',
-      messageType: 'text', // 'text' | 'photo' | 'document'
+      messageType: 'text', // 'text' | 'photo' | 'video' | 'document'
       message: 'AutoFlow notification: {{extractedText}}',
       imageUrl: '', // Can be image URL, data URL, or {{screenshotUrl}}
+      videoUrl: '', // Can be video URL, data URL, or {{generatedVideoUrl}}
       caption: '',
       parseMode: 'HTML',
       silent: false,
@@ -1472,7 +1473,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
     type: 'telegram_watch',
     label: 'Watch Telegram Updates',
     category: 'messaging',
-    description: 'Wait for incoming Telegram messages and extract chat ID, message text, and user variables',
+    description: 'Wait for incoming Telegram messages and extract chat ID, message text, photo/video URLs, and sender variables',
     icon: 'Radio',
     defaultProperties: {
       credentialId: '',
@@ -1488,6 +1489,8 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       onlyNewMessages: true,
       textVariable: 'telegramMessage',
       chatIdVariable: 'telegramChatId',
+      imageUrlVariable: 'telegramImageUrl',
+      videoUrlVariable: 'telegramVideoUrl',
       senderUsernameVariable: 'telegramUsername',
       senderNameVariable: 'telegramSenderName',
       rawUpdateVariable: 'telegramUpdate',

@@ -263,6 +263,173 @@ describe('Watch Telegram Updates Node (telegram_watch)', () => {
       expect(ctx.variables.telegramChatId).toBe('-1001234567');
     });
 
+    it('extracts and resolves direct image URL when incoming message contains a photo', async () => {
+      // 1. Initial offset check: returns empty
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ ok: true, result: [] }),
+      });
+
+      // 2. Poll update containing photo with multiple sizes
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          ok: true,
+          result: [
+            {
+              update_id: 501,
+              message: {
+                message_id: 888,
+                chat: { id: 777777 },
+                from: { first_name: 'Alice', username: 'alice_w' },
+                caption: 'Check out this photo for video generation!',
+                photo: [
+                  { file_id: 'thumb_small_id', width: 100, height: 100 },
+                  { file_id: 'photo_high_res_id', width: 1024, height: 1024 },
+                ],
+              },
+            },
+          ],
+        }),
+      });
+
+      // 3. getFile call for photo_high_res_id
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          ok: true,
+          result: {
+            file_id: 'photo_high_res_id',
+            file_path: 'photos/file_888.jpg',
+          },
+        }),
+      });
+
+      // 4. Mark as read call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ ok: true, result: [] }),
+      });
+
+      const node: WorkflowNode = {
+        id: 'watch_photo_node',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Watch Photo',
+          category: 'messaging',
+          type: 'telegram_watch',
+          properties: {
+            botToken: '123456:FAKE_TOKEN',
+            timeoutSeconds: 5,
+            onlyNewMessages: true,
+            imageUrlVariable: 'myExtractedPhoto',
+          },
+        },
+      };
+
+      const ctx = createMockContext();
+      const res = await executeTelegramWatch(node, ctx);
+
+      expect(res.success).toBe(true);
+      expect(res.output).toBe('Check out this photo for video generation!');
+      expect(ctx.variables.myExtractedPhoto).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/photos/file_888.jpg');
+      expect(ctx.variables.telegramImageUrl).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/photos/file_888.jpg');
+      expect(ctx.variables.telegramImage).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/photos/file_888.jpg');
+      expect(ctx.variables.telegramChatId).toBe('777777');
+    });
+
+    it('extracts and resolves direct video URL when incoming message contains a video', async () => {
+      // 1. Initial offset check
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ ok: true, result: [] }),
+      });
+
+      // 2. Poll update containing video
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          ok: true,
+          result: [
+            {
+              update_id: 502,
+              message: {
+                message_id: 889,
+                chat: { id: 777777 },
+                from: { first_name: 'Bob', username: 'bob_v' },
+                caption: 'Here is a video message',
+                video: {
+                  file_id: 'video_file_999_id',
+                  duration: 15,
+                  mime_type: 'video/mp4',
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      // 3. getFile call for video_file_999_id
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          ok: true,
+          result: {
+            file_id: 'video_file_999_id',
+            file_path: 'videos/clip_889.mp4',
+          },
+        }),
+      });
+
+      // 4. Mark as read
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ ok: true, result: [] }),
+      });
+
+      const node: WorkflowNode = {
+        id: 'watch_video_node',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Watch Video',
+          category: 'messaging',
+          type: 'telegram_watch',
+          properties: {
+            botToken: '123456:FAKE_TOKEN',
+            timeoutSeconds: 5,
+            onlyNewMessages: true,
+            videoUrlVariable: 'myExtractedVideo',
+          },
+        },
+      };
+
+      const ctx = createMockContext();
+      const res = await executeTelegramWatch(node, ctx);
+
+      expect(res.success).toBe(true);
+      expect(ctx.variables.myExtractedVideo).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/videos/clip_889.mp4');
+      expect(ctx.variables.telegramVideoUrl).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/videos/clip_889.mp4');
+      expect(ctx.variables.telegramVideo).toBe('https://api.telegram.org/file/bot123456:FAKE_TOKEN/videos/clip_889.mp4');
+    });
+
     it('aborts cleanly when signal is aborted', async () => {
       const controller = new AbortController();
       controller.abort();

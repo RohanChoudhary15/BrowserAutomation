@@ -95,12 +95,12 @@ export async function downloadImageBytes(
 
   // 1. Data URI (base64)
   if (cleanUrl.startsWith('data:')) {
-    const match = cleanUrl.match(/^data:([^;]+);base64,(.*)$/);
+    const match = cleanUrl.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]*)$/);
     if (!match) {
       throw new Error('Invalid base64 data URI format for input image.');
     }
     const contentType = match[1].toLowerCase();
-    const base64Data = match[2];
+    const base64Data = match[2].replace(/\s+/g, '');
 
     let bytes: Uint8Array;
     if (typeof Buffer !== 'undefined') {
@@ -115,16 +115,33 @@ export async function downloadImageBytes(
       throw new Error('Unable to decode base64 in the current environment.');
     }
 
+    if (bytes.length === 0) {
+      throw new Error('Decoded base64 image data is empty.');
+    }
+
     return { bytes, contentType };
   }
 
   // 2. HTTP / HTTPS URL
-  const response = await safeFetch(cleanUrl, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0 Safari/537.36',
-    },
-  });
+  let response: Response;
+  try {
+    // Attempt direct fetch first: preserves pristine binary buffer and avoids IPC overhead
+    response = await fetch(cleanUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0 Safari/537.36',
+      },
+    });
+  } catch {
+    // Fallback through safeFetch with binary preservation
+    response = await safeFetch(cleanUrl, {
+      isBinary: true,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0 Safari/537.36',
+      },
+    });
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to download source image from URL (HTTP ${response.status} ${response.statusText}): ${cleanUrl}`);
@@ -134,13 +151,16 @@ export async function downloadImageBytes(
   let contentType = rawType.split(';')[0].trim().toLowerCase();
 
   if (!contentType.startsWith('image/')) {
-    // Infer from pathname
-    const pathname = new URL(cleanUrl).pathname.toLowerCase();
-    if (pathname.endsWith('.png')) contentType = 'image/png';
-    else if (pathname.endsWith('.webp')) contentType = 'image/webp';
-    else if (pathname.endsWith('.heic')) contentType = 'image/heic';
-    else if (pathname.endsWith('.heif')) contentType = 'image/heif';
-    else contentType = 'image/jpeg';
+    try {
+      const pathname = new URL(cleanUrl).pathname.toLowerCase();
+      if (pathname.endsWith('.png')) contentType = 'image/png';
+      else if (pathname.endsWith('.webp')) contentType = 'image/webp';
+      else if (pathname.endsWith('.heic')) contentType = 'image/heic';
+      else if (pathname.endsWith('.heif')) contentType = 'image/heif';
+      else contentType = 'image/jpeg';
+    } catch {
+      contentType = 'image/jpeg';
+    }
   }
 
   const arrayBuffer = await response.arrayBuffer();
@@ -148,7 +168,18 @@ export async function downloadImageBytes(
     throw new Error('Source image URL returned empty content.');
   }
 
-  return { bytes: new Uint8Array(arrayBuffer), contentType };
+  const bytes = new Uint8Array(arrayBuffer);
+
+  // Integrity sanity check: ensure image isn't stringified object or HTML error
+  if (bytes.length < 16) {
+    throw new Error(`Source image is too small to be a valid image (${bytes.length} bytes).`);
+  }
+  const prefix = String.fromCharCode(...bytes.subarray(0, 15));
+  if (prefix.includes('[object') || prefix.includes('<html') || prefix.includes('<!DOCTYPE')) {
+    throw new Error(`Downloaded image data is invalid (${prefix.slice(0, 15)}...).`);
+  }
+
+  return { bytes, contentType };
 }
 
 /**
@@ -202,13 +233,26 @@ export async function uploadImageBytes(
     throw new Error('Auray upload slot did not provide upload_url.');
   }
 
-  const response = await safeFetch(slot.upload_url, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': contentType,
-    },
-    body: bytes as any,
-  });
+  let response: Response;
+  try {
+    // Supabase upload endpoint has Access-Control-Allow-Origin: *; direct fetch delivers intact binary body
+    response = await fetch(slot.upload_url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': contentType,
+      },
+      body: bytes,
+    });
+  } catch {
+    // Fallback through safeFetch with base64 binary transport
+    response = await safeFetch(slot.upload_url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': contentType,
+      },
+      body: bytes as any,
+    });
+  }
 
   if (!response.ok) {
     const errorText = await response.text();

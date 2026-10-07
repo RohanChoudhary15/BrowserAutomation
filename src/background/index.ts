@@ -704,12 +704,43 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
         }
 
         case 'PROXY_FETCH': {
-          const { url, options } = message.payload || {};
+          const { url, options, isBinary } = message.payload || {};
           try {
             if (url && (url.includes('auray.run') || url.includes('auray.ai'))) {
               await registerDeclarativeRules();
             }
-            const res = await fetch(url, options);
+
+            const fetchOptions: RequestInit = { ...(options || {}) };
+
+            // Handle base64-encoded request body if present
+            if (options?.bodyBase64 && typeof options.bodyBase64 === 'string') {
+              const bin = atob(options.bodyBase64);
+              const u8 = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) {
+                u8[i] = bin.charCodeAt(i);
+              }
+              fetchOptions.body = u8;
+            } else if (
+              options?.body &&
+              typeof options.body === 'object' &&
+              !(options.body instanceof Uint8Array) &&
+              !(options.body instanceof ArrayBuffer) &&
+              options.body['0'] !== undefined
+            ) {
+              const keys = Object.keys(options.body)
+                .map(Number)
+                .filter((n) => !isNaN(n))
+                .sort((a, b) => a - b);
+              if (keys.length > 0) {
+                const u8 = new Uint8Array(keys.length);
+                for (let i = 0; i < keys.length; i++) {
+                  u8[i] = options.body[i];
+                }
+                fetchOptions.body = u8;
+              }
+            }
+
+            const res = await fetch(url, fetchOptions);
             const status = res.status;
             const statusText = res.statusText;
             const ok = res.ok;
@@ -717,6 +748,38 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
             res.headers.forEach((v, k) => {
               headers[k] = v;
             });
+
+            const contentType = headers['content-type'] || '';
+            const isBinaryContent =
+              isBinary ||
+              contentType.startsWith('image/') ||
+              contentType.startsWith('video/') ||
+              contentType.startsWith('audio/') ||
+              contentType.includes('application/octet-stream');
+
+            if (isBinaryContent) {
+              const ab = await res.arrayBuffer();
+              const u8 = new Uint8Array(ab);
+              let binaryStr = '';
+              const chunkSize = 8192;
+              for (let i = 0; i < u8.length; i += chunkSize) {
+                const chunk = u8.subarray(i, i + chunkSize);
+                binaryStr += String.fromCharCode.apply(null, chunk as any);
+              }
+              const base64 = btoa(binaryStr);
+              return {
+                success: true,
+                response: {
+                  status,
+                  statusText,
+                  ok,
+                  headers,
+                  base64,
+                  isBinary: true,
+                },
+              };
+            }
+
             const text = await res.text();
             return {
               success: true,
@@ -726,6 +789,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
                 ok,
                 headers,
                 text,
+                isBinary: false,
               },
             };
           } catch (fetchErr: any) {

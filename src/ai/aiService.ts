@@ -407,22 +407,54 @@ export function parseApiError(
  * Resilient fetch wrapper that tries direct fetch first, and if blocked by CORS or network,
  * delegates to the background service worker (which has host_permissions for <all_urls> and zero CORS restrictions).
  */
-export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function safeFetch(
+  url: string,
+  init?: RequestInit & { isBinary?: boolean }
+): Promise<Response> {
   // In Chrome extension context, prefer background proxy to avoid CORS issues entirely
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     try {
+      const options: any = {
+        method: init?.method || 'GET',
+        headers: init?.headers as any,
+      };
+
+      if (init?.body) {
+        if (init.body instanceof Uint8Array || init.body instanceof ArrayBuffer) {
+          const u8 = init.body instanceof Uint8Array ? init.body : new Uint8Array(init.body);
+          let binaryStr = '';
+          const chunkSize = 8192;
+          for (let i = 0; i < u8.length; i += chunkSize) {
+            const chunk = u8.subarray(i, i + chunkSize);
+            binaryStr += String.fromCharCode.apply(null, chunk as any);
+          }
+          options.bodyBase64 = btoa(binaryStr);
+        } else {
+          options.body = init.body;
+        }
+      }
+
       const bgRes = await chrome.runtime.sendMessage({
         type: 'PROXY_FETCH',
         payload: {
           url,
-          options: {
-            method: init?.method || 'GET',
-            headers: init?.headers as any,
-            body: init?.body as any,
-          },
+          options,
+          isBinary: init?.isBinary,
         },
       });
       if (bgRes && bgRes.success && bgRes.response) {
+        if (bgRes.response.isBinary && bgRes.response.base64) {
+          const bin = atob(bgRes.response.base64);
+          const u8 = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) {
+            u8[i] = bin.charCodeAt(i);
+          }
+          return new Response(u8, {
+            status: bgRes.response.status,
+            statusText: bgRes.response.statusText,
+            headers: bgRes.response.headers,
+          });
+        }
         return new Response(bgRes.response.text, {
           status: bgRes.response.status,
           statusText: bgRes.response.statusText,

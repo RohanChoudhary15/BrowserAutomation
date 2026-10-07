@@ -3138,13 +3138,8 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
   }
 
   const model = node.data.properties.model?.trim() || 'dall-e-3';
-  const isGmiCloud = model === 'hy-image-v3.5-preview' ||
-    model.toLowerCase().includes('hy-image') ||
-    node.data.properties.provider === 'gmi_cloud' ||
-    Boolean(node.data.properties.baseUrl?.includes('gmicloud.ai'));
-
   let baseUrl = node.data.properties.baseUrl?.trim();
-  const size = node.data.properties.size || (isGmiCloud ? '1920x1080' : '1024x1024');
+  const size = node.data.properties.size || '1024x1024';
   const quality = node.data.properties.quality || 'standard';
   const style = node.data.properties.style || 'vivid';
   const responseFormat = node.data.properties.responseFormat || 'url';
@@ -3186,183 +3181,7 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
     }
   };
 
-  // 1. GMI Cloud Queue Engine (hy-image-v3.5-preview & Hunyuan Image)
-  if (isGmiCloud) {
-    const endpoint = baseUrl || 'https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey/requests';
-
-    const generateGmiSingle = async (idx: number) => {
-      const requestBody: Record<string, any> = {
-        model,
-        payload: {
-          prompt,
-          size,
-        },
-      };
-
-      if (inputImage) {
-        requestBody.payload.image = inputImage;
-        requestBody.payload.image_url = inputImage;
-        requestBody.payload.image_urls = [inputImage];
-        requestBody.payload.messages = [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: inputImage } },
-            ],
-          },
-        ];
-      }
-
-      const res = await safeFetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        let parsedMsg = errText;
-        try {
-          const errJson = JSON.parse(errText);
-          parsedMsg = errJson.message || errJson.error || errText;
-        } catch {}
-        const fullErr = `GMI Cloud Image Generation error (${res.status}): ${parsedMsg}`;
-        ctx.log({ level: 'error', message: fullErr, nodeId: node.id, nodeName: node.data.label });
-        throw new Error(fullErr);
-      }
-
-      let json = await res.json();
-      const requestId = json.request_id || json.id || json.outcome?.request_id;
-      let imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
-
-      // If job was queued or status is not yet success, poll for outcome
-      if (!imageUrl && requestId && json.status !== 'failed' && json.status !== 'error') {
-        const baseQueueUrl = endpoint.replace(/\/+$/, '');
-        const pollUrl = baseQueueUrl.endsWith(requestId) ? baseQueueUrl : `${baseQueueUrl}/${requestId}`;
-        const startTime = Date.now();
-        const maxWaitMs = 120000;
-
-        while (Date.now() - startTime < maxWaitMs) {
-          if (ctx.signal?.aborted) {
-            throw new Error('Image generation aborted by user.');
-          }
-          await new Promise((r) => setTimeout(r, 2000));
-          ctx.log({
-            level: 'info',
-            message: `Waiting for GMI Cloud job ${requestId}${asyncCount > 1 ? ` [${idx}/${asyncCount}]` : ''} (status: ${json.status || 'processing'})...`,
-            nodeId: node.id,
-            nodeName: node.data.label,
-          });
-
-          const pollRes = await safeFetch(pollUrl, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-            },
-          });
-
-          if (pollRes.ok) {
-            json = await pollRes.json();
-            imageUrl = json.outcome?.media_urls?.[0]?.url || json.outcome?.thumbnail_image_url || json.url || '';
-            if ((json.status === 'success' || !json.status) && imageUrl) {
-              break;
-            }
-            if (json.status === 'failed' || json.status === 'error') {
-              throw new Error(`GMI Cloud image generation failed: ${json.error || json.message || 'Task failed in queue'}`);
-            }
-          }
-        }
-      }
-
-      if (!imageUrl) {
-        throw new Error(json.error || json.message || 'No image was returned by GMI Cloud API.');
-      }
-
-      return {
-        url: imageUrl,
-        thumbnail: json.outcome?.thumbnail_image_url || imageUrl,
-        requestId,
-        mediaUrls: json.outcome?.media_urls || [{ url: imageUrl, type: 'image' }],
-        json,
-      };
-    };
-
-    ctx.log({
-      level: 'info',
-      message: asyncCount > 1
-        ? `Asynchronously generating ${asyncCount} images with GMI Cloud ${model} (${size})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 40)}..."`
-        : `Generating image with GMI Cloud ${model} (${size})${inputImage ? ' with image input' : ''}: "${prompt.slice(0, 45)}..."`,
-      nodeId: node.id,
-      nodeName: node.data.label,
-    });
-
-    ctx.updateNodeState(node.id, {
-      status: 'running',
-      dynamicState: {
-        message: asyncCount > 1 ? `Submitting ${asyncCount} async jobs to GMI Cloud...` : `Submitting job to GMI Cloud (${model})...`,
-        detail: `${size}${asyncCount > 1 ? ` • ${asyncCount}x async` : ''}`,
-      },
-    });
-
-    const taskPromises = Array.from({ length: asyncCount }, (_, i) => generateGmiSingle(i + 1));
-    const results = await Promise.all(taskPromises);
-
-    const imageUrls = results.map(r => r.url);
-    const primaryUrl = imageUrls[0];
-
-    if (autoDownload) {
-      for (let i = 0; i < imageUrls.length; i++) {
-        const baseName = downloadFilename.replace(/\.(png|jpg|jpeg|webp)$/i, '');
-        const ext = downloadFilename.match(/\.(png|jpg|jpeg|webp)$/i)?.[0] || '.png';
-        const finalFilename = imageUrls.length > 1 ? `${baseName}_${i + 1}${ext}` : `${baseName}${ext}`;
-        await downloadSingleImage(imageUrls[i], finalFilename);
-      }
-    }
-
-    ctx.log({
-      level: 'success',
-      message: asyncCount > 1
-        ? `Successfully generated ${imageUrls.length} images asynchronously via GMI Cloud (${model})`
-        : `Image generated successfully via GMI Cloud (${model})`,
-      nodeId: node.id,
-      nodeName: node.data.label,
-    });
-
-    ctx.updateNodeState(node.id, {
-      status: 'success',
-      output: asyncCount > 1 ? imageUrls : primaryUrl,
-      dynamicState: {
-        message: asyncCount > 1 ? `${imageUrls.length} images generated (async)` : 'Image generated',
-        previewUrl: primaryUrl,
-        images: imageUrls,
-        nodeId: node.id,
-        detail: `${model} • ${size}${asyncCount > 1 ? ` • ${asyncCount} images` : ''}`,
-      },
-    });
-
-    return {
-      success: true,
-      output: asyncCount > 1 ? imageUrls : primaryUrl,
-      variables: {
-        [outputVariable]: primaryUrl,
-        [`${outputVariable}_images`]: imageUrls,
-        [`${outputVariable}_urls`]: imageUrls,
-        [`${outputVariable}_count`]: imageUrls.length,
-        [`${outputVariable}_media_urls`]: results.flatMap(r => r.mediaUrls),
-        [`${outputVariable}_thumbnail`]: results[0]?.thumbnail || primaryUrl,
-        [`${outputVariable}_request_id`]: results[0]?.requestId || '',
-        [`${outputVariable}_request_ids`]: results.map(r => r.requestId).filter(Boolean),
-        [`${outputVariable}_revised_prompt`]: prompt,
-      },
-      items: imageUrls.map((url, idx) => ({ id: idx + 1, url, prompt, index: idx })),
-    };
-  }
-
-  // 2. OpenAI DALL-E & OpenAI-Compatible Gateways
+  // OpenAI DALL-E & OpenAI-Compatible Gateways
   const isDallE = model.toLowerCase().includes('dall-e');
 
   if (baseUrl) {
@@ -3684,6 +3503,7 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
   const rawMessage = node.data.properties.message || '';
   const rawCaption = node.data.properties.caption || '';
   const rawImageUrl = node.data.properties.imageUrl || '';
+  const rawVideoUrl = node.data.properties.videoUrl || '';
   const parseMode = node.data.properties.parseMode || 'HTML';
   const silent = !!node.data.properties.silent;
   const protectContent = !!node.data.properties.protectContent;
@@ -3694,6 +3514,7 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
   const message = String(interpolateVariables(rawMessage, ctx.variables));
   const caption = String(interpolateVariables(rawCaption, ctx.variables));
   const imageUrl = rawImageUrl ? String(interpolateVariables(rawImageUrl, ctx.variables)).trim() : '';
+  const videoUrl = rawVideoUrl ? String(interpolateVariables(rawVideoUrl, ctx.variables)).trim() : '';
 
   if (!botToken) {
     throw new Error('Telegram Bot Token is required. Select a saved account or provide a token.');
@@ -3702,15 +3523,40 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
     throw new Error('Telegram Chat ID is required. Use your chat ID or @channel.');
   }
 
-  const isPhoto = messageType === 'photo' || (!!imageUrl && messageType !== 'document');
+  const isVideo = messageType === 'video';
   const isDocument = messageType === 'document';
+  const isPhoto = messageType === 'photo' || (!!imageUrl && !isVideo && !isDocument && messageType !== 'text');
 
   let endpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
   let fetchOptions: RequestInit = { method: 'POST', signal: ctx.signal };
 
   const captionText = caption || message || '';
 
-  if (isPhoto && imageUrl) {
+  if (isVideo && (videoUrl || imageUrl)) {
+    endpoint = `https://api.telegram.org/bot${botToken}/sendVideo`;
+    const targetVideo = (videoUrl || imageUrl).trim();
+    if (targetVideo.startsWith('data:')) {
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      const blob = dataUrlToBlob(targetVideo);
+      formData.append('video', blob, 'video.mp4');
+      if (captionText) formData.append('caption', captionText);
+      if (parseMode && parseMode !== 'None') formData.append('parse_mode', parseMode);
+      if (silent) formData.append('disable_notification', 'true');
+      if (protectContent) formData.append('protect_content', 'true');
+      fetchOptions.body = formData;
+    } else {
+      fetchOptions.headers = { 'Content-Type': 'application/json' };
+      fetchOptions.body = JSON.stringify({
+        chat_id: chatId,
+        video: targetVideo,
+        ...(captionText ? { caption: captionText } : {}),
+        ...(parseMode && parseMode !== 'None' ? { parse_mode: parseMode } : {}),
+        ...(silent ? { disable_notification: true } : {}),
+        ...(protectContent ? { protect_content: true } : {}),
+      });
+    }
+  } else if (isPhoto && imageUrl) {
     endpoint = `https://api.telegram.org/bot${botToken}/sendPhoto`;
     if (imageUrl.startsWith('data:')) {
       const formData = new FormData();
@@ -3733,12 +3579,13 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
         ...(protectContent ? { protect_content: true } : {}),
       });
     }
-  } else if (isDocument && imageUrl) {
+  } else if (isDocument && (imageUrl || videoUrl)) {
     endpoint = `https://api.telegram.org/bot${botToken}/sendDocument`;
-    if (imageUrl.startsWith('data:')) {
+    const targetDoc = imageUrl || videoUrl;
+    if (targetDoc.startsWith('data:')) {
       const formData = new FormData();
       formData.append('chat_id', chatId);
-      const blob = dataUrlToBlob(imageUrl);
+      const blob = dataUrlToBlob(targetDoc);
       formData.append('document', blob, 'document.png');
       if (captionText) formData.append('caption', captionText);
       if (parseMode && parseMode !== 'None') formData.append('parse_mode', parseMode);
@@ -3748,7 +3595,7 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
       fetchOptions.headers = { 'Content-Type': 'application/json' };
       fetchOptions.body = JSON.stringify({
         chat_id: chatId,
-        document: imageUrl,
+        document: targetDoc,
         ...(captionText ? { caption: captionText } : {}),
         ...(parseMode && parseMode !== 'None' ? { parse_mode: parseMode } : {}),
         ...(silent ? { disable_notification: true } : {}),
@@ -3770,7 +3617,7 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
 
   ctx.log({
     level: 'info',
-    message: `Sending Telegram ${isPhoto ? 'photo' : isDocument ? 'document' : 'message'} to ${chatId}`,
+    message: `Sending Telegram ${isVideo ? 'video' : isPhoto ? 'photo' : isDocument ? 'document' : 'message'} to ${chatId}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -3789,7 +3636,7 @@ export const executeTelegramMessage: NodeExecutor = async (node, ctx) => {
 
   ctx.log({
     level: 'success',
-    message: `Telegram ${isPhoto ? 'photo' : 'message'} delivered successfully to ${chatId}`,
+    message: `Telegram ${isVideo ? 'video' : isPhoto ? 'photo' : 'message'} delivered successfully to ${chatId}`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -3815,6 +3662,8 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
 
   const textVariable = node.data.properties.textVariable || 'telegramMessage';
   const chatIdVariable = node.data.properties.chatIdVariable || 'telegramChatId';
+  const imageUrlVariable = node.data.properties.imageUrlVariable || 'telegramImageUrl';
+  const videoUrlVariable = node.data.properties.videoUrlVariable || 'telegramVideoUrl';
   const senderUsernameVariable = node.data.properties.senderUsernameVariable || 'telegramUsername';
   const senderNameVariable = node.data.properties.senderNameVariable || 'telegramSenderName';
   const rawUpdateVariable = node.data.properties.rawUpdateVariable || 'telegramUpdate';
@@ -3905,6 +3754,52 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
             const messageId = msg.message_id;
             const timestamp = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
 
+            // Extract photo or image document file URL
+            let extractedImageUrl = '';
+            let photoFileId = '';
+            if (Array.isArray(msg.photo) && msg.photo.length > 0) {
+              const highestPhoto = msg.photo[msg.photo.length - 1];
+              photoFileId = highestPhoto.file_id;
+            } else if (msg.document && typeof msg.document.mime_type === 'string' && msg.document.mime_type.startsWith('image/')) {
+              photoFileId = msg.document.file_id;
+            }
+
+            if (photoFileId) {
+              try {
+                const fileInfoRes = await safeFetch(
+                  `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(photoFileId)}`,
+                  { method: 'GET', signal: ctx.signal }
+                );
+                if (fileInfoRes.ok) {
+                  const fileInfo = await fileInfoRes.json();
+                  if (fileInfo.ok && fileInfo.result?.file_path) {
+                    extractedImageUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+                  }
+                }
+              } catch (fileErr: any) {
+                ctx.log({ level: 'warn', message: `Failed to resolve Telegram photo download URL: ${fileErr.message}`, nodeId: node.id });
+              }
+            }
+
+            // Extract video file URL if present
+            let extractedVideoUrl = '';
+            if (msg.video?.file_id) {
+              try {
+                const videoInfoRes = await safeFetch(
+                  `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(msg.video.file_id)}`,
+                  { method: 'GET', signal: ctx.signal }
+                );
+                if (videoInfoRes.ok) {
+                  const videoInfo = await videoInfoRes.json();
+                  if (videoInfo.ok && videoInfo.result?.file_path) {
+                    extractedVideoUrl = `https://api.telegram.org/file/bot${botToken}/${videoInfo.result.file_path}`;
+                  }
+                }
+              } catch (videoErr: any) {
+                ctx.log({ level: 'warn', message: `Failed to resolve Telegram video download URL: ${videoErr.message}`, nodeId: node.id });
+              }
+            }
+
             if (markAsRead && currentOffset !== undefined) {
               safeFetch(`https://api.telegram.org/bot${botToken}/getUpdates?offset=${currentOffset}&limit=1`, {
                 method: 'GET',
@@ -3913,7 +3808,7 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
 
             ctx.log({
               level: 'success',
-              message: `Received Telegram message from ${senderFullName} (${msgChatId}): "${messageText.slice(0, 50)}"`,
+              message: `Received Telegram message from ${senderFullName} (${msgChatId}): "${messageText.slice(0, 50)}"${extractedImageUrl ? ' [Photo attached]' : ''}${extractedVideoUrl ? ' [Video attached]' : ''}`,
               nodeId: node.id,
               nodeName: node.data.label,
             });
@@ -3924,12 +3819,19 @@ export const executeTelegramWatch: NodeExecutor = async (node, ctx) => {
               dynamicState: {
                 message: `Received: "${messageText.slice(0, 24)}"`,
                 detail: `From ${senderFullName} (Chat ${msgChatId})`,
+                previewUrl: extractedImageUrl || undefined,
               },
             });
 
             const resultVariables: Record<string, any> = {
               [textVariable]: messageText,
               [chatIdVariable]: msgChatId,
+              [imageUrlVariable]: extractedImageUrl,
+              telegramImageUrl: extractedImageUrl,
+              telegramImage: extractedImageUrl,
+              [videoUrlVariable]: extractedVideoUrl,
+              telegramVideoUrl: extractedVideoUrl,
+              telegramVideo: extractedVideoUrl,
               [senderUsernameVariable]: senderUsername,
               [senderNameVariable]: senderFullName,
               [`${textVariable}_id`]: messageId,

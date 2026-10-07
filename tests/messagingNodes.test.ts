@@ -838,6 +838,45 @@ describe('Messaging Nodes (Telegram, Discord, Slack)', () => {
       expect(options.body).toBeInstanceOf(FormData);
     });
 
+    it('Telegram: sends video with custom URL or variable via sendVideo', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ ok: true, result: { message_id: 200 } }),
+      });
+
+      const node: WorkflowNode = {
+        id: 'tg_video_1',
+        type: 'customNode',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'Telegram Video',
+          category: 'messaging',
+          type: 'telegram_message',
+          properties: {
+            botToken: 'bot_video_token',
+            chatId: '12345678',
+            messageType: 'video',
+            videoUrl: 'https://example.com/generated_clip.mp4',
+            caption: 'Here is your AI generated video: {{prompt}}',
+          },
+        },
+      };
+
+      const ctx = createMockContext({ prompt: 'Cyberpunk flying car' });
+      const res = await executeTelegramMessage(node, ctx);
+
+      expect(res.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toBe('https://api.telegram.org/botbot_video_token/sendVideo');
+      const body = JSON.parse(options.body);
+      expect(body.video).toBe('https://example.com/generated_clip.mp4');
+      expect(body.caption).toBe('Here is your AI generated video: Cyberpunk flying car');
+    });
+
     it('Discord: uploads base64 screenshot as multipart attachment files[0]', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
