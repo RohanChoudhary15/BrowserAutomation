@@ -22,6 +22,8 @@ import {
   Square as SquareIcon,
   Layers,
   Loader2,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { DEFAULT_AURAY_API_KEY } from '../../../ai/videoService';
 
@@ -434,6 +436,42 @@ export const VideoGeneratorProperties: React.FC<VideoGeneratorPropertiesProps> =
                 className="bg-indigo-500 h-1.5 transition-all duration-300"
                 style={{ width: `${Math.min(100, Math.max(5, dynamic.progress))}%` }}
               />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error Alert Banner (specifically handling browser_origin_refused) */}
+      {runtimeState?.status === 'error' && (
+        <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/40 space-y-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              {String(runtimeState?.error || dynamic?.message || '').includes('browser_origin_refused')
+                ? 'Extension Reload Required for Auray Rules'
+                : 'Video Generation Error'}
+            </span>
+          </div>
+          <p className="text-[10px] text-gray-300 leading-relaxed font-mono">
+            {runtimeState?.error || dynamic?.message || 'An error occurred during video generation.'}
+          </p>
+          {String(runtimeState?.error || dynamic?.message || '').includes('browser_origin_refused') && (
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                    try {
+                      await chrome.runtime.sendMessage({ type: 'RELOAD_EXTENSION' });
+                    } catch {}
+                  }
+                  window.location.reload();
+                }}
+                className="py-1.5 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reload Extension & Retry</span>
+              </button>
             </div>
           )}
         </div>

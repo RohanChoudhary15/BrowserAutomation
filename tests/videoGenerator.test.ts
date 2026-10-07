@@ -180,6 +180,37 @@ describe('Video Generator Service (Auray AI / MiniMax H3)', () => {
       expect(submittedPayload.duration_seconds).toBe(10);
       expect(submittedPayload.aspect_ratio).toBe('9:16');
     });
+
+    it('throws actionable error message when Auray returns browser_origin_refused', async () => {
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn(async (msg: any) => {
+            if (msg.type === 'PROXY_FETCH') {
+              return {
+                success: true,
+                response: {
+                  status: 403,
+                  statusText: 'Forbidden',
+                  headers: { 'content-type': 'application/json' },
+                  text: JSON.stringify({
+                    error: 'browser_origin_refused',
+                    error_type: 'PermissionError',
+                    message: 'This key was sent from a browser. A secret key in client-side code is a leaked key — rotate it now.',
+                  }),
+                },
+              };
+            }
+            return { success: true };
+          }),
+        },
+      };
+
+      await expect(
+        submitH3Job({
+          prompt: 'A futuristic sunrise',
+        })
+      ).rejects.toThrow(/browser_origin_refused.*reload the AutoFlow extension/i);
+    });
   });
 
   describe('pollQueueStatus', () => {

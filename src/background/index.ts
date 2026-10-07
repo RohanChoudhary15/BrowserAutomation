@@ -13,36 +13,97 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 }
 
-// Configure CORS-bypass rules for YouTube requests via declarativeNetRequest
-if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.updateDynamicRules) {
-  chrome.declarativeNetRequest.updateDynamicRules({
-    addRules: [
-      {
-        id: 991,
-        priority: 1,
-        action: {
-          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-          requestHeaders: [
-            { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com' },
-            { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com/' },
-          ],
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-            { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, OPTIONS, HEAD' },
-            { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-          ],
-        },
-        condition: {
-          urlFilter: '||youtube.com',
-          resourceTypes: [
-            chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
-          ],
-        },
-      },
-    ],
-    removeRuleIds: [991],
-  }).catch((e) => console.warn('Could not register declarativeNetRequest rules:', e));
+// Configure CORS-bypass and header-stripping rules via declarativeNetRequest
+export async function registerDeclarativeRules(): Promise<void> {
+  if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.updateDynamicRules) {
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: [991, 992, 993],
+        addRules: [
+          // 991: YouTube API CORS spoofing
+          {
+            id: 991,
+            priority: 1,
+            action: {
+              type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+              requestHeaders: [
+                { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com' },
+                { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'https://www.youtube.com/' },
+              ],
+              responseHeaders: [
+                { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+                { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, OPTIONS, HEAD' },
+                { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+              ],
+            },
+            condition: {
+              urlFilter: '||youtube.com',
+              resourceTypes: [
+                chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+              ],
+            },
+          },
+          // 992: Auray Queue (||auray.run) - Strip Origin & Referer to eliminate browser_origin_refused
+          {
+            id: 992,
+            priority: 2,
+            action: {
+              type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+              requestHeaders: [
+                { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+                { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+              ],
+              responseHeaders: [
+                { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+                { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, PUT, DELETE, OPTIONS, HEAD' },
+                { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+              ],
+            },
+            condition: {
+              urlFilter: '||auray.run',
+              resourceTypes: [
+                chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+                chrome.declarativeNetRequest.ResourceType.OTHER,
+                chrome.declarativeNetRequest.ResourceType.MAIN_FRAME,
+                chrome.declarativeNetRequest.ResourceType.SUB_FRAME,
+              ],
+            },
+          },
+          // 993: Auray Platform API & Storage (||auray.ai) - Strip Origin & Referer
+          {
+            id: 993,
+            priority: 2,
+            action: {
+              type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+              requestHeaders: [
+                { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+                { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+              ],
+              responseHeaders: [
+                { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+                { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, PUT, DELETE, OPTIONS, HEAD' },
+                { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
+              ],
+            },
+            condition: {
+              urlFilter: '||auray.ai',
+              resourceTypes: [
+                chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+                chrome.declarativeNetRequest.ResourceType.OTHER,
+                chrome.declarativeNetRequest.ResourceType.MAIN_FRAME,
+                chrome.declarativeNetRequest.ResourceType.SUB_FRAME,
+              ],
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn('Could not register declarativeNetRequest rules:', e);
+    }
+  }
 }
+
+registerDeclarativeRules();
 
 export const REQUIRED_CONTENT_VERSION = '1.5.0-scrapers';
 
@@ -645,6 +706,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
         case 'PROXY_FETCH': {
           const { url, options } = message.payload || {};
           try {
+            if (url && (url.includes('auray.run') || url.includes('auray.ai'))) {
+              await registerDeclarativeRules();
+            }
             const res = await fetch(url, options);
             const status = res.status;
             const statusText = res.statusText;

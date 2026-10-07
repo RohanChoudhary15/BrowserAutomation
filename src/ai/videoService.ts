@@ -7,6 +7,22 @@ export const AURAY_ADDRESS = 'auray-ai/minimax-h3/text-to-video';
 export const AURAY_QUEUE_URL = `https://queue.auray.run/${AURAY_ADDRESS}`;
 export const AURAY_PLATFORM_URL = 'https://api.auray.ai/v1';
 
+/**
+ * Normalizes Auray URLs when running in non-extension local dev mode (Vite proxy).
+ */
+export function normalizeAurayUrl(url: string): string {
+  if (
+    typeof window !== 'undefined' &&
+    (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) &&
+    (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1')
+  ) {
+    return url
+      .replace('https://queue.auray.run', '/auray-queue')
+      .replace('https://api.auray.ai', '/auray-platform');
+  }
+  return url;
+}
+
 export type VideoDuration = 5 | 10 | 15;
 export type VideoAspectRatio = '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
 export type VideoResolution = '768P' | '1080P';
@@ -140,7 +156,8 @@ export async function createUploadSlot(
     idempotency_key: generateIdempotencyKey('h3upload'),
   };
 
-  const response = await safeFetch(`${platformUrl}/uploads`, {
+  const targetPlatformUrl = normalizeAurayUrl(platformUrl);
+  const response = await safeFetch(`${targetPlatformUrl}/uploads`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -152,6 +169,11 @@ export async function createUploadSlot(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('browser_origin_refused')) {
+      throw new Error(
+        `Auray AI rejected the upload request with browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click the 🔄 reload icon on AutoFlow) to activate the updated network rules that strip the browser Origin header.`
+      );
+    }
     throw new Error(`Auray upload slot creation failed (HTTP ${response.status}): ${errorText}`);
   }
 
@@ -195,7 +217,8 @@ export async function getUploadedImageUrl(
     throw new Error('Auray upload slot did not provide read endpoint.');
   }
 
-  const response = await safeFetch(slot.read, {
+  const readUrl = normalizeAurayUrl(slot.read);
+  const response = await safeFetch(readUrl, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -205,6 +228,11 @@ export async function getUploadedImageUrl(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('browser_origin_refused')) {
+      throw new Error(
+        `Auray AI rejected signed image URL read with browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click 🔄).`
+      );
+    }
     throw new Error(`Failed to obtain signed image URL (HTTP ${response.status}): ${errorText}`);
   }
 
@@ -306,7 +334,8 @@ export async function submitH3Job(
     };
   }
 
-  const response = await safeFetch(queueUrl, {
+  const targetQueueUrl = normalizeAurayUrl(queueUrl);
+  const response = await safeFetch(targetQueueUrl, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -319,6 +348,11 @@ export async function submitH3Job(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('browser_origin_refused')) {
+      throw new Error(
+        `MiniMax H3 job submission failed: browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click the 🔄 reload icon on AutoFlow) to activate the updated network rules that strip browser Origin headers.`
+      );
+    }
     throw new Error(`MiniMax H3 job submission failed (HTTP ${response.status}): ${errorText}`);
   }
 
@@ -347,8 +381,9 @@ export async function pollQueueStatus(
       throw new Error(`Video generation timed out after ${Math.round(timeoutMs / 1000)}s.`);
     }
 
-    const separator = statusUrl.includes('?') ? '&' : '?';
-    const pollUrlWithLogs = `${statusUrl}${separator}logs=1`;
+    const targetStatusUrl = normalizeAurayUrl(statusUrl);
+    const separator = targetStatusUrl.includes('?') ? '&' : '?';
+    const pollUrlWithLogs = `${targetStatusUrl}${separator}logs=1`;
 
     const response = await safeFetch(pollUrlWithLogs, {
       method: 'GET',
@@ -367,6 +402,11 @@ export async function pollQueueStatus(
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (errorText.includes('browser_origin_refused')) {
+        throw new Error(
+          `Auray AI status check rejected with browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click 🔄).`
+        );
+      }
       throw new Error(`Queue status check failed (HTTP ${response.status}): ${errorText}`);
     }
 
@@ -403,7 +443,8 @@ export async function pollQueueStatus(
  * Fetches the final response from response_url to check for errors.
  */
 export async function getFinalResponse(apiKey: string, responseUrl: string): Promise<any> {
-  const response = await safeFetch(responseUrl, {
+  const targetResponseUrl = normalizeAurayUrl(responseUrl);
+  const response = await safeFetch(targetResponseUrl, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -413,6 +454,11 @@ export async function getFinalResponse(apiKey: string, responseUrl: string): Pro
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('browser_origin_refused')) {
+      throw new Error(
+        `Auray AI response check rejected with browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click 🔄).`
+      );
+    }
     throw new Error(`MiniMax H3 final response check failed (HTTP ${response.status}): ${errorText}`);
   }
 
@@ -438,7 +484,8 @@ export async function getVideoAsset(
   requestId: string,
   platformUrl: string = AURAY_PLATFORM_URL
 ): Promise<VideoAssetDetails> {
-  const assetsUrl = `${platformUrl}/jobs/${requestId}/assets`;
+  const targetPlatformUrl = normalizeAurayUrl(platformUrl);
+  const assetsUrl = `${targetPlatformUrl}/jobs/${requestId}/assets`;
 
   const response = await safeFetch(assetsUrl, {
     method: 'GET',
@@ -450,6 +497,11 @@ export async function getVideoAsset(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('browser_origin_refused')) {
+      throw new Error(
+        `Auray AI asset retrieval rejected with browser_origin_refused. Please reload the AutoFlow extension at chrome://extensions (click 🔄).`
+      );
+    }
     throw new Error(`Failed to retrieve generated video assets (HTTP ${response.status}): ${errorText}`);
   }
 
