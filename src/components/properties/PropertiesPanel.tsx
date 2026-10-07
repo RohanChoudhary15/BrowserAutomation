@@ -87,6 +87,7 @@ import { ScraperPropertiesPanel } from './scrapers/ScraperPropertiesPanel';
 import { DataNodesProperties } from './sections/DataNodesProperties';
 import { ControlFlowProperties } from './sections/ControlFlowProperties';
 import { TransformProperties } from './sections/TransformProperties';
+import { JsonSchemaSection } from './sections/JsonSchemaSection';
 import { TableModal } from './TableModal';
 import {
   getAllCardSchemas,
@@ -4665,20 +4666,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </>
             )}
 
-            <label className="flex items-center gap-2 text-gray-300 cursor-pointer pt-1">
-              <input
-                type="checkbox"
-                checked={!!props.jsonMode}
-                onChange={(e) => {
-                  handlePropChange('jsonMode', e.target.checked);
-                  if (e.target.checked && (!props.outputFormat || props.outputFormat === 'text')) {
-                    handlePropChange('outputFormat', 'json');
-                  }
-                }}
-                className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
+            {/* Structured Output & JSON Schema Designer */}
+            {selectedNode.data.type === 'ai_agent' && (
+              <JsonSchemaSection
+                properties={props}
+                onPropChange={handlePropChange}
+                outputVariable={props.outputVariable || 'aiAnalysis'}
+                runtimeOutput={
+                  runtimeState?.output ??
+                  runtimeState?.dynamicState?.response ??
+                  (props.outputVariable ? variables[props.outputVariable] : undefined)
+                }
               />
-              <span className="text-[11px]">JSON Mode (parse response into structured object)</span>
-            </label>
+            )}
 
             {/* AI Agent Response / Result Preview */}
             {(() => {

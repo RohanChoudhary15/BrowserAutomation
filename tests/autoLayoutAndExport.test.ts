@@ -407,4 +407,99 @@ describe('AI Agent Node Multi-Format Execution', () => {
 
     delete (globalThis as any).chrome;
   });
+
+  it('executes AI Agent with structured JSON schema and outputs parsed object and flattened keys', async () => {
+    const mockJson = {
+      product_name: 'Logitech MX Master 3S',
+      price: 99.99,
+      in_stock: true,
+      features: ['8K DPI', 'Quiet clicks', 'USB-C'],
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(mockJson),
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const node: WorkflowNode = {
+      id: 'ai_structured',
+      type: 'customNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Product Extractor',
+        category: 'utility',
+        type: 'ai_agent',
+        properties: {
+          prompt: 'Extract product info',
+          outputVariable: 'productData',
+          structuredOutput: true,
+          jsonSchemaName: 'product_schema',
+          jsonSchemaStrict: true,
+          jsonSchema: {
+            type: 'object',
+            properties: {
+              product_name: { type: 'string' },
+              price: { type: 'number' },
+              in_stock: { type: 'boolean' },
+            },
+            required: ['product_name', 'price', 'in_stock'],
+            additionalProperties: false,
+          },
+        },
+      },
+    };
+
+    let finalState: Partial<NodeRuntimeState> | null = null;
+    const ctx: any = {
+      variables: {},
+      signal: new AbortController().signal,
+      log: vi.fn(),
+      updateNodeState: vi.fn().mockImplementation((id: string, state: Partial<NodeRuntimeState>) => {
+        finalState = state;
+      }),
+    };
+
+    const result = await executeAiAgent(node, ctx);
+    expect(result.success).toBe(true);
+    expect(result.output).toEqual(mockJson);
+    expect(result.variables?.productData).toEqual(mockJson);
+    expect(result.variables?.productData_product_name).toBe('Logitech MX Master 3S');
+    expect(result.variables?.productData_price).toBe(99.99);
+    expect(result.variables?.productData_in_stock).toBe(true);
+    expect(result.variables?.productData_raw).toBe(JSON.stringify(mockJson));
+    expect(result.variables?.productData_json).toBe(JSON.stringify(mockJson, null, 2));
+    expect(ctx.variables.productData_product_name).toBe('Logitech MX Master 3S');
+
+    // Verify fetch was called with structured response_format
+    expect(globalThis.fetch).toHaveBeenCalled();
+    const fetchCall = (globalThis.fetch as any).mock.calls[0];
+    const sentBody = JSON.parse(fetchCall[1].body);
+    expect(sentBody.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: {
+        name: 'product_schema',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            product_name: { type: 'string' },
+            price: { type: 'number' },
+            in_stock: { type: 'boolean' },
+          },
+          required: ['product_name', 'price', 'in_stock'],
+          additionalProperties: false,
+        },
+      },
+    });
+
+    expect(finalState?.dynamicState?.message).toContain('JSON (Structured)');
+  });
 });

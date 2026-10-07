@@ -261,6 +261,60 @@ describe('Firecrawl (Keyless) Node', () => {
     expect(sentBody.limit).toBe(3);
   });
 
+  it('correctly handles Firecrawl v2 nested { success: true, data: { web: [...] } } search shape and outputs rich markdown', async () => {
+    (globalThis as any).chrome.runtime.sendMessage = vi.fn(async (msg: any) => {
+      if (msg.type === 'PROXY_FETCH' && msg.payload.url.includes('/search')) {
+        return {
+          success: true,
+          response: {
+            status: 200,
+            statusText: 'OK',
+            headers: { 'content-type': 'application/json' },
+            text: JSON.stringify({
+              success: true,
+              data: {
+                web: [
+                  {
+                    title: 'Deep Research with Firecrawl',
+                    url: 'https://firecrawl.dev/blog/deep-research',
+                    description: 'Explore the web with AI search capabilities.',
+                    content: 'Detailed guide on AI search using Firecrawl.',
+                  },
+                ],
+              },
+            }),
+          },
+        };
+      }
+      return { success: false };
+    });
+
+    const node: WorkflowNode = {
+      id: 'fc_v2_search',
+      type: 'customNode',
+      position: { x: 0, y: 0 },
+      data: {
+        type: 'firecrawl',
+        label: 'Firecrawl v2 Search',
+        properties: {
+          mode: 'search',
+          searchQuery: 'Deep research',
+          searchOutputFormat: 'markdown',
+          outputVariable: 'firecrawlMarkdown',
+        },
+      },
+    };
+
+    const result = await executeFirecrawl(node, mockContext);
+
+    expect(result.success).toBe(true);
+    expect(result.variables?.firecrawlMarkdown).toContain('### Deep Research with Firecrawl');
+    expect(result.variables?.firecrawlMarkdown).toContain('https://firecrawl.dev/blog/deep-research');
+    expect(result.variables?.firecrawlMarkdown).toContain('Detailed guide on AI search using Firecrawl.');
+    expect(result.variables?.firecrawlMarkdown).not.toBe('### Result 1');
+    expect(mockContext.variables.firecrawlMarkdown).toContain('Deep Research');
+  });
+
   it('executes Firecrawl map operation to discover all links', async () => {
     const node: WorkflowNode = {
       id: 'fc_node_5',

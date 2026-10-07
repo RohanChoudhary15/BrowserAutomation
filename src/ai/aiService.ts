@@ -550,7 +550,12 @@ export async function queryLlm(
 
   const provider = currentConfig.provider || 'openai';
   const model = resolveCompatibleModel(provider, currentConfig.model, currentConfig);
-  const cleanSystem = resolvedSystemInstruction && resolvedSystemInstruction.trim() ? resolvedSystemInstruction.trim() : undefined;
+  const rawCleanSystem = resolvedSystemInstruction && resolvedSystemInstruction.trim() ? resolvedSystemInstruction.trim() : undefined;
+  let cleanSystem = rawCleanSystem;
+  if (currentConfig.jsonSchema) {
+    const schemaInstruction = `You MUST generate valid JSON that strictly conforms to this JSON Schema:\n${JSON.stringify(currentConfig.jsonSchema, null, 2)}\nReturn ONLY the valid JSON, with no markdown or explanations outside the JSON.`;
+    cleanSystem = cleanSystem ? `${cleanSystem}\n\n${schemaInstruction}` : schemaInstruction;
+  }
   const cleanPrompt = typeof prompt === 'string' ? prompt : String(prompt ?? '');
 
   // 1. OpenAI / OpenAI Compatible
@@ -561,20 +566,38 @@ export async function queryLlm(
 
     const baseUrl = getOpenAiBaseUrl(currentConfig);
     try {
+      const openAiBody: Record<string, any> = {
+        model,
+        messages: [
+          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+          { role: 'user', content: cleanPrompt },
+        ],
+        temperature: 0.2,
+      };
+
+      if (currentConfig.jsonSchema) {
+        openAiBody.response_format = {
+          type: 'json_schema',
+          json_schema: {
+            name: currentConfig.jsonSchemaName || 'structured_output',
+            ...(currentConfig.jsonSchemaDescription ? { description: currentConfig.jsonSchemaDescription } : {}),
+            strict: currentConfig.jsonSchemaStrict !== false,
+            schema: currentConfig.jsonSchema,
+          },
+        };
+      } else if (currentConfig.responseFormat === 'json' || currentConfig.jsonMode) {
+        openAiBody.response_format = {
+          type: 'json_object',
+        };
+      }
+
       const res = await safeFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${currentConfig.apiKey}`,
         },
-        body: JSON.stringify({
-          model,
-          messages: [
-            ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
-            { role: 'user', content: cleanPrompt },
-          ],
-          temperature: 0.2,
-        }),
+        body: JSON.stringify(openAiBody),
       });
 
       if (!res.ok) {
@@ -621,6 +644,9 @@ export async function queryLlm(
           { role: 'user', content: cleanPrompt },
         ],
         temperature: 0.2,
+        ...(currentConfig.jsonSchema || currentConfig.responseFormat === 'json' || currentConfig.jsonMode
+          ? { response_format: { type: 'json_object' } }
+          : {}),
       }),
     });
 
@@ -641,19 +667,32 @@ export async function queryLlm(
 
     const geminiModel = model || 'gemini-1.5-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${currentConfig.apiKey}`;
+    const geminiPayload: Record<string, any> = {
+      contents: [
+        {
+          parts: [
+            ...(cleanSystem ? [{ text: cleanSystem }] : []),
+            { text: cleanPrompt },
+          ],
+        },
+      ],
+    };
+
+    if (currentConfig.jsonSchema) {
+      geminiPayload.generationConfig = {
+        responseMimeType: 'application/json',
+        responseSchema: currentConfig.jsonSchema,
+      };
+    } else if (currentConfig.responseFormat === 'json' || currentConfig.jsonMode) {
+      geminiPayload.generationConfig = {
+        responseMimeType: 'application/json',
+      };
+    }
+
     const res = await safeFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              ...(cleanSystem ? [{ text: cleanSystem }] : []),
-              { text: cleanPrompt },
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(geminiPayload),
     });
 
     if (!res.ok) {
@@ -672,19 +711,35 @@ export async function queryLlm(
     }
 
     const routerModel = model || 'openai/gpt-4o-mini';
+    const routerBody: Record<string, any> = {
+      model: routerModel,
+      messages: [
+        ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+        { role: 'user', content: cleanPrompt },
+      ],
+      temperature: 0.2,
+    };
+
+    if (currentConfig.jsonSchema) {
+      routerBody.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: currentConfig.jsonSchemaName || 'structured_output',
+          strict: currentConfig.jsonSchemaStrict !== false,
+          schema: currentConfig.jsonSchema,
+        },
+      };
+    } else if (currentConfig.responseFormat === 'json' || currentConfig.jsonMode) {
+      routerBody.response_format = { type: 'json_object' };
+    }
+
     const res = await safeFetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${currentConfig.apiKey}`,
       },
-      body: JSON.stringify({
-        model: routerModel,
-        messages: [
-          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
-          { role: 'user', content: cleanPrompt },
-        ],
-      }),
+      body: JSON.stringify(routerBody),
     });
 
     if (!res.ok) {
@@ -700,20 +755,35 @@ export async function queryLlm(
   if (provider === 'custom') {
     const endpoint = (currentConfig.customEndpoint || 'http://localhost:11434/v1').replace(/\/$/, '');
     const customModel = model || 'default';
+    const customBody: Record<string, any> = {
+      model: customModel,
+      messages: [
+        ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
+        { role: 'user', content: cleanPrompt },
+      ],
+      temperature: 0.2,
+    };
+
+    if (currentConfig.jsonSchema) {
+      customBody.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: currentConfig.jsonSchemaName || 'structured_output',
+          strict: currentConfig.jsonSchemaStrict !== false,
+          schema: currentConfig.jsonSchema,
+        },
+      };
+    } else if (currentConfig.responseFormat === 'json' || currentConfig.jsonMode) {
+      customBody.response_format = { type: 'json_object' };
+    }
+
     const res = await safeFetch(`${endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(currentConfig.apiKey ? { Authorization: `Bearer ${currentConfig.apiKey}` } : {}),
       },
-      body: JSON.stringify({
-        model: customModel,
-        messages: [
-          ...(cleanSystem ? [{ role: 'system', content: cleanSystem }] : []),
-          { role: 'user', content: cleanPrompt },
-        ],
-        temperature: 0.2,
-      }),
+      body: JSON.stringify(customBody),
     });
 
     if (!res.ok) {
@@ -726,6 +796,20 @@ export async function queryLlm(
   }
 
   // Fallback for built-in or offline: returns simulated or rule-based response
+  if (currentConfig.jsonSchema) {
+    const mockData: Record<string, any> = {};
+    const props = currentConfig.jsonSchema.properties || {};
+    for (const [key, propDef] of Object.entries<any>(props)) {
+      if (propDef.type === 'string') mockData[key] = `Sample ${key}`;
+      else if (propDef.type === 'number') mockData[key] = 42;
+      else if (propDef.type === 'boolean') mockData[key] = true;
+      else if (propDef.type === 'array') mockData[key] = ['Item 1', 'Item 2'];
+      else mockData[key] = null;
+    }
+    return JSON.stringify(mockData, null, 2);
+  } else if (currentConfig.responseFormat === 'json' || currentConfig.jsonMode) {
+    return JSON.stringify({ message: `Simulated analysis for: ${cleanPrompt}`, status: 'success' }, null, 2);
+  }
   return `Simulated analysis for: ${cleanPrompt}`;
 }
 

@@ -1356,12 +1356,42 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
       },
     });
   } else if (mode === 'search') {
-    const results = Array.isArray(data) ? data : (data.results || [data]);
+    let rawResults: any[] = [];
+    if (Array.isArray(data)) {
+      rawResults = data;
+    } else if (Array.isArray(data?.web)) {
+      rawResults = data.web;
+    } else if (Array.isArray(data?.results)) {
+      rawResults = data.results;
+    } else if (Array.isArray(data?.data)) {
+      rawResults = data.data;
+    } else if (Array.isArray(data?.items)) {
+      rawResults = data.items;
+    } else if (Array.isArray(data?.sources)) {
+      rawResults = data.sources;
+    } else if (Array.isArray(json?.data?.web)) {
+      rawResults = json.data.web;
+    } else if (Array.isArray(json?.web)) {
+      rawResults = json.web;
+    } else if (Array.isArray(json?.results)) {
+      rawResults = json.results;
+    } else if (Array.isArray(json?.data)) {
+      rawResults = json.data;
+    } else if (data && typeof data === 'object') {
+      if (data.title || data.url || data.markdown || data.content || data.snippet || data.description) {
+        rawResults = [data];
+      }
+    }
+    const results = rawResults;
 
     // Check if search results have screenshot
     const screenshot =
       data.screenshot ||
-      (Array.isArray(results) && results.find((r: any) => r && r.screenshot)?.screenshot) ||
+      json.screenshot ||
+      (Array.isArray(results) &&
+        results.find((r: any) => r && (r.screenshot || r.metadata?.screenshot))?.screenshot) ||
+      (Array.isArray(results) &&
+        results.find((r: any) => r && r.metadata?.screenshot)?.metadata?.screenshot) ||
       '';
     if (screenshot) {
       variablesToSet[`${outputVariable}_screenshot`] = screenshot;
@@ -1373,10 +1403,19 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
     // Format search results into clean markdown
     const combinedMarkdown = results
       .map((item: any, idx: number) => {
-        if (!item || typeof item !== 'object') return String(item ?? '');
-        const itemTitle = item.title || `Result ${idx + 1}`;
-        const itemUrl = item.url ? `\nSource: [${item.url}](${item.url})` : '';
-        const itemContent = item.markdown || item.description || item.snippet || item.content || '';
+        if (!item) return '';
+        if (typeof item === 'string') return item;
+        if (typeof item !== 'object') return String(item);
+        const itemTitle = item.title || item.metadata?.title || item.name || `Result ${idx + 1}`;
+        const itemUrl = item.url || item.metadata?.sourceURL || item.link || item.metadata?.url || '';
+        const itemContent =
+          item.markdown ||
+          item.content ||
+          item.description ||
+          item.snippet ||
+          item.text ||
+          item.metadata?.description ||
+          '';
         return `### ${itemTitle}${itemUrl}\n\n${itemContent}`;
       })
       .filter((s: string) => s.trim().length > 0)
@@ -1397,11 +1436,17 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
     }
 
     variablesToSet[`${outputVariable}_markdown`] = combinedMarkdown;
+    variablesToSet['firecrawlMarkdown'] = combinedMarkdown;
     variablesToSet[`${outputVariable}_results`] = results;
     variablesToSet[`${outputVariable}_items`] = results;
     variablesToSet[`${outputVariable}_count`] = results.length;
-    variablesToSet[`${outputVariable}_firstMarkdown`] = results[0]?.markdown || results[0]?.description || '';
-    variablesToSet[`${outputVariable}_firstUrl`] = results[0]?.url || '';
+    const firstItem = results[0];
+    variablesToSet[`${outputVariable}_firstMarkdown`] =
+      firstItem?.markdown || firstItem?.content || firstItem?.description || firstItem?.snippet || '';
+    variablesToSet[`${outputVariable}_firstUrl`] =
+      firstItem?.url || firstItem?.metadata?.sourceURL || firstItem?.link || '';
+    variablesToSet[`${outputVariable}_firstTitle`] =
+      firstItem?.title || firstItem?.metadata?.title || firstItem?.name || '';
 
     ctx.log({
       level: 'success',
@@ -1440,6 +1485,8 @@ export const executeFirecrawl: NodeExecutor = async (node, ctx) => {
       },
     });
   }
+
+  Object.assign(ctx.variables, variablesToSet);
 
   return {
     success: true,
@@ -2861,7 +2908,20 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
     : undefined;
   const outputVariable = node.data.properties.outputVariable || 'aiAnalysis';
   const jsonMode = !!node.data.properties.jsonMode;
-  const outputFormat = (node.data.properties.outputFormat || (jsonMode ? 'json' : 'text')) as AiAgentOutputFormat;
+  const structuredOutput = !!node.data.properties.structuredOutput;
+  let jsonSchema = node.data.properties.jsonSchema;
+  if (typeof jsonSchema === 'string' && jsonSchema.trim()) {
+    try {
+      jsonSchema = JSON.parse(jsonSchema);
+    } catch {
+      // Keep as-is or null
+    }
+  }
+  const jsonSchemaName = node.data.properties.jsonSchemaName || 'structured_output';
+  const jsonSchemaStrict = node.data.properties.jsonSchemaStrict !== false;
+  const isJsonExpected = structuredOutput || jsonMode || !!jsonSchema || node.data.properties.outputFormat === 'json';
+
+  const outputFormat = (node.data.properties.outputFormat || (isJsonExpected ? 'json' : 'text')) as AiAgentOutputFormat;
   const autoDownload = !!node.data.properties.autoDownload;
   const rawDownloadFilename = node.data.properties.downloadFilename || `${outputVariable}_output`;
   const downloadFilename = interpolateVariables(rawDownloadFilename, ctx.variables);
@@ -2876,6 +2936,8 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
       ...(customModel ? { model: customModel } : {}),
       ...(customProvider ? { provider: customProvider } : {}),
       ...(customOpenaiBaseUrl ? { openaiBaseUrl: customOpenaiBaseUrl } : {}),
+      ...(jsonSchema ? { jsonSchema, jsonSchemaName, jsonSchemaStrict, structuredOutput: true } : {}),
+      ...(isJsonExpected ? { responseFormat: 'json', jsonMode: true } : {}),
     });
   } catch (err: any) {
     const errorMsg = err.message || String(err);
@@ -2889,7 +2951,17 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
   }
 
   const docResult = formatAiAgentDocument(responseText, outputFormat, downloadFilename);
-  const output = docResult.parsedOutput;
+  let output = docResult.parsedOutput;
+
+  // If structuredOutput or jsonMode is enabled, ensure output is parsed JSON object/array
+  if (isJsonExpected && (output === null || typeof output !== 'object')) {
+    try {
+      const clean = responseText.replace(/```json\n?/gi, '').replace(/```\n?/g, '').trim();
+      output = JSON.parse(clean);
+    } catch {
+      // Keep output as is
+    }
+  }
 
   if (autoDownload && docResult.dataUrl) {
     try {
@@ -2928,11 +3000,30 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
     }
   }
 
+  const variablesToSet: Record<string, any> = {
+    [outputVariable]: output,
+    [`${outputVariable}_dataUrl`]: docResult.dataUrl,
+    [`${outputVariable}_content`]: docResult.formattedContent,
+    [`${outputVariable}_filename`]: docResult.defaultFilename,
+    [`${outputVariable}_raw`]: responseText,
+    [`${outputVariable}_json`]:
+      typeof output === 'object' && output !== null ? JSON.stringify(output, null, 2) : responseText,
+  };
+
+  // If output is a structured object, expose top-level keys as variables for easy access
+  if (output && typeof output === 'object' && !Array.isArray(output)) {
+    for (const [k, v] of Object.entries(output)) {
+      variablesToSet[`${outputVariable}_${k}`] = v;
+    }
+  }
+
+  Object.assign(ctx.variables, variablesToSet);
+
   ctx.updateNodeState(node.id, {
     status: 'success',
     output,
     dynamicState: {
-      message: `${outputFormat.toUpperCase()}${autoDownload ? ' (saved)' : ''}`,
+      message: `${isJsonExpected ? 'JSON (Structured)' : outputFormat.toUpperCase()}${autoDownload ? ' (saved)' : ''}`,
       response: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
       detail: typeof output === 'string' ? output.slice(0, 120) : JSON.stringify(output).slice(0, 120),
     },
@@ -2940,7 +3031,7 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
 
   ctx.log({
     level: 'success',
-    message: `AI Agent finished analysis (${outputFormat.toUpperCase()})`,
+    message: `AI Agent finished analysis (${isJsonExpected ? 'Structured JSON' : outputFormat.toUpperCase()})`,
     nodeId: node.id,
     nodeName: node.data.label,
   });
@@ -2948,12 +3039,7 @@ export const executeAiAgent: NodeExecutor = async (node, ctx) => {
   return {
     success: true,
     output,
-    variables: {
-      [outputVariable]: output,
-      [`${outputVariable}_dataUrl`]: docResult.dataUrl,
-      [`${outputVariable}_content`]: docResult.formattedContent,
-      [`${outputVariable}_filename`]: docResult.defaultFilename,
-    },
+    variables: variablesToSet,
   };
 };
 

@@ -55,12 +55,12 @@ export const ErrorHandlerNode: React.FC<ErrorHandlerNodeProps> = memo(
       <div
         className={`relative rounded-xl bg-[#0f121a] border ${borderClass} ${glowClass} min-w-[220px] max-w-[280px] p-3 text-white shadow-xl transition-all select-none`}
       >
-        {/* Left Input Handle */}
+        {/* Top Input Handle */}
         <Handle
           type="target"
-          position={Position.Left}
+          position={Position.Top}
           id="input"
-          className="!w-2.5 !h-2.5 !bg-amber-400 !border-2 !border-[#0f121a]"
+          className="!w-3 !h-3 !bg-[#323c52] !border-2 !border-[#0f121a] hover:!bg-amber-400"
         />
 
         {/* Node Header */}
@@ -125,52 +125,75 @@ export const ErrorHandlerNode: React.FC<ErrorHandlerNodeProps> = memo(
           </div>
         )}
 
-        {/* Outgoing Branch Labels & Handles */}
-        <div className="pt-2 border-t border-[#1d2433] space-y-2">
-          {/* Catch / Error Branch (Runs on error) */}
-          <div className="relative flex items-center justify-between text-[10px]">
-            <span className="text-rose-400 font-medium flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" />
-              <span>On Error (Catch)</span>
-            </span>
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="error"
-              className="!w-2.5 !h-2.5 !bg-rose-500 !border-2 !border-[#0f121a] !-right-1.5"
-            />
-          </div>
-
-          {/* Continue / Done Branch (Normal flow) */}
-          <div className="relative flex items-center justify-between text-[10px]">
-            <span className="text-emerald-400 font-medium flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3" />
-              <span>Continue (Done)</span>
-            </span>
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="done"
-              className="!w-2.5 !h-2.5 !bg-emerald-400 !border-2 !border-[#0f121a] !-right-1.5"
-            />
-          </div>
-
-          {/* Try Branch Handle (Optional) */}
-          {watchMode === 'try_branch' && (
-            <div className="relative flex items-center justify-between text-[10px]">
-              <span className="text-indigo-300 font-medium flex items-center gap-1">
+        {/* Outgoing Branch Labels & Bottom Handles */}
+        {watchMode === 'try_branch' ? (
+          <>
+            <div className="flex items-center justify-between pt-2 border-t border-[#1d2433] px-1 text-[10px] font-semibold">
+              <div className="flex items-center gap-1 text-indigo-400" title="Try Protected Flow">
                 <ArrowRight className="w-3 h-3" />
-                <span>Try Protected Flow</span>
-              </span>
-              <Handle
-                type="source"
-                position={Position.Right}
-                id="try"
-                className="!w-2.5 !h-2.5 !bg-indigo-400 !border-2 !border-[#0f121a] !-right-1.5"
-              />
+                <span>TRY</span>
+              </div>
+              <div className="flex items-center gap-1 text-rose-400" title="On Error (Catch)">
+                <AlertCircle className="w-3 h-3" />
+                <span>CATCH</span>
+              </div>
+              <div className="flex items-center gap-1 text-emerald-400" title="Continue (Done)">
+                <ShieldCheck className="w-3 h-3" />
+                <span>DONE</span>
+              </div>
             </div>
-          )}
-        </div>
+
+            <Handle
+              id="try"
+              type="source"
+              position={Position.Bottom}
+              style={{ left: '20%' }}
+              className="!w-3 !h-3 !bg-indigo-500 !border-2 !border-[#0f121a] hover:!bg-indigo-400"
+            />
+            <Handle
+              id="error"
+              type="source"
+              position={Position.Bottom}
+              style={{ left: '50%' }}
+              className="!w-3 !h-3 !bg-rose-500 !border-2 !border-[#0f121a] hover:!bg-rose-400"
+            />
+            <Handle
+              id="done"
+              type="source"
+              position={Position.Bottom}
+              style={{ left: '80%' }}
+              className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-[#0f121a] hover:!bg-emerald-400"
+            />
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between pt-2 border-t border-[#1d2433] px-2 text-[10px] font-semibold">
+              <div className="flex items-center gap-1 text-rose-400" title="On Error (Catch)">
+                <AlertCircle className="w-3 h-3" />
+                <span>ON ERROR</span>
+              </div>
+              <div className="flex items-center gap-1 text-emerald-400" title="Continue / Normal Flow">
+                <ShieldCheck className="w-3 h-3" />
+                <span>CONTINUE</span>
+              </div>
+            </div>
+
+            <Handle
+              id="error"
+              type="source"
+              position={Position.Bottom}
+              style={{ left: '30%' }}
+              className="!w-3 !h-3 !bg-rose-500 !border-2 !border-[#0f121a] hover:!bg-rose-400"
+            />
+            <Handle
+              id="done"
+              type="source"
+              position={Position.Bottom}
+              style={{ left: '70%' }}
+              className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-[#0f121a] hover:!bg-emerald-400"
+            />
+          </>
+        )}
       </div>
     );
   }

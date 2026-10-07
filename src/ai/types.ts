@@ -16,6 +16,13 @@ export interface AiConfig {
   customEndpoint?: string;
   openaiBaseUrl?: string;
   mistralApiKey?: string;
+  jsonSchema?: Record<string, any>;
+  jsonSchemaName?: string;
+  jsonSchemaDescription?: string;
+  jsonSchemaStrict?: boolean;
+  responseFormat?: 'text' | 'json' | 'json_schema' | any;
+  jsonMode?: boolean;
+  structuredOutput?: boolean;
 }
 
 export interface SynthesisRequest {
