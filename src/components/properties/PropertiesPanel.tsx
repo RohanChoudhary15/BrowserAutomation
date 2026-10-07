@@ -88,6 +88,7 @@ import { DataNodesProperties } from './sections/DataNodesProperties';
 import { ControlFlowProperties } from './sections/ControlFlowProperties';
 import { TransformProperties } from './sections/TransformProperties';
 import { JsonSchemaSection } from './sections/JsonSchemaSection';
+import { VideoGeneratorProperties } from './sections/VideoGeneratorProperties';
 import { TableModal } from './TableModal';
 import {
   getAllCardSchemas,
@@ -2024,7 +2025,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, Firecrawl, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data', 'dataset_input'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'generate_video', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data', 'dataset_input'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -5281,6 +5282,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               );
             })()}
           </div>
+        )}
+
+        {/* AI Video Generator Node */}
+        {selectedNode.data.type === 'generate_video' && (
+          <VideoGeneratorProperties
+            selectedNode={selectedNode}
+            onPropChange={handlePropChange}
+            runtimeState={runtimeState}
+            variables={variables}
+          />
         )}
 
         {/* Firecrawl (Keyless) Scraper Node */}

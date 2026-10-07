@@ -35,6 +35,10 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
     const imgStr = data.properties?.inputImage ? ' • img2img' : '';
     summary = `${data.properties?.model || 'dall-e-3'} • ${data.properties?.size || '1024x1024'}${asyncStr}${imgStr}`;
   }
+  else if (data.type === 'generate_video') {
+    const imgStr = data.properties?.inputImage ? ' • img2vid' : ' • text2vid';
+    summary = `${data.properties?.duration || 15}s • ${data.properties?.aspectRatio || '9:16'}${imgStr}`;
+  }
   else if (data.type === 'firecrawl') summary = `${data.properties?.mode || 'scrape'}: ${data.properties?.url || '{{currentUrl}}'}`;
   else if (data.type === 'download_file') summary = data.properties?.filename || 'download.txt';
   else if (data.type === 'show_notification') summary = `"${data.properties?.title || 'Alert'}"`;
@@ -271,7 +275,7 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
       )}
 
       {/* Mini Screenshot/Image preview if present */}
-      {runtime?.dynamicState?.previewUrl && status === 'success' && (
+      {runtime?.dynamicState?.previewUrl && data.type !== 'generate_video' && status === 'success' && (
         <div className="mt-2 rounded-lg border border-[#1c2230] overflow-hidden bg-black/60 relative group/thumb">
           <img
             src={runtime.dynamicState.previewUrl}
@@ -283,6 +287,26 @@ export const BaseNode: React.FC<CustomNodeProps> = memo(({ id, data, selected })
             {data.properties?.size && (
               <span className="text-[8px] text-gray-400">{data.properties.size}</span>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Mini Video preview if present */}
+      {((runtime?.dynamicState?.previewVideoUrl) || (data.type === 'generate_video' && typeof runtime?.output === 'string' && runtime.output.startsWith('http'))) && status === 'success' && (
+        <div className="mt-2 rounded-lg border border-[#1c2230] overflow-hidden bg-black/60 relative group/thumb">
+          <video
+            src={runtime?.dynamicState?.previewVideoUrl || (typeof runtime?.output === 'string' ? runtime.output : '')}
+            controls
+            autoPlay
+            loop
+            muted
+            className="w-full max-h-36 object-contain bg-black/80"
+          />
+          <div className="absolute bottom-0 inset-x-0 bg-black/75 px-1.5 py-0.5 text-[9px] text-emerald-300 font-mono flex items-center justify-between backdrop-blur-sm pointer-events-none">
+            <span>Generated video</span>
+            <span className="text-[8px] text-gray-400">
+              {data.properties?.duration || 15}s • {data.properties?.aspectRatio || '9:16'}
+            </span>
           </div>
         </div>
       )}

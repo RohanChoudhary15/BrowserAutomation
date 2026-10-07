@@ -7,6 +7,7 @@ import {
   ConditionRule,
 } from '../evaluator';
 import { queryLlm, getAiConfig, getOpenAiBaseUrl, safeFetch } from '../../ai/aiService';
+import { generateVideo, DEFAULT_AURAY_API_KEY } from '../../ai/videoService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
 import {
@@ -3516,6 +3517,145 @@ export const executeGenerateImage: NodeExecutor = async (node, ctx) => {
       [`${outputVariable}_revised_prompt`]: revisedPrompt,
     },
     items: imageUrls.map((url, idx) => ({ id: idx + 1, url, prompt, index: idx })),
+  };
+};
+
+export const executeGenerateVideo: NodeExecutor = async (node, ctx) => {
+  const promptRaw = node.data.properties.prompt || '';
+  const prompt = String(interpolateVariables(promptRaw, ctx.variables) ?? '').trim();
+  if (!prompt) {
+    throw new Error('Video prompt cannot be empty.');
+  }
+
+  const rawInputImage = node.data.properties.inputImage || '';
+  const inputImage = String(interpolateVariables(rawInputImage, ctx.variables) ?? '').trim();
+
+  const rawDuration = node.data.properties.duration || 15;
+  const duration = Number(interpolateVariables(String(rawDuration), ctx.variables)) || 15;
+
+  const rawRatio = node.data.properties.aspectRatio || '9:16';
+  const aspectRatio = String(interpolateVariables(String(rawRatio), ctx.variables) ?? '9:16').trim();
+
+  const rawRes = node.data.properties.resolution || '768P';
+  const resolution = String(interpolateVariables(String(rawRes), ctx.variables) ?? '768P').trim();
+
+  const sound = node.data.properties.sound !== false;
+
+  const rawApiKey = node.data.properties.apiKey || '';
+  const customApiKey = String(interpolateVariables(rawApiKey, ctx.variables) ?? '').trim();
+  const apiKey = customApiKey || DEFAULT_AURAY_API_KEY;
+
+  const outputVariable = node.data.properties.outputVariable || 'generatedVideoUrl';
+  const autoDownload = !!node.data.properties.autoDownload;
+  const rawDownloadFilename = node.data.properties.downloadFilename || `${outputVariable}.mp4`;
+  let downloadFilename = String(interpolateVariables(rawDownloadFilename, ctx.variables) ?? `${outputVariable}.mp4`).trim();
+  if (!downloadFilename.endsWith('.mp4')) {
+    downloadFilename += '.mp4';
+  }
+
+  ctx.log({
+    level: 'info',
+    message: `Starting MiniMax H3 video generation (${duration}s, ${aspectRatio}, ${resolution}${inputImage ? ', image-to-video' : ', text-to-video'})...`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  const result = await generateVideo({
+    prompt,
+    duration,
+    aspectRatio,
+    resolution,
+    inputImage: inputImage || undefined,
+    sound,
+    apiKey,
+    signal: ctx.signal,
+    onProgress: (status, detail, progress) => {
+      ctx.log({
+        level: 'info',
+        message: `Video generation [${status}]: ${detail || ''}`,
+        nodeId: node.id,
+        nodeName: node.data.label,
+      });
+      ctx.updateNodeState(node.id, {
+        status: 'running',
+        dynamicState: {
+          message: `Generating: ${status}`,
+          progress,
+          detail: `${detail || ''}`,
+          nodeId: node.id,
+        },
+      });
+    },
+  });
+
+  if (autoDownload && result.videoUrl) {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        await new Promise<number | undefined>((resolve, reject) => {
+          chrome.downloads.download(
+            {
+              url: result.videoUrl,
+              filename: downloadFilename,
+              saveAs: false,
+            },
+            (downloadId) => {
+              if (chrome.runtime?.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+              } else {
+                resolve(downloadId);
+              }
+            }
+          );
+        });
+      } else if (typeof document !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = result.videoUrl;
+        a.download = downloadFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      ctx.log({ level: 'info', message: `Downloaded generated video as ${downloadFilename}`, nodeId: node.id });
+    } catch (dlErr: any) {
+      ctx.log({ level: 'warn', message: `Auto-download video warning: ${dlErr.message}`, nodeId: node.id });
+    }
+  }
+
+  ctx.log({
+    level: 'success',
+    message: `Video successfully generated (${result.duration}s, ID: ${result.requestId})`,
+    nodeId: node.id,
+    nodeName: node.data.label,
+  });
+
+  ctx.updateNodeState(node.id, {
+    status: 'success',
+    output: result.videoUrl,
+    dynamicState: {
+      message: `Video generated (${result.duration}s)`,
+      previewVideoUrl: result.videoUrl,
+      previewUrl: result.firstFrameUrl,
+      videoAsset: result.asset,
+      requestId: result.requestId,
+      nodeId: node.id,
+      detail: `${result.duration}s • ${result.aspectRatio} • ${result.resolution}`,
+    },
+  });
+
+  return {
+    success: true,
+    output: result.videoUrl,
+    variables: {
+      [outputVariable]: result.videoUrl,
+      [`${outputVariable}_id`]: result.requestId,
+      [`${outputVariable}_asset`]: result.asset,
+      [`${outputVariable}_duration`]: result.duration,
+      [`${outputVariable}_aspectRatio`]: result.aspectRatio,
+      [`${outputVariable}_resolution`]: result.resolution,
+      [`${outputVariable}_first_frame`]: result.firstFrameUrl || '',
+      lastGeneratedVideo: result.videoUrl,
+      videoUrl: result.videoUrl,
+    },
   };
 };
 
@@ -8269,6 +8409,7 @@ export const executors: Record<string, NodeExecutor> = {
   ai_agent: executeAiAgent,
   autonomous_agent: executeAutonomousAgent,
   generate_image: executeGenerateImage,
+  generate_video: executeGenerateVideo,
   telegram_message: executeTelegramMessage,
   telegram_watch: executeTelegramWatch,
   discord_message: executeDiscordMessage,

@@ -1426,6 +1426,26 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       downloadFilename: 'generated_image',
     },
   },
+  generate_video: {
+    type: 'generate_video',
+    label: 'AI Video Generator',
+    category: 'utility',
+    description: 'Generate cinematic AI videos from text or images using Auray AI MiniMax H3 with custom duration and aspect ratio',
+    icon: 'Video',
+    defaultProperties: {
+      prompt: 'A cinematic aerial shot over futuristic Tokyo at night with volumetric lighting and rain',
+      inputImage: '', // Optional source image URL, data URI, or {{variable}} for first frame animation
+      mode: 'auto', // 'auto' | 'text_to_video' | 'image_to_video'
+      duration: 15, // 5 | 10 | 15 (seconds)
+      aspectRatio: '9:16', // '9:16' | '16:9' | '1:1' | '4:3' | '3:4'
+      resolution: '768P', // '768P' | '1080P'
+      sound: true, // generate synchronized audio
+      apiKey: '',
+      outputVariable: 'generatedVideoUrl',
+      autoDownload: false,
+      downloadFilename: 'generated_video',
+    },
+  },
 
   // Messaging & Notifications
   telegram_message: {
