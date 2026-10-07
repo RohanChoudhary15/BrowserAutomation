@@ -25,6 +25,7 @@ import {
   cleanPrice,
   formatDateString,
 } from '../../utils/dataPostProcessor';
+import { applyStringOperation } from '../../utils/stringTransform';
 import {
   combineDatasets,
   CombineDatasetsOptions,
@@ -1726,78 +1727,42 @@ export const executeTransform: NodeExecutor = async (node, ctx) => {
   const operation = node.data.properties.operation || 'trim';
   const outputVariable = node.data.properties.outputVariable || 'transformedValue';
 
-  let result: any = input;
+  let result: any;
   const str = String(input ?? '');
 
-  switch (operation) {
-    case 'lowercase': result = str.toLowerCase(); break;
-    case 'uppercase': result = str.toUpperCase(); break;
-    case 'trim': result = str.trim(); break;
-    case 'replace': {
-      const search = node.data.properties.search || '';
-      const replaceWith = node.data.properties.replaceWith || '';
-      result = str.replaceAll(search, replaceWith);
-      break;
-    }
-    case 'split': {
-      const delimiter = node.data.properties.delimiter || ',';
-      result = str.split(delimiter).map(s => s.trim());
-      break;
-    }
-    case 'join': {
-      const delimiter = node.data.properties.delimiter || ', ';
-      result = Array.isArray(input) ? input.join(delimiter) : str;
-      break;
-    }
-    case 'substring': {
-      const start = Number(node.data.properties.start) || 0;
-      const length = node.data.properties.length !== undefined ? Number(node.data.properties.length) : undefined;
-      result = length !== undefined ? str.substring(start, start + length) : str.substring(start);
-      break;
-    }
-    case 'parseNumber': {
-      const cleaned = str.replace(/[^0-9.-]/g, '');
-      result = Number(cleaned);
-      break;
-    }
-    case 'parseJSON': {
-      result = JSON.parse(str);
-      break;
-    }
-    case 'extractField':
-    case 'getProperty': {
-      const field = node.data.properties.field || node.data.properties.fieldName || node.data.properties.property || '';
-      let targetObj = input;
-      if (typeof targetObj === 'string') {
-        try {
-          targetObj = JSON.parse(targetObj);
-        } catch {
-          // not JSON
-        }
-      }
-      if (targetObj && typeof targetObj === 'object') {
-        result = field ? getNestedValue(targetObj, field) : targetObj;
-      } else {
-        result = '';
-      }
-      break;
-    }
-    case 'normalizeUrl': {
-      const basePrefix = node.data.properties.basePrefix || node.data.properties.urlBasePrefix || '';
-      const stripQueryParams = node.data.properties.stripQueryParams !== false;
-      result = normalizeUrl(str, { basePrefix, stripQueryParams });
-      break;
-    }
-    case 'cleanPrice': {
-      const mode = node.data.properties.priceMode || 'number_only';
-      result = cleanPrice(str, { mode });
-      break;
-    }
-    case 'formatDate': {
-      const mode = node.data.properties.dateMode || 'iso_date';
-      result = formatDateString(str, { mode });
-      break;
-    }
+  if (operation === 'normalizeUrl') {
+    const basePrefix = node.data.properties.basePrefix || node.data.properties.urlBasePrefix || '';
+    const stripQueryParams = node.data.properties.stripQueryParams !== false;
+    result = normalizeUrl(str, { basePrefix, stripQueryParams });
+  } else if (operation === 'formatDate') {
+    const mode = node.data.properties.dateMode || 'iso_date';
+    result = formatDateString(str, { mode });
+  } else {
+    result = applyStringOperation(input, operation, {
+      ...node.data.properties,
+      sliceExpr: node.data.properties.sliceExpr,
+      start: node.data.properties.start !== undefined ? Number(node.data.properties.start) : undefined,
+      end: node.data.properties.end !== undefined ? Number(node.data.properties.end) : undefined,
+      length: node.data.properties.length !== undefined ? Number(node.data.properties.length) : undefined,
+      count: node.data.properties.count !== undefined ? Number(node.data.properties.count) : undefined,
+      prefix: node.data.properties.prefix,
+      suffix: node.data.properties.suffix,
+      chars: node.data.properties.chars,
+      stripMode: node.data.properties.stripMode,
+      delimiter: node.data.properties.delimiter,
+      search: node.data.properties.search,
+      replaceWith: node.data.properties.replaceWith,
+      startDelimiter: node.data.properties.startDelimiter,
+      endDelimiter: node.data.properties.endDelimiter,
+      inclusive: node.data.properties.inclusive,
+      fromEnd: node.data.properties.fromEnd,
+      decimals: node.data.properties.decimals,
+      roundMode: node.data.properties.roundMode,
+      currencySymbol: node.data.properties.currencySymbol,
+      priceMode: node.data.properties.priceMode,
+      field: node.data.properties.field || node.data.properties.fieldName || node.data.properties.property,
+      fallbackValue: node.data.properties.fallbackValue,
+    });
   }
 
   if (outputVariable && ctx.variables) {

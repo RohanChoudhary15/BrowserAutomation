@@ -15,6 +15,7 @@ import {
   GripHorizontal,
   Table as TableIcon,
   X,
+  Plus,
 } from 'lucide-react';
 import { importDatasetFile } from '../utils/datasetImporter';
 
@@ -323,6 +324,7 @@ export const DatasetInputNode: React.FC<DatasetInputNodeProps> = memo(({ id, dat
         <div
           draggable
           onDragStart={(e) => {
+            e.stopPropagation();
             e.dataTransfer.setData('application/autoflow-node', 'for_each');
             e.dataTransfer.setData(
               'application/autoflow-node-props',
@@ -337,16 +339,38 @@ export const DatasetInputNode: React.FC<DatasetInputNodeProps> = memo(({ id, dat
             e.dataTransfer.setData('application/autoflow-source-handle', 'done');
             e.dataTransfer.effectAllowed = 'copyMove';
           }}
-          className="mb-2 p-1.5 rounded-lg bg-gradient-to-r from-indigo-950/60 to-purple-950/50 hover:from-indigo-900/70 hover:to-purple-900/60 border border-indigo-500/40 hover:border-indigo-400 cursor-grab active:cursor-grabbing transition-all flex items-center justify-between shadow-sm select-none"
-          title="Drag this into canvas to create a connected For Each loop"
+          className="nodrag mb-2 p-1.5 rounded-lg bg-gradient-to-r from-indigo-950/60 to-purple-950/50 hover:from-indigo-900/70 hover:to-purple-900/60 border border-indigo-500/40 hover:border-indigo-400 cursor-grab active:cursor-grabbing transition-all flex items-center justify-between shadow-sm select-none"
+          title="Drag onto canvas to create connected For Each loop, or click + to add instantly"
         >
           <div className="flex items-center gap-1.5 text-indigo-300 text-[10px] font-medium">
             <Repeat className="w-3 h-3 text-indigo-400 shrink-0" />
             <span>Drag For Each Loop</span>
           </div>
-          <GripHorizontal className="w-3 h-3 text-indigo-400/80 shrink-0" />
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(
+                  new CustomEvent('autoflow:add-for-each-node', {
+                    detail: {
+                      arrayKey: outVar,
+                      sourceNodeId: id,
+                    },
+                  })
+                );
+              }}
+              className="p-0.5 px-1 rounded bg-indigo-700/60 hover:bg-indigo-600 text-indigo-100 text-[9px] flex items-center gap-0.5 transition-colors"
+              title="Instantly add and connect For Each loop below"
+            >
+              <Plus className="w-2.5 h-2.5" />
+              <span>Add</span>
+            </button>
+            <GripHorizontal className="w-3 h-3 text-indigo-400/80 shrink-0" />
+          </div>
         </div>
       )}
+
 
       {/* Hidden File Input */}
       <input

@@ -25,6 +25,7 @@ import {
   GripVertical,
   Copy,
   Check,
+  Plus,
 } from 'lucide-react';
 import { exportAndDownloadDataset } from '../utils/documentExporter';
 import { importDatasetFile } from '../utils/datasetImporter';
@@ -531,8 +532,8 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
             e.dataTransfer.setData('application/autoflow-source-handle', 'loop_done');
             e.dataTransfer.effectAllowed = 'copyMove';
           }}
-          className="mt-2 p-1.5 rounded-lg bg-orange-950/30 border border-orange-500/30 hover:bg-orange-900/40 hover:border-orange-400 cursor-grab active:cursor-grabbing transition-all select-none shadow-sm group/drag"
-          title="Drag onto canvas to create a For Each loop iterating over each scraped item"
+          className="nodrag mt-2 p-1.5 rounded-lg bg-orange-950/30 border border-orange-500/30 hover:bg-orange-900/40 hover:border-orange-400 cursor-grab active:cursor-grabbing transition-all select-none shadow-sm group/drag"
+          title="Drag onto canvas to create connected For Each loop, or click + Add to connect instantly"
         >
           <div className="flex items-center justify-between gap-1 text-[10px] mb-1">
             <div className="flex items-center gap-1 text-orange-300 font-medium">
@@ -540,10 +541,32 @@ export const ScraperNode: React.FC<ScraperNodeProps> = memo(({ id, data, selecte
               <Repeat className="w-3 h-3 text-orange-400 shrink-0" />
               <span>Drag &quot;For Each&quot; Loop</span>
             </div>
-            <span className="text-[9px] font-mono text-orange-300 bg-orange-900/60 px-1 py-0.5 rounded border border-orange-700/40">
-              &#123;&#123;{outVar}&#125;&#125;
-            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(
+                    new CustomEvent('autoflow:add-for-each-node', {
+                      detail: {
+                        arrayKey: outVar,
+                        sourceNodeId: id,
+                      },
+                    })
+                  );
+                }}
+                className="p-0.5 px-1 rounded bg-orange-700/60 hover:bg-orange-600 text-orange-100 text-[9px] flex items-center gap-0.5 transition-colors"
+                title="Instantly add and connect For Each loop below"
+              >
+                <Plus className="w-2.5 h-2.5" />
+                <span>Add</span>
+              </button>
+              <span className="text-[9px] font-mono text-orange-300 bg-orange-900/60 px-1 py-0.5 rounded border border-orange-700/40">
+                &#123;&#123;{outVar}&#125;&#125;
+              </span>
+            </div>
           </div>
+
 
           {/* Exposed Column Variables preview */}
           <div className="pt-1 border-t border-orange-500/20">

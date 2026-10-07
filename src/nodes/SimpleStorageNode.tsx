@@ -17,7 +17,9 @@ import {
   HardDrive,
   Repeat,
   GripVertical,
+  Plus,
 } from 'lucide-react';
+
 
 export interface SimpleStorageNodeProps extends NodeProps {
   data: WorkflowNodeData & {
@@ -139,18 +141,40 @@ export const SimpleStorageNode: React.FC<SimpleStorageNodeProps> = memo(({ id, d
             e.dataTransfer.setData('application/autoflow-source-node', id);
             e.dataTransfer.effectAllowed = 'copyMove';
           }}
-          className="mt-2 flex items-center justify-between p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/50 hover:border-emerald-400 cursor-grab active:cursor-grabbing transition-all group/drag text-[10px] select-none shadow-sm"
-          title={`Drag onto canvas to create a For Each loop node iterating over {{${key}}}`}
+          className="nodrag mt-2 flex items-center justify-between p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/50 hover:border-emerald-400 cursor-grab active:cursor-grabbing transition-all group/drag text-[10px] select-none shadow-sm"
+          title={`Drag onto canvas to create connected For Each loop, or click + Add to connect instantly`}
         >
           <div className="flex items-center gap-1 text-emerald-300 font-medium">
             <GripVertical className="w-3 h-3 text-emerald-400/80 group-hover/drag:text-emerald-300" />
             <Repeat className="w-3 h-3 text-emerald-400" />
             <span>Drag For Each Node</span>
           </div>
-          <span className="text-[9px] font-mono text-emerald-400/90 bg-emerald-900/60 px-1 py-0.5 rounded border border-emerald-700/40">
-            &#123;&#123;{key}&#125;&#125;
-          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(
+                  new CustomEvent('autoflow:add-for-each-node', {
+                    detail: {
+                      arrayKey: key,
+                      sourceNodeId: id,
+                    },
+                  })
+                );
+              }}
+              className="p-0.5 px-1 rounded bg-emerald-700/60 hover:bg-emerald-600 text-emerald-100 text-[9px] flex items-center gap-0.5 transition-colors"
+              title="Instantly add and connect For Each loop below"
+            >
+              <Plus className="w-2.5 h-2.5" />
+              <span>Add</span>
+            </button>
+            <span className="text-[9px] font-mono text-emerald-400/90 bg-emerald-900/60 px-1 py-0.5 rounded border border-emerald-700/40">
+              &#123;&#123;{key}&#125;&#125;
+            </span>
+          </div>
         </div>
+
       )}
 
       {/* Quick Action buttons */}

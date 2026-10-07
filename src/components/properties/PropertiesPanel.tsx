@@ -65,6 +65,11 @@ import {
   Repeat,
   GripVertical,
   Radio,
+  Scissors,
+  Type,
+  Hash,
+  SlidersHorizontal,
+  Wand2,
 } from 'lucide-react';
 import { PDF_THEMES, PdfThemeId } from '../../utils/pdfGenerator';
 import { fetchAvailableModels, queryLlm } from '../../ai/aiService';
@@ -81,6 +86,7 @@ import {
 import { ScraperPropertiesPanel } from './scrapers/ScraperPropertiesPanel';
 import { DataNodesProperties } from './sections/DataNodesProperties';
 import { ControlFlowProperties } from './sections/ControlFlowProperties';
+import { TransformProperties } from './sections/TransformProperties';
 import { TableModal } from './TableModal';
 import {
   getAllCardSchemas,
@@ -92,6 +98,7 @@ import {
 } from '../../storage/cardSchemaStore';
 import { exportAndDownloadDataset } from '../../utils/documentExporter';
 import { importDatasetFile } from '../../utils/datasetImporter';
+import { applyStringOperation } from '../../utils/stringTransform';
 
 const getImagePreviews = (output: any): string[] => {
   if (!output) return [];
@@ -3346,9 +3353,31 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                         <Repeat className="w-3.5 h-3.5 text-indigo-400" />
                         <span>Drag &quot;For Each&quot; Loop to Canvas</span>
                       </div>
-                      <span className="text-[10px] font-mono text-indigo-300 bg-indigo-900/50 px-1.5 py-0.5 rounded border border-indigo-700/40">
-                        &#123;&#123;{props.outputVariable || 'scrapedProducts'}&#125;&#125;
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-indigo-300 bg-indigo-900/50 px-1.5 py-0.5 rounded border border-indigo-700/40">
+                          &#123;&#123;{props.outputVariable || 'scrapedProducts'}&#125;&#125;
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.dispatchEvent(
+                              new CustomEvent('autoflow:add-for-each-node', {
+                                detail: {
+                                  arrayKey: props.outputVariable || 'scrapedProducts',
+                                  sourceNodeId: selectedNode.id,
+                                  exposedVariables: cols,
+                                },
+                              })
+                            );
+                          }}
+                          className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-medium flex items-center gap-1 shadow-sm transition-colors"
+                          title="Instantly add and connect For Each node immediately below this scraper"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                          <span>Add</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="text-[10px] text-gray-400">
@@ -6212,166 +6241,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
         {/* Transform Node */}
         {selectedNode.data.type === 'transform' && (
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Input Text or Object</label>
-              <input
-                type="text"
-                value={props.input || ''}
-                onChange={(e) => handlePropChange('input', e.target.value)}
-                placeholder="e.g. {{currentProduct}}, {{title}}, {{scrapedProducts}}"
-                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-gray-400 mb-1">Operation</label>
-              <select
-                value={props.operation || 'trim'}
-                onChange={(e) => handlePropChange('operation', e.target.value)}
-                className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-              >
-                <option value="extractField">Extract Property / Field (e.g. link, title, price)</option>
-                <option value="normalizeUrl">Normalize URL (Prepend Base / Strip Tracking)</option>
-                <option value="cleanPrice">Clean Price / Extract Number</option>
-                <option value="formatDate">Format Date / Relative Time</option>
-                <option value="trim">Trim Whitespace</option>
-                <option value="lowercase">To Lowercase</option>
-                <option value="uppercase">To Uppercase</option>
-                <option value="replace">Replace Text</option>
-                <option value="substring">Substring (Slice)</option>
-                <option value="split">Split to Array</option>
-                <option value="join">Join Array to String</option>
-                <option value="parseNumber">Extract / Parse Number</option>
-                <option value="parseJSON">Parse JSON String</option>
-              </select>
-            </div>
-            {props.operation === 'extractField' && (
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Field / Property Name</label>
-                <input
-                  type="text"
-                  value={props.field || ''}
-                  onChange={(e) => handlePropChange('field', e.target.value)}
-                  placeholder="e.g. link, title, price, image"
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                />
-                <p className="text-[10px] text-gray-500 mt-1">
-                  Extracts a specific property from an object or JSON string (e.g. from &#123;&#123;currentProduct&#125;&#125;).
-                </p>
-              </div>
-            )}
-            {props.operation === 'normalizeUrl' && (
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Base URL Prefix</label>
-                  <input
-                    type="text"
-                    value={props.basePrefix || ''}
-                    onChange={(e) => handlePropChange('basePrefix', e.target.value)}
-                    placeholder="e.g. https://www.amazon.in"
-                    className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                  />
-                </div>
-                <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={props.stripQueryParams !== false}
-                    onChange={(e) => handlePropChange('stripQueryParams', e.target.checked)}
-                    className="rounded bg-[#161a24] border-[#232a3b] text-indigo-600"
-                  />
-                  <span className="text-[10px]">Strip tracking query parameters (?ref=..., utm_*)</span>
-                </label>
-              </div>
-            )}
-            {props.operation === 'cleanPrice' && (
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Price Mode</label>
-                <select
-                  value={props.priceMode || 'number_only'}
-                  onChange={(e) => handlePropChange('priceMode', e.target.value)}
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-                >
-                  <option value="number_only">Number only (e.g. "$1,299.99" &#8594; "1299.99")</option>
-                  <option value="strip_symbols">Strip currency symbols (e.g. "$1,299.99" &#8594; "1,299.99")</option>
-                </select>
-              </div>
-            )}
-            {props.operation === 'formatDate' && (
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Date Format Mode</label>
-                <select
-                  value={props.dateMode || 'iso_date'}
-                  onChange={(e) => handlePropChange('dateMode', e.target.value)}
-                  className="w-full bg-[#11141c] text-white p-2 rounded-lg border border-[#1c2230] outline-none text-xs"
-                >
-                  <option value="iso_date">ISO Date (YYYY-MM-DD)</option>
-                  <option value="iso_datetime">ISO DateTime (YYYY-MM-DDTHH:mm:ssZ)</option>
-                  <option value="timestamp">Timestamp (ms)</option>
-                </select>
-              </div>
-            )}
-            {props.operation === 'replace' && (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Search</label>
-                  <input
-                    type="text"
-                    value={props.search || ''}
-                    onChange={(e) => handlePropChange('search', e.target.value)}
-                    placeholder="Search string"
-                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Replace With</label>
-                  <input
-                    type="text"
-                    value={props.replaceWith || ''}
-                    onChange={(e) => handlePropChange('replaceWith', e.target.value)}
-                    placeholder="Replacement"
-                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                  />
-                </div>
-              </div>
-            )}
-            {props.operation === 'substring' && (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Start Index</label>
-                  <input
-                    type="number"
-                    value={props.start ?? 0}
-                    onChange={(e) => handlePropChange('start', Number(e.target.value))}
-                    min={0}
-                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-400 mb-1">Length</label>
-                  <input
-                    type="number"
-                    value={props.length ?? ''}
-                    onChange={(e) => handlePropChange('length', e.target.value === '' ? undefined : Number(e.target.value))}
-                    min={1}
-                    placeholder="all"
-                    className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                  />
-                </div>
-              </div>
-            )}
-            {(props.operation === 'split' || props.operation === 'join') && (
-              <div>
-                <label className="block text-[11px] font-medium text-gray-400 mb-1">Delimiter</label>
-                <input
-                  type="text"
-                  value={props.delimiter ?? (props.operation === 'split' ? ',' : ', ')}
-                  onChange={(e) => handlePropChange('delimiter', e.target.value)}
-                  placeholder="Delimiter string"
-                  className="w-full bg-[#11141c] text-white p-1.5 rounded-lg border border-[#1c2230] outline-none text-xs font-mono"
-                />
-              </div>
-            )}
-          </div>
+          <TransformProperties
+            selectedNode={selectedNode}
+            onPropChange={handlePropChange}
+          />
         )}
 
         {/* Execute JavaScript Node */}
