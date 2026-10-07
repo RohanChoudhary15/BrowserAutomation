@@ -46,7 +46,7 @@ export const VideoGeneratorProperties: React.FC<VideoGeneratorPropertiesProps> =
 
   const duration = Number(props.duration) || 15;
   const aspectRatio = props.aspectRatio || '9:16';
-  const resolution = props.resolution || '768P';
+  const resolution = String(props.resolution || '768p').toLowerCase().includes('2k') ? '2k' : '768p';
   const sound = props.sound !== false;
   const autoDownload = !!props.autoDownload;
 
@@ -303,23 +303,27 @@ export const VideoGeneratorProperties: React.FC<VideoGeneratorPropertiesProps> =
           {/* Resolution */}
           <div>
             <label className="block text-[11px] font-medium text-gray-300 mb-1">
-              Resolution
+              Quality / Resolution
             </label>
             <div className="grid grid-cols-2 gap-1">
-              {['768P', '1080P'].map((res) => {
-                const isSelected = resolution === res;
+              {[
+                { id: '768p', label: '768p', desc: 'Standard' },
+                { id: '2k', label: '2k', desc: 'High Def' },
+              ].map(({ id, label, desc }) => {
+                const isSelected = resolution === id;
                 return (
                   <button
-                    key={res}
+                    key={id}
                     type="button"
-                    onClick={() => onPropChange('resolution', res)}
-                    className={`py-1.5 text-center rounded-lg border text-xs font-mono font-medium transition-all ${
+                    onClick={() => onPropChange('resolution', id)}
+                    className={`py-1.5 px-2 text-center rounded-lg border text-xs font-mono font-medium transition-all ${
                       isSelected
                         ? 'bg-indigo-600 text-white border-indigo-500 font-semibold shadow-sm'
                         : 'bg-[#11141c] text-gray-400 border-[#1c2230] hover:text-white hover:bg-[#161a24]'
                     }`}
                   >
-                    {res}
+                    <span>{label}</span>
+                    <span className="text-[9px] opacity-70 ml-1">({desc})</span>
                   </button>
                 );
               })}

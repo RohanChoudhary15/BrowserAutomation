@@ -118,18 +118,54 @@ describe('Video Generator Service (Auray AI / MiniMax H3)', () => {
         prompt: 'Futuristic city in rain with neon lights',
         duration: 15,
         aspectRatio: '16:9',
-        resolution: '768P',
+        resolution: '768p',
         apiKey: 'auray_sk_test_key',
       });
 
       expect(job.request_id).toBe('req_text_video_999');
-      expect(submittedPayload.model).toBe('MiniMax-H3');
-      expect(submittedPayload['content[type=text].text']).toBe(
+      expect(submittedPayload.prompt).toBe(
         'Futuristic city in rain with neon lights'
       );
-      expect(submittedPayload.duration).toBe(15);
-      expect(submittedPayload.ratio).toBe('16:9');
-      expect(submittedPayload.resolution).toBe('768P');
+      expect(submittedPayload.duration_seconds).toBe(15);
+      expect(submittedPayload.aspect_ratio).toBe('16:9');
+      expect(submittedPayload.resolution).toBe('768p');
+    });
+
+    it('normalizes 2k quality resolution correctly in payload', async () => {
+      let submittedPayload: any;
+
+      (globalThis as any).chrome = {
+        runtime: {
+          sendMessage: vi.fn(async (msg: any) => {
+            if (msg.type === 'PROXY_FETCH') {
+              submittedPayload = JSON.parse(msg.payload.options.body);
+              return {
+                success: true,
+                response: {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: { 'content-type': 'application/json' },
+                  text: JSON.stringify({
+                    request_id: 'req_2k_1',
+                    status_url: 'https://queue.auray.run/status/req_2k_1',
+                    response_url: 'https://queue.auray.run/response/req_2k_1',
+                    status: 'IN_QUEUE',
+                  }),
+                },
+              };
+            }
+            return { success: true };
+          }),
+        },
+      };
+
+      await submitH3Job({
+        prompt: 'A pristine mountain lake in 2k',
+        resolution: '2k',
+      });
+
+      expect(submittedPayload.resolution).toBe('2k');
+      expect(submittedPayload.prompt).toBe('A pristine mountain lake in 2k');
     });
 
     it('submits image-to-video payload correctly when first frame is provided', async () => {
@@ -541,7 +577,7 @@ describe('AI Video Generator Node Executor (executeGenerateVideo)', () => {
           prompt: 'A cinematic drone shot through {{sceneName}} with {{themeWeather}}',
           duration: 15,
           aspectRatio: '9:16',
-          resolution: '768P',
+          resolution: '768p',
           sound: true,
           outputVariable: 'promoVideo',
         },

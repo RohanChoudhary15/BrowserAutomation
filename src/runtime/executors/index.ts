@@ -7,7 +7,7 @@ import {
   ConditionRule,
 } from '../evaluator';
 import { queryLlm, getAiConfig, getOpenAiBaseUrl, safeFetch } from '../../ai/aiService';
-import { generateVideo, DEFAULT_AURAY_API_KEY } from '../../ai/videoService';
+import { generateVideo, DEFAULT_AURAY_API_KEY, normalizeResolution } from '../../ai/videoService';
 import { runBrowserAgent } from '../../ai/browserAgent';
 import { getCredentialById } from '../../storage/credentialStore';
 import {
@@ -3536,8 +3536,8 @@ export const executeGenerateVideo: NodeExecutor = async (node, ctx) => {
   const rawRatio = node.data.properties.aspectRatio || '9:16';
   const aspectRatio = String(interpolateVariables(String(rawRatio), ctx.variables) ?? '9:16').trim();
 
-  const rawRes = node.data.properties.resolution || '768P';
-  const resolution = String(interpolateVariables(String(rawRes), ctx.variables) ?? '768P').trim();
+  const rawRes = node.data.properties.resolution || '768p';
+  const resolution = normalizeResolution(String(interpolateVariables(String(rawRes), ctx.variables) ?? '768p'));
 
   const sound = node.data.properties.sound !== false;
 

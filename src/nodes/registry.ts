@@ -1438,7 +1438,7 @@ export const NODE_REGISTRY: Record<NodeType, NodeDefinition> = {
       mode: 'auto', // 'auto' | 'text_to_video' | 'image_to_video'
       duration: 15, // 5 | 10 | 15 (seconds)
       aspectRatio: '9:16', // '9:16' | '16:9' | '1:1' | '4:3' | '3:4'
-      resolution: '768P', // '768P' | '1080P'
+      resolution: '768p', // '768p' | '2k'
       sound: true, // generate synchronized audio
       apiKey: '',
       outputVariable: 'generatedVideoUrl',

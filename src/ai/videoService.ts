@@ -25,7 +25,17 @@ export function normalizeAurayUrl(url: string): string {
 
 export type VideoDuration = 5 | 10 | 15;
 export type VideoAspectRatio = '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
-export type VideoResolution = '768P' | '1080P';
+export type VideoResolution = '768p' | '2k' | '768P' | '1080P';
+
+/**
+ * Normalizes quality/resolution option to MiniMax H3 accepted values ('768p' or '2k').
+ */
+export function normalizeResolution(res?: string): '768p' | '2k' {
+  if (!res) return '768p';
+  const clean = String(res).toLowerCase().trim();
+  if (clean.includes('2k') || clean.includes('1080')) return '2k';
+  return '768p';
+}
 
 export interface VideoAssetDetails {
   key?: string;
@@ -275,7 +285,7 @@ export async function submitH3Job(
   const queueUrl = options.queueUrl || AURAY_QUEUE_URL;
   const duration = Number(options.duration) || 15;
   const aspectRatio = options.aspectRatio || '9:16';
-  const resolution = options.resolution || '768P';
+  const resolution = normalizeResolution(options.resolution);
 
   let payload: Record<string, any>;
 
@@ -286,6 +296,7 @@ export async function submitH3Job(
       prompt: `integrated_multimodal_description: [Shot 1] ${options.prompt}`,
       duration_seconds: duration,
       aspect_ratio: aspectRatio,
+      resolution,
       first_frame_path: options.firstFramePath,
       director: {
         v: 2,
@@ -325,11 +336,11 @@ export async function submitH3Job(
     // Pure Text-to-Video Mode
     const idempotencyKey = generateIdempotencyKey('h3-t2v');
     payload = {
-      model: 'MiniMax-H3',
-      'content[type=text].text': options.prompt,
+      prompt: options.prompt,
+      duration_seconds: duration,
+      aspect_ratio: aspectRatio,
       resolution,
-      duration,
-      ratio: aspectRatio,
+      sound: options.sound !== false,
       idempotency_key: idempotencyKey,
     };
   }
