@@ -89,7 +89,6 @@ import { DataNodesProperties } from './sections/DataNodesProperties';
 import { ControlFlowProperties } from './sections/ControlFlowProperties';
 import { TransformProperties } from './sections/TransformProperties';
 import { JsonSchemaSection } from './sections/JsonSchemaSection';
-import { VideoGeneratorProperties } from './sections/VideoGeneratorProperties';
 import { TableModal } from './TableModal';
 import {
   getAllCardSchemas,
@@ -2026,7 +2025,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {/* Output Variable (Extract Text, Attribute, Table, Screenshot, JS, Data, Storage, AI, Image, Firecrawl, New Nodes) */}
-        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'generate_video', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data', 'dataset_input'].includes(
+        {['extract_text', 'extract_attribute', 'extract_html', 'extract_table', 'extract_multiple', 'crawl_pagination', 'extract_links', 'extract_image', 'extract_all_images', 'scrape_elements', 'screenshot', 'execute_javascript', 'http_request', 'transform', 'regex', 'json_parse', 'generate_data', 'storage_manage', 'ai_agent', 'autonomous_agent', 'generate_image', 'firecrawl', 'smart_scroll', 'download_file', 'show_notification', 'math_calculate', 'export_data', 'dataset_input'].includes(
           selectedNode.data.type
         ) && (
           <div>
@@ -5256,16 +5255,6 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {/* AI Video Generator Node */}
-        {selectedNode.data.type === 'generate_video' && (
-          <VideoGeneratorProperties
-            selectedNode={selectedNode}
-            onPropChange={handlePropChange}
-            runtimeState={runtimeState}
-            variables={variables}
-          />
-        )}
-
         {/* Firecrawl (Keyless) Scraper Node */}
         {selectedNode.data.type === 'firecrawl' && (
           <div className="space-y-3">
@@ -6492,21 +6481,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     handlePropChange('videoUrl', e.target.value);
                     handlePropChange('imageUrl', e.target.value);
                   }}
-                  placeholder="https://example.com/video.mp4, {{generatedVideoUrl}}, or data:video/mp4;base64,..."
+                  placeholder="https://example.com/video.mp4, {{telegramVideoUrl}}, or data:video/mp4;base64,..."
                   className="w-full bg-[#161a24] text-white p-2 rounded border border-[#232a3b] focus:border-indigo-500 outline-none font-mono text-xs"
                 />
                 <div className="flex items-center gap-1.5 pt-0.5">
                   <span className="text-[10px] text-gray-500">Quick insert:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handlePropChange('videoUrl', '{{generatedVideoUrl}}');
-                      handlePropChange('imageUrl', '{{generatedVideoUrl}}');
-                    }}
-                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono hover:bg-indigo-600/30"
-                  >
-                    &#123;&#123;generatedVideoUrl&#125;&#125;
-                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -6519,7 +6498,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] text-gray-500">
-                  Accepts web URLs (https://...), base64 video Data URLs, or output from AutoFlow Video Generator (&#123;&#123;generatedVideoUrl&#125;&#125;).
+                  Accepts web URLs (https://...), base64 video Data URLs, or variables (&#123;&#123;telegramVideoUrl&#125;&#125;).
                 </p>
               </div>
             )}

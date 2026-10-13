@@ -110,7 +110,6 @@ export type NodeType =
   | 'ai_agent'
   | 'autonomous_agent'
   | 'generate_image'
-  | 'generate_video'
   // Messaging & Notifications
   | 'telegram_message'
   | 'telegram_watch'

@@ -43,58 +43,6 @@ export async function registerDeclarativeRules(): Promise<void> {
               ],
             },
           },
-          // 992: Auray Queue (||auray.run) - Strip Origin & Referer to eliminate browser_origin_refused
-          {
-            id: 992,
-            priority: 2,
-            action: {
-              type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-              requestHeaders: [
-                { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-                { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-              ],
-              responseHeaders: [
-                { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-                { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, PUT, DELETE, OPTIONS, HEAD' },
-                { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-              ],
-            },
-            condition: {
-              urlFilter: '||auray.run',
-              resourceTypes: [
-                chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
-                chrome.declarativeNetRequest.ResourceType.OTHER,
-                chrome.declarativeNetRequest.ResourceType.MAIN_FRAME,
-                chrome.declarativeNetRequest.ResourceType.SUB_FRAME,
-              ],
-            },
-          },
-          // 993: Auray Platform API & Storage (||auray.ai) - Strip Origin & Referer
-          {
-            id: 993,
-            priority: 2,
-            action: {
-              type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-              requestHeaders: [
-                { header: 'Origin', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-                { header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-              ],
-              responseHeaders: [
-                { header: 'Access-Control-Allow-Origin', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-                { header: 'Access-Control-Allow-Methods', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: 'GET, POST, PUT, DELETE, OPTIONS, HEAD' },
-                { header: 'Access-Control-Allow-Headers', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: '*' },
-              ],
-            },
-            condition: {
-              urlFilter: '||auray.ai',
-              resourceTypes: [
-                chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
-                chrome.declarativeNetRequest.ResourceType.OTHER,
-                chrome.declarativeNetRequest.ResourceType.MAIN_FRAME,
-                chrome.declarativeNetRequest.ResourceType.SUB_FRAME,
-              ],
-            },
-          },
         ],
       });
     } catch (e) {
@@ -706,10 +654,6 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage | any, sender, s
         case 'PROXY_FETCH': {
           const { url, options, isBinary } = message.payload || {};
           try {
-            if (url && (url.includes('auray.run') || url.includes('auray.ai'))) {
-              await registerDeclarativeRules();
-            }
-
             const fetchOptions: RequestInit = { ...(options || {}) };
 
             // Handle base64-encoded request body if present
